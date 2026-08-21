@@ -189,10 +189,67 @@ const view3d = document.getElementById("view3d")
 
 view3d.innerHTML = `
     <h2>Просторовий вигляд струни</h2>
+    <button id="pause3d">Пауза</button>
+<button id="stop3d">Стоп</button>
+<button id="reset3d">На початок</button>
+
+    Швидкість: <input id="speed3d" type="range" min="1" max="100" value="25">
     <svg id="svg3d" width="800" height="500"
         style="border:1px solid #999"></svg>
 `
 const svg3d = document.getElementById("svg3d")
+const pause3d = document.getElementById("pause3d")
+let isPaused3d = false
+pause3d.addEventListener("click", () => {
+  isPaused3d = !isPaused3d
+  pause3d.textContent = isPaused3d ? "Продовжити" : "Пауза"
+})
+stop3d.addEventListener("click", () => {
+  cancelAnimationFrame(window.foamWireAnimation)
+})
+reset3d.addEventListener("click", () => {
+  cancelAnimationFrame(window.foamWireAnimation)
+
+  wireIndex = 0
+  lastWireTime = 0
+
+  const a = project3d(
+    leftPoints[0].x,
+    leftPoints[0].y,
+    0
+  )
+
+  const b = project3d(
+    rightPoints[0].x,
+    rightPoints[0].y,
+    180
+  )
+})
+ reset3d.addEventListener("click", () => {
+  cancelAnimationFrame(window.foamWireAnimation)
+
+  wireIndex = 0
+  lastWireTime = 0
+
+  const a = project3d(
+    leftPoints[0].x,
+    leftPoints[0].y,
+    0
+  )
+
+  const b = project3d(
+    rightPoints[0].x,
+    rightPoints[0].y,
+    180
+  )
+
+  movingWire.setAttribute("x1", a[0])
+movingWire.setAttribute("y1", a[1])
+movingWire.setAttribute("x2", b[0])
+movingWire.setAttribute("y2", b[1])
+
+window.foamWireAnimation = requestAnimationFrame(animateWire3D)
+})
 svg3d.innerHTML = ``
 const allX3d = [
   ...leftPoints.map(p => p.x),
@@ -282,7 +339,11 @@ let wireIndex = 0
 let lastWireTime = 0
 
 const animateWire3D = (time) => {
-  if (time - lastWireTime > 25) {
+  if (isPaused3d) {
+  window.foamWireAnimation = requestAnimationFrame(animateWire3D)
+  return
+}
+if (time - lastWireTime > 101 - Number(speed3d.value)) {
     const i = Math.min(wireIndex, count3d - 1)
 
     const a = project3d(
