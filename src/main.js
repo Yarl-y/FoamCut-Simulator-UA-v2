@@ -193,17 +193,129 @@ view3d.innerHTML = `
         style="border:1px solid #999"></svg>
 `
 const svg3d = document.getElementById("svg3d")
+svg3d.innerHTML = ``
+const allX3d = [
+  ...leftPoints.map(p => p.x),
+  ...rightPoints.map(p => p.x)
+]
 
-svg3d.innerHTML = `
-    <rect x="80" y="80" width="220" height="320"
-        fill="none" stroke="blue" stroke-width="2" />
+const allY3d = [
+  ...leftPoints.map(p => p.y),
+  ...rightPoints.map(p => p.y)
+]
 
-    <rect x="500" y="80" width="220" height="320"
-        fill="none" stroke="red" stroke-width="2" />
+const minX3d = Math.min(...allX3d)
+const maxX3d = Math.max(...allX3d)
+const minY3d = Math.min(...allY3d)
+const maxY3d = Math.max(...allY3d)
 
-    <text x="120" y="60" font-size="18">X / Y</text>
-    <text x="560" y="60" font-size="18">A / Z</text>
-`
+const rangeX3d = maxX3d - minX3d || 1
+const rangeY3d = maxY3d - minY3d || 1
+
+const project3d = (x, y, depth) => {
+  const nx = (x - minX3d) / rangeX3d
+  const ny = (y - minY3d) / rangeY3d
+
+  const px = 100 + nx * 390 + depth * 1.45
+const py = 390 - ny * 240 - depth * 0.75 + nx * 30
+
+  return [px, py]
+}
+
+const makePath3d = (points, depth, color) => {
+  const polyline = document.createElementNS(
+    "http://www.w3.org/2000/svg",
+    "polyline"
+  )
+
+  const svgPoints = points
+    .map(p => project3d(p.x, p.y, depth).join(","))
+    .join(" ")
+
+  polyline.setAttribute("points", svgPoints)
+  polyline.setAttribute("fill", "none")
+  polyline.setAttribute("stroke", color)
+  polyline.setAttribute("stroke-width", "3")
+
+  svg3d.appendChild(polyline)
+}
+
+makePath3d(leftPoints, 0, "blue")
+makePath3d(rightPoints, 180, "red")
+
+const count3d = Math.min(leftPoints.length, rightPoints.length)
+const step3d = Math.max(1, Math.floor(count3d / 12))
+
+for (let i = 0; i < count3d; i += step3d) {
+  const a = project3d(leftPoints[i].x, leftPoints[i].y, 0)
+  const b = project3d(rightPoints[i].x, rightPoints[i].y, 180)
+
+  const wire = document.createElementNS(
+    "http://www.w3.org/2000/svg",
+    "line"
+  )
+
+  wire.setAttribute("x1", a[0])
+  wire.setAttribute("y1", a[1])
+  wire.setAttribute("x2", b[0])
+  wire.setAttribute("y2", b[1])
+  wire.setAttribute("stroke", "#777")
+  wire.setAttribute("stroke-width", "1")
+
+  svg3d.appendChild(wire)
+}
+const movingWire = document.createElementNS(
+  "http://www.w3.org/2000/svg",
+  "line"
+)
+
+movingWire.setAttribute("stroke", "lime")
+movingWire.setAttribute("stroke-width", "4")
+movingWire.setAttribute("stroke-linecap", "round")
+svg3d.appendChild(movingWire)
+
+if (window.foamWireAnimation) {
+  cancelAnimationFrame(window.foamWireAnimation)
+}
+
+let wireIndex = 0
+let lastWireTime = 0
+
+const animateWire3D = (time) => {
+  if (time - lastWireTime > 25) {
+    const i = Math.min(wireIndex, count3d - 1)
+
+    const a = project3d(
+      leftPoints[i].x,
+      leftPoints[i].y,
+      0
+    )
+
+    const b = project3d(
+      rightPoints[i].x,
+      rightPoints[i].y,
+      180
+    )
+
+    movingWire.setAttribute("x1", a[0])
+    movingWire.setAttribute("y1", a[1])
+    movingWire.setAttribute("x2", b[0])
+    movingWire.setAttribute("y2", b[1])
+
+    wireIndex++
+
+    if (wireIndex >= count3d) {
+      wireIndex = 0
+    }
+
+    lastWireTime = time
+  }
+
+  window.foamWireAnimation = requestAnimationFrame(animateWire3D)
+}
+
+window.foamWireAnimation = requestAnimationFrame(animateWire3D)
+
  status.textContent =
     
  `Файл: ${file.name} — X/Y: ${leftPoints.length} точок, A/Z: ${rightPoints.length} точок`
