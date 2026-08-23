@@ -8,6 +8,8 @@ document.querySelector('#app').innerHTML = `
     <div>
       <input type="file" id="ncFile" accept=".nc,.tap,.gcode,.txt">
       <button id="load">Завантажити NC</button>
+      <input type="file" id="dxfFile" accept=".dxf">
+<button id="loadDxf">Завантажити DXF</button>
     </div>
 
     <h2>Траєкторія різання</h2>
