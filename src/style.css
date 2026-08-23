@@ -294,3 +294,48 @@ code {
     border-right-color: var(--border);
   }
 }
+
+#view3d {
+  width: 800px;
+  max-width: 100%;
+  margin: 24px auto;
+  text-align: center;
+}
+
+.three-d-controls {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin: 12px 0;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+.dimension-controls,
+.animation-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 8px 12px;
+}
+
+.dimension-controls label,
+.animation-controls label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 14px;
+  white-space: nowrap;
+}
+
+.dimension-controls input[type='number'] {
+  width: 72px;
+}
+
+#svg3d {
+  display: block;
+  max-width: 100%;
+  height: auto;
+}

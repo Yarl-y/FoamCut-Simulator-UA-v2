@@ -12,14 +12,6 @@ document.querySelector('#app').innerHTML = `
       <button id="loadDxf">Завантажити DXF</button>
     </div>
 
-    <div id="foamDimensions">
-      <label>Довжина піноблока, мм: <input id="foamLength" type="number" min="1" step="1" value="500"></label>
-      <label>Ширина піноблока, мм: <input id="foamWidth" type="number" min="1" step="1" value="200"></label>
-      <label>Висота піноблока, мм: <input id="foamHeight" type="number" min="1" step="1" value="100"></label>
-      <label>Відступ профілю по довжині, мм: <input id="profileLengthOffset" type="number" min="0" step="1" value="0"></label>
-      <label>Відступ профілю по висоті, мм: <input id="profileHeightOffset" type="number" min="0" step="1" value="0"></label>
-    </div>
-
     <h2>Траєкторія різання</h2>
 
     <svg id="trajectory"
@@ -33,6 +25,28 @@ document.querySelector('#app').innerHTML = `
   </div>
 `
 
+const view3d = document.getElementById('view3d')
+
+view3d.innerHTML = `
+  <h2>Просторовий вигляд струни</h2>
+  <div class="three-d-controls">
+    <div class="dimension-controls">
+      <label>Довжина піноблока, мм <input id="foamLength" type="number" min="1" step="1" value="500"></label>
+      <label>Ширина піноблока, мм <input id="foamWidth" type="number" min="1" step="1" value="200"></label>
+      <label>Висота піноблока, мм <input id="foamHeight" type="number" min="1" step="1" value="100"></label>
+      <label>Відступ по довжині, мм <input id="profileLengthOffset" type="number" min="0" step="1" value="0"></label>
+      <label>Відступ по висоті, мм <input id="profileHeightOffset" type="number" min="0" step="1" value="0"></label>
+    </div>
+    <div class="animation-controls">
+      <button id="pause3d">Пауза</button>
+      <button id="stop3d">Стоп</button>
+      <button id="reset3d">На початок</button>
+      <label>Швидкість <input id="speed3d" type="range" min="1" max="100" value="25"></label>
+    </div>
+  </div>
+  <svg id="svg3d" width="800" height="500" style="border:1px solid #999"></svg>
+`
+
 const fileInput = document.querySelector('#ncFile')
 const loadButton = document.querySelector('#load')
 const svg = document.querySelector('#trajectory')
@@ -42,6 +56,11 @@ const foamWidthInput = document.getElementById('foamWidth')
 const foamHeightInput = document.getElementById('foamHeight')
 const profileLengthOffsetInput = document.getElementById('profileLengthOffset')
 const profileHeightOffsetInput = document.getElementById('profileHeightOffset')
+const svg3d = document.getElementById('svg3d')
+const pause3d = document.getElementById('pause3d')
+const stop3d = document.getElementById('stop3d')
+const reset3d = document.getElementById('reset3d')
+const speed3d = document.getElementById('speed3d')
 let renderActiveFoamBlock = null
 
 const updateFoamBlockDimensions = () => {
@@ -221,23 +240,6 @@ const rp = toSvg(rightPoints[i])
 wire.setAttribute("stroke", "lime")
 wire.setAttribute("stroke-width", "6")
 animateWire()
-const view3d = document.getElementById("view3d")
-
-view3d.innerHTML = `
-    <h2>Просторовий вигляд струни</h2>
-    <button id="pause3d">Пауза</button>
-<button id="stop3d">Стоп</button>
-<button id="reset3d">На початок</button>
-
-    Швидкість: <input id="speed3d" type="range" min="1" max="100" value="25">
-    <svg id="svg3d" width="800" height="500"
-        style="border:1px solid #999"></svg>
-`
-const svg3d = document.getElementById("svg3d")
-const pause3d = document.getElementById("pause3d")
-const stop3d = document.getElementById("stop3d")
-const reset3d = document.getElementById("reset3d")
-const speed3d = document.getElementById("speed3d")
 let isPaused3d = false
 let isStopped3d = false
 
@@ -248,7 +250,7 @@ const cancelWireAnimation3D = () => {
   }
 }
 
-pause3d.addEventListener("click", () => {
+pause3d.onclick = () => {
   if (!isPaused3d && !isStopped3d) {
     isPaused3d = true
     pause3d.textContent = "Продовжити"
@@ -262,14 +264,14 @@ pause3d.addEventListener("click", () => {
   pause3d.textContent = "Пауза"
   cancelWireAnimation3D()
   window.foamWireAnimation = requestAnimationFrame(animateWire3D)
-})
-stop3d.addEventListener("click", () => {
+}
+stop3d.onclick = () => {
   cancelWireAnimation3D()
   isPaused3d = false
   isStopped3d = true
   pause3d.textContent = "Продовжити"
-})
-reset3d.addEventListener("click", () => {
+}
+reset3d.onclick = () => {
   cancelWireAnimation3D()
 
   wireIndex = 0
@@ -281,7 +283,7 @@ reset3d.addEventListener("click", () => {
   updateMachinePosition(0)
 
 window.foamWireAnimation = requestAnimationFrame(animateWire3D)
-})
+}
 svg3d.innerHTML = ``
 const allX3d = [
   ...leftPoints.map(p => p.x),
