@@ -291,31 +291,23 @@ const minX3d = Math.min(...allX3d)
 const maxX3d = Math.max(...allX3d)
 const minY3d = Math.min(...allY3d)
 const maxY3d = Math.max(...allY3d)
-
-const rangeX3d = maxX3d - minX3d || 1
-const rangeY3d = maxY3d - minY3d || 1
 const machineScene = {
   leftDepth: 0,
-  rightDepth: 180,
+  rightDepth: 200,
   foam: {
     defaultLength: 500,
     defaultWidth: 200,
-    defaultHeight: 100,
-    referenceLengthSpan: 0.64,
-    referenceWidthSpan: 84,
-    referenceHeightSpan: 0.56
+    defaultHeight: 100
+  },
+  projection: {
+    depthX: 0.55,
+    depthY: 0.28,
+    marginX: 50,
+    marginY: 50,
+    width: 800,
+    height: 500
   },
   additionalAxes: []
-}
-
-const project3d = (x, y, depth) => {
-  const nx = (x - minX3d) / rangeX3d
-  const ny = (y - minY3d) / rangeY3d
-
-  const px = 100 + nx * 390 + depth * 1.45
-const py = 390 - ny * 240 - depth * 0.75 + nx * 30
-
-  return [px, py]
 }
 
 const svgElement = (tag, attributes, parent = svg3d) => {
@@ -329,207 +321,19 @@ const svgElement = (tag, attributes, parent = svg3d) => {
   return element
 }
 
-const frameLayer = svgElement("g", { "data-layer": "machine-frame" })
-const foamLayer = svgElement("g", { "data-layer": "foam-block" })
-const historyLayer = svgElement("g", { "data-layer": "wire-history" })
-const pathLayer = svgElement("g", { "data-layer": "toolpaths" })
-const motionLayer = svgElement("g", { "data-layer": "moving-parts" })
-svgElement("g", { "data-layer": "additional-axes" })
-
-const frameBottom = minY3d - rangeY3d * 0.12
-const frameTop = maxY3d + rangeY3d * 0.12
-
-const drawMachineSide = (depth, label, color) => {
-  const bottomLeft = project3d(minX3d, frameBottom, depth)
-  const topLeft = project3d(minX3d, frameTop, depth)
-  const bottomRight = project3d(maxX3d, frameBottom, depth)
-  const topRight = project3d(maxX3d, frameTop, depth)
-
-  svgElement("polyline", {
-    points: [bottomLeft, topLeft, topRight, bottomRight].map(point => point.join(",")).join(" "),
-    fill: "none",
-    stroke: color,
-    "stroke-width": "5",
-    "stroke-linejoin": "round"
-  }, frameLayer)
-
-  svgElement("line", {
-    x1: bottomLeft[0],
-    y1: bottomLeft[1],
-    x2: bottomRight[0],
-    y2: bottomRight[1],
-    stroke: "#4b5563",
-    "stroke-width": "8",
-    "stroke-linecap": "round"
-  }, frameLayer)
-
-  svgElement("text", {
-    x: topLeft[0] + 8,
-    y: topLeft[1] - 10,
-    fill: color,
-    "font-size": "15",
-    "font-weight": "700"
-  }, frameLayer).textContent = label
-}
-
-drawMachineSide(machineScene.leftDepth, "Ліва сторона X/Y", "#2563eb")
-drawMachineSide(machineScene.rightDepth, "Права сторона A/Z", "#dc2626")
-
 const polygonPoints = points => points.map(point => point.join(",")).join(" ")
 
 const readBlockDimension = (input, fallback) => {
   const value = Number(input.value)
   return Number.isFinite(value) && value > 0 ? value : fallback
 }
-
-const renderFoamBlock = () => {
-  const length = readBlockDimension(foamLengthInput, machineScene.foam.defaultLength)
-  const width = readBlockDimension(foamWidthInput, machineScene.foam.defaultWidth)
-  const height = readBlockDimension(foamHeightInput, machineScene.foam.defaultHeight)
-  const centerX = (minX3d + maxX3d) / 2
-  const centerY = minY3d + rangeY3d * 0.4
-  const centerDepth = (machineScene.leftDepth + machineScene.rightDepth) / 2
-  const lengthSpan = rangeX3d * machineScene.foam.referenceLengthSpan
-    * (length / machineScene.foam.defaultLength)
-  const widthSpan = machineScene.foam.referenceWidthSpan
-    * (width / machineScene.foam.defaultWidth)
-  const heightSpan = rangeY3d * machineScene.foam.referenceHeightSpan
-    * (height / machineScene.foam.defaultHeight)
-  const foamMinX = centerX - lengthSpan / 2
-  const foamMaxX = centerX + lengthSpan / 2
-  const foamMinY = centerY - heightSpan / 2
-  const foamMaxY = centerY + heightSpan / 2
-  const foamNearDepth = centerDepth - widthSpan / 2
-  const foamFarDepth = centerDepth + widthSpan / 2
-  const foamCorners = {
-    nearBottomLeft: project3d(foamMinX, foamMinY, foamNearDepth),
-    nearBottomRight: project3d(foamMaxX, foamMinY, foamNearDepth),
-    nearTopLeft: project3d(foamMinX, foamMaxY, foamNearDepth),
-    nearTopRight: project3d(foamMaxX, foamMaxY, foamNearDepth),
-    farBottomLeft: project3d(foamMinX, foamMinY, foamFarDepth),
-    farBottomRight: project3d(foamMaxX, foamMinY, foamFarDepth),
-    farTopLeft: project3d(foamMinX, foamMaxY, foamFarDepth),
-    farTopRight: project3d(foamMaxX, foamMaxY, foamFarDepth)
-  }
-
-  foamLayer.replaceChildren()
-
-  svgElement("polygon", {
-    points: polygonPoints([
-      foamCorners.nearTopLeft,
-      foamCorners.nearTopRight,
-      foamCorners.farTopRight,
-      foamCorners.farTopLeft
-    ]),
-    fill: "#fef3c7",
-    stroke: "#d97706",
-    "stroke-width": "2"
-  }, foamLayer)
-
-  svgElement("polygon", {
-    points: polygonPoints([
-      foamCorners.nearBottomRight,
-      foamCorners.farBottomRight,
-      foamCorners.farTopRight,
-      foamCorners.nearTopRight
-    ]),
-    fill: "#fde68a",
-    stroke: "#d97706",
-    "stroke-width": "2"
-  }, foamLayer)
-
-  svgElement("polygon", {
-    points: polygonPoints([
-      foamCorners.nearBottomLeft,
-      foamCorners.nearBottomRight,
-      foamCorners.nearTopRight,
-      foamCorners.nearTopLeft
-    ]),
-    fill: "#fff7d6",
-    "fill-opacity": "0.78",
-    stroke: "#d97706",
-    "stroke-width": "2"
-  }, foamLayer)
-}
-
-renderActiveFoamBlock = renderFoamBlock
-renderFoamBlock()
-
-const makePath3d = (points, depth, color) => {
-  const svgPoints = points
-    .map(p => project3d(p.x, p.y, depth).join(","))
-    .join(" ")
-
-  svgElement("polyline", {
-    points: svgPoints,
-    fill: "none",
-    stroke: color,
-    "stroke-width": "3",
-    "stroke-linejoin": "round"
-  }, pathLayer)
-}
-
-makePath3d(leftPoints, machineScene.leftDepth, "#2563eb")
-makePath3d(rightPoints, machineScene.rightDepth, "#dc2626")
-
 const count3d = Math.min(leftPoints.length, rightPoints.length)
-const step3d = Math.max(1, Math.floor(count3d / 12))
-
-for (let i = 0; i < count3d; i += step3d) {
-  const a = project3d(leftPoints[i].x, leftPoints[i].y, machineScene.leftDepth)
-  const b = project3d(rightPoints[i].x, rightPoints[i].y, machineScene.rightDepth)
-
-  svgElement("line", {
-    x1: a[0],
-    y1: a[1],
-    x2: b[0],
-    y2: b[1],
-    stroke: "#64748b",
-    "stroke-opacity": "0.35",
-    "stroke-width": "1"
-  }, historyLayer)
-}
-
-const movingWire = svgElement("line", {
-  stroke: "#22c55e",
-  "stroke-width": "4",
-  "stroke-linecap": "round"
-}, motionLayer)
-
-const makeCarriage = (color, label) => {
-  const carriage = svgElement("g", {}, motionLayer)
-
-  svgElement("rect", {
-    x: "-12",
-    y: "-9",
-    width: "24",
-    height: "18",
-    rx: "4",
-    fill: color,
-    stroke: "#111827",
-    "stroke-width": "2"
-  }, carriage)
-
-  svgElement("circle", {
-    cx: "0",
-    cy: "0",
-    r: "3",
-    fill: "#f8fafc"
-  }, carriage)
-
-  svgElement("text", {
-    x: "16",
-    y: "5",
-    fill: color,
-    "font-size": "13",
-    "font-weight": "700"
-  }, carriage).textContent = label
-
-  return carriage
-}
-
-const leftCarriage = makeCarriage("#2563eb", "X/Y")
-const rightCarriage = makeCarriage("#dc2626", "A/Z")
+let wireIndex = 0
+let lastWireTime = 0
+let project3d = null
+let movingWire = null
+let leftCarriage = null
+let rightCarriage = null
 
 const updateMachinePosition = index => {
   const i = Math.min(index, count3d - 1)
@@ -552,10 +356,196 @@ const updateMachinePosition = index => {
   movingWire.setAttribute("y2", rightPosition[1])
 }
 
-cancelWireAnimation3D()
+const renderMachineScene = () => {
+  const length = readBlockDimension(foamLengthInput, machineScene.foam.defaultLength)
+  const width = readBlockDimension(foamWidthInput, machineScene.foam.defaultWidth)
+  const height = readBlockDimension(foamHeightInput, machineScene.foam.defaultHeight)
+  const sceneMinX = Math.min(0, minX3d)
+  const sceneMaxX = Math.max(length, maxX3d)
+  const sceneMinY = Math.min(0, minY3d)
+  const sceneMaxY = Math.max(height, maxY3d)
+  const verticalPadding = Math.max(sceneMaxY - sceneMinY, 1) * 0.12
+  const frameBottom = sceneMinY - verticalPadding
+  const frameTop = sceneMaxY + verticalPadding
+  const projection = machineScene.projection
+  const rawCorners = []
 
-let wireIndex = 0
-let lastWireTime = 0
+  machineScene.rightDepth = width
+
+  for (const x of [sceneMinX, sceneMaxX]) {
+    for (const y of [frameBottom, frameTop]) {
+      for (const depth of [machineScene.leftDepth, machineScene.rightDepth]) {
+        rawCorners.push([
+          x + depth * projection.depthX,
+          y + depth * projection.depthY
+        ])
+      }
+    }
+  }
+
+  const rawMinX = Math.min(...rawCorners.map(point => point[0]))
+  const rawMaxX = Math.max(...rawCorners.map(point => point[0]))
+  const rawMinY = Math.min(...rawCorners.map(point => point[1]))
+  const rawMaxY = Math.max(...rawCorners.map(point => point[1]))
+  const availableWidth = projection.width - projection.marginX * 2
+  const availableHeight = projection.height - projection.marginY * 2
+  const millimetersToSvg = Math.min(
+    availableWidth / Math.max(rawMaxX - rawMinX, 1),
+    availableHeight / Math.max(rawMaxY - rawMinY, 1)
+  )
+
+  project3d = (x, y, depth) => {
+    const projectedX = x + depth * projection.depthX
+    const projectedY = y + depth * projection.depthY
+
+    return [
+      projection.marginX + (projectedX - rawMinX) * millimetersToSvg,
+      projection.height - projection.marginY
+        - (projectedY - rawMinY) * millimetersToSvg
+    ]
+  }
+
+  svg3d.replaceChildren()
+
+  const frameLayer = svgElement("g", { "data-layer": "machine-frame" })
+  const foamLayer = svgElement("g", { "data-layer": "foam-block" })
+  const historyLayer = svgElement("g", { "data-layer": "wire-history" })
+  const pathLayer = svgElement("g", { "data-layer": "toolpaths" })
+  const motionLayer = svgElement("g", { "data-layer": "moving-parts" })
+  svgElement("g", { "data-layer": "additional-axes" })
+
+  const drawMachineSide = (depth, label, color) => {
+    const bottomLeft = project3d(sceneMinX, frameBottom, depth)
+    const topLeft = project3d(sceneMinX, frameTop, depth)
+    const bottomRight = project3d(sceneMaxX, frameBottom, depth)
+    const topRight = project3d(sceneMaxX, frameTop, depth)
+
+    svgElement("polyline", {
+      points: [bottomLeft, topLeft, topRight, bottomRight].map(point => point.join(",")).join(" "),
+      fill: "none",
+      stroke: color,
+      "stroke-width": "5",
+      "stroke-linejoin": "round"
+    }, frameLayer)
+
+    svgElement("line", {
+      x1: bottomLeft[0],
+      y1: bottomLeft[1],
+      x2: bottomRight[0],
+      y2: bottomRight[1],
+      stroke: "#4b5563",
+      "stroke-width": "8",
+      "stroke-linecap": "round"
+    }, frameLayer)
+
+    svgElement("text", {
+      x: topLeft[0] + 8,
+      y: topLeft[1] - 10,
+      fill: color,
+      "font-size": "15",
+      "font-weight": "700"
+    }, frameLayer).textContent = label
+  }
+
+  drawMachineSide(machineScene.leftDepth, "Ліва сторона X/Y", "#2563eb")
+  drawMachineSide(machineScene.rightDepth, "Права сторона A/Z", "#dc2626")
+
+  const foamCorners = {
+    nearBottomLeft: project3d(0, 0, machineScene.leftDepth),
+    nearBottomRight: project3d(length, 0, machineScene.leftDepth),
+    nearTopLeft: project3d(0, height, machineScene.leftDepth),
+    nearTopRight: project3d(length, height, machineScene.leftDepth),
+    farBottomLeft: project3d(0, 0, machineScene.rightDepth),
+    farBottomRight: project3d(length, 0, machineScene.rightDepth),
+    farTopLeft: project3d(0, height, machineScene.rightDepth),
+    farTopRight: project3d(length, height, machineScene.rightDepth)
+  }
+
+  svgElement("polygon", {
+    points: polygonPoints([foamCorners.nearTopLeft, foamCorners.nearTopRight,
+      foamCorners.farTopRight, foamCorners.farTopLeft]),
+    fill: "#fef3c7",
+    stroke: "#d97706",
+    "stroke-width": "2"
+  }, foamLayer)
+
+  svgElement("polygon", {
+    points: polygonPoints([foamCorners.nearBottomRight, foamCorners.farBottomRight,
+      foamCorners.farTopRight, foamCorners.nearTopRight]),
+    fill: "#fde68a",
+    stroke: "#d97706",
+    "stroke-width": "2"
+  }, foamLayer)
+
+  svgElement("polygon", {
+    points: polygonPoints([foamCorners.nearBottomLeft, foamCorners.nearBottomRight,
+      foamCorners.nearTopRight, foamCorners.nearTopLeft]),
+    fill: "#fff7d6",
+    "fill-opacity": "0.78",
+    stroke: "#d97706",
+    "stroke-width": "2"
+  }, foamLayer)
+
+  const makePath3d = (points, depth, color) => {
+    svgElement("polyline", {
+      points: points.map(point => project3d(point.x, point.y, depth).join(",")).join(" "),
+      fill: "none",
+      stroke: color,
+      "stroke-width": "3",
+      "stroke-linejoin": "round"
+    }, pathLayer)
+  }
+
+  makePath3d(leftPoints, machineScene.leftDepth, "#2563eb")
+  makePath3d(rightPoints, machineScene.rightDepth, "#dc2626")
+
+  const step3d = Math.max(1, Math.floor(count3d / 12))
+
+  for (let i = 0; i < count3d; i += step3d) {
+    const leftPosition = project3d(leftPoints[i].x, leftPoints[i].y, machineScene.leftDepth)
+    const rightPosition = project3d(rightPoints[i].x, rightPoints[i].y, machineScene.rightDepth)
+
+    svgElement("line", {
+      x1: leftPosition[0],
+      y1: leftPosition[1],
+      x2: rightPosition[0],
+      y2: rightPosition[1],
+      stroke: "#64748b",
+      "stroke-opacity": "0.35",
+      "stroke-width": "1"
+    }, historyLayer)
+  }
+
+  movingWire = svgElement("line", {
+    stroke: "#22c55e",
+    "stroke-width": "4",
+    "stroke-linecap": "round"
+  }, motionLayer)
+
+  const makeCarriage = (color, label) => {
+    const carriage = svgElement("g", {}, motionLayer)
+
+    svgElement("rect", {
+      x: "-12", y: "-9", width: "24", height: "18", rx: "4",
+      fill: color, stroke: "#111827", "stroke-width": "2"
+    }, carriage)
+    svgElement("circle", { cx: "0", cy: "0", r: "3", fill: "#f8fafc" }, carriage)
+    svgElement("text", {
+      x: "16", y: "5", fill: color, "font-size": "13", "font-weight": "700"
+    }, carriage).textContent = label
+
+    return carriage
+  }
+
+  leftCarriage = makeCarriage("#2563eb", "X/Y")
+  rightCarriage = makeCarriage("#dc2626", "A/Z")
+  updateMachinePosition(wireIndex)
+}
+
+renderActiveFoamBlock = renderMachineScene
+renderMachineScene()
+
+cancelWireAnimation3D()
 
 const animateWire3D = (time) => {
   window.foamWireAnimation = null
