@@ -9,7 +9,13 @@ document.querySelector('#app').innerHTML = `
       <input type="file" id="ncFile" accept=".nc,.tap,.gcode,.txt">
       <button id="load">Завантажити NC</button>
       <input type="file" id="dxfFile" accept=".dxf">
-<button id="loadDxf">Завантажити DXF</button>
+      <button id="loadDxf">Завантажити DXF</button>
+    </div>
+
+    <div id="foamDimensions">
+      <label>Довжина піноблока, мм: <input id="foamLength" type="number" min="1" step="1" value="500"></label>
+      <label>Ширина піноблока, мм: <input id="foamWidth" type="number" min="1" step="1" value="200"></label>
+      <label>Висота піноблока, мм: <input id="foamHeight" type="number" min="1" step="1" value="100"></label>
     </div>
 
     <h2>Траєкторія різання</h2>
@@ -29,6 +35,18 @@ const fileInput = document.querySelector('#ncFile')
 const loadButton = document.querySelector('#load')
 const svg = document.querySelector('#trajectory')
 const status = document.querySelector('#status')
+const foamLengthInput = document.getElementById('foamLength')
+const foamWidthInput = document.getElementById('foamWidth')
+const foamHeightInput = document.getElementById('foamHeight')
+let renderActiveFoamBlock = null
+
+const updateFoamBlockDimensions = () => {
+  if (renderActiveFoamBlock) renderActiveFoamBlock()
+}
+
+foamLengthInput.addEventListener('input', updateFoamBlockDimensions)
+foamWidthInput.addEventListener('input', updateFoamBlockDimensions)
+foamHeightInput.addEventListener('input', updateFoamBlockDimensions)
 
 loadButton.addEventListener('click', async () => {
   const file = fileInput.files[0]
@@ -46,17 +64,27 @@ let x = 0
 let y = 0
 let a = 0
 let z = 0
+let isAbsoluteMode = true
+
+const coordinatePattern = '[+-]?(?:\\d+(?:\\.\\d*)?|\\.\\d+)'
 
 for (const line of text.split(/\r?\n/)) {
-    const xMatch = line.match(/X\s*(-?\d+(?:\.\d+)?)/i)
-    const yMatch = line.match(/Y\s*(-?\d+(?:\.\d+)?)/i)
-    const aMatch = line.match(/A\s*(-?\d+(?:\.\d+)?)/i)
-    const zMatch = line.match(/Z\s*(-?\d+(?:\.\d+)?)/i)
+    const cleanLine = line.replace(/\([^)]*\)/g, '').split(';', 1)[0]
+    const distanceModes = [...cleanLine.matchAll(/G\s*0?9([01])(?![\d.])/gi)]
 
-  if (xMatch) x += Number(xMatch[1])
-if (yMatch) y += Number(yMatch[1])
-if (aMatch) a += Number(aMatch[1])
-if (zMatch) z += Number(zMatch[1])
+    if (distanceModes.length > 0) {
+        isAbsoluteMode = distanceModes.at(-1)[1] === '0'
+    }
+
+    const xMatch = cleanLine.match(new RegExp(`X\\s*(${coordinatePattern})`, 'i'))
+    const yMatch = cleanLine.match(new RegExp(`Y\\s*(${coordinatePattern})`, 'i'))
+    const aMatch = cleanLine.match(new RegExp(`A\\s*(${coordinatePattern})`, 'i'))
+    const zMatch = cleanLine.match(new RegExp(`Z\\s*(${coordinatePattern})`, 'i'))
+
+  if (xMatch) x = isAbsoluteMode ? Number(xMatch[1]) : x + Number(xMatch[1])
+if (yMatch) y = isAbsoluteMode ? Number(yMatch[1]) : y + Number(yMatch[1])
+if (aMatch) a = isAbsoluteMode ? Number(aMatch[1]) : a + Number(aMatch[1])
+if (zMatch) z = isAbsoluteMode ? Number(zMatch[1]) : z + Number(zMatch[1])
     if (xMatch || yMatch || aMatch || zMatch) {
         leftPoints.push({ x, y })
         rightPoints.push({ x: a, y: z })
@@ -201,54 +229,50 @@ view3d.innerHTML = `
 `
 const svg3d = document.getElementById("svg3d")
 const pause3d = document.getElementById("pause3d")
+const stop3d = document.getElementById("stop3d")
+const reset3d = document.getElementById("reset3d")
+const speed3d = document.getElementById("speed3d")
 let isPaused3d = false
+let isStopped3d = false
+
+const cancelWireAnimation3D = () => {
+  if (window.foamWireAnimation) {
+    cancelAnimationFrame(window.foamWireAnimation)
+    window.foamWireAnimation = null
+  }
+}
+
 pause3d.addEventListener("click", () => {
-  isPaused3d = !isPaused3d
-  pause3d.textContent = isPaused3d ? "Продовжити" : "Пауза"
+  if (!isPaused3d && !isStopped3d) {
+    isPaused3d = true
+    pause3d.textContent = "Продовжити"
+    cancelWireAnimation3D()
+    return
+  }
+
+  isPaused3d = false
+  isStopped3d = false
+  lastWireTime = 0
+  pause3d.textContent = "Пауза"
+  cancelWireAnimation3D()
+  window.foamWireAnimation = requestAnimationFrame(animateWire3D)
 })
 stop3d.addEventListener("click", () => {
-  cancelAnimationFrame(window.foamWireAnimation)
+  cancelWireAnimation3D()
+  isPaused3d = false
+  isStopped3d = true
+  pause3d.textContent = "Продовжити"
 })
 reset3d.addEventListener("click", () => {
-  cancelAnimationFrame(window.foamWireAnimation)
+  cancelWireAnimation3D()
 
   wireIndex = 0
   lastWireTime = 0
+  isPaused3d = false
+  isStopped3d = false
+  pause3d.textContent = "Пауза"
 
-  const a = project3d(
-    leftPoints[0].x,
-    leftPoints[0].y,
-    0
-  )
-
-  const b = project3d(
-    rightPoints[0].x,
-    rightPoints[0].y,
-    180
-  )
-})
- reset3d.addEventListener("click", () => {
-  cancelAnimationFrame(window.foamWireAnimation)
-
-  wireIndex = 0
-  lastWireTime = 0
-
-  const a = project3d(
-    leftPoints[0].x,
-    leftPoints[0].y,
-    0
-  )
-
-  const b = project3d(
-    rightPoints[0].x,
-    rightPoints[0].y,
-    180
-  )
-
-  movingWire.setAttribute("x1", a[0])
-movingWire.setAttribute("y1", a[1])
-movingWire.setAttribute("x2", b[0])
-movingWire.setAttribute("y2", b[1])
+  updateMachinePosition(0)
 
 window.foamWireAnimation = requestAnimationFrame(animateWire3D)
 })
@@ -270,6 +294,19 @@ const maxY3d = Math.max(...allY3d)
 
 const rangeX3d = maxX3d - minX3d || 1
 const rangeY3d = maxY3d - minY3d || 1
+const machineScene = {
+  leftDepth: 0,
+  rightDepth: 180,
+  foam: {
+    defaultLength: 500,
+    defaultWidth: 200,
+    defaultHeight: 100,
+    referenceLengthSpan: 0.64,
+    referenceWidthSpan: 84,
+    referenceHeightSpan: 0.56
+  },
+  additionalAxes: []
+}
 
 const project3d = (x, y, depth) => {
   const nx = (x - minX3d) / rangeX3d
@@ -281,89 +318,254 @@ const py = 390 - ny * 240 - depth * 0.75 + nx * 30
   return [px, py]
 }
 
-const makePath3d = (points, depth, color) => {
-  const polyline = document.createElementNS(
-    "http://www.w3.org/2000/svg",
-    "polyline"
-  )
+const svgElement = (tag, attributes, parent = svg3d) => {
+  const element = document.createElementNS("http://www.w3.org/2000/svg", tag)
 
+  for (const [name, value] of Object.entries(attributes)) {
+    element.setAttribute(name, value)
+  }
+
+  parent.appendChild(element)
+  return element
+}
+
+const frameLayer = svgElement("g", { "data-layer": "machine-frame" })
+const foamLayer = svgElement("g", { "data-layer": "foam-block" })
+const historyLayer = svgElement("g", { "data-layer": "wire-history" })
+const pathLayer = svgElement("g", { "data-layer": "toolpaths" })
+const motionLayer = svgElement("g", { "data-layer": "moving-parts" })
+svgElement("g", { "data-layer": "additional-axes" })
+
+const frameBottom = minY3d - rangeY3d * 0.12
+const frameTop = maxY3d + rangeY3d * 0.12
+
+const drawMachineSide = (depth, label, color) => {
+  const bottomLeft = project3d(minX3d, frameBottom, depth)
+  const topLeft = project3d(minX3d, frameTop, depth)
+  const bottomRight = project3d(maxX3d, frameBottom, depth)
+  const topRight = project3d(maxX3d, frameTop, depth)
+
+  svgElement("polyline", {
+    points: [bottomLeft, topLeft, topRight, bottomRight].map(point => point.join(",")).join(" "),
+    fill: "none",
+    stroke: color,
+    "stroke-width": "5",
+    "stroke-linejoin": "round"
+  }, frameLayer)
+
+  svgElement("line", {
+    x1: bottomLeft[0],
+    y1: bottomLeft[1],
+    x2: bottomRight[0],
+    y2: bottomRight[1],
+    stroke: "#4b5563",
+    "stroke-width": "8",
+    "stroke-linecap": "round"
+  }, frameLayer)
+
+  svgElement("text", {
+    x: topLeft[0] + 8,
+    y: topLeft[1] - 10,
+    fill: color,
+    "font-size": "15",
+    "font-weight": "700"
+  }, frameLayer).textContent = label
+}
+
+drawMachineSide(machineScene.leftDepth, "Ліва сторона X/Y", "#2563eb")
+drawMachineSide(machineScene.rightDepth, "Права сторона A/Z", "#dc2626")
+
+const polygonPoints = points => points.map(point => point.join(",")).join(" ")
+
+const readBlockDimension = (input, fallback) => {
+  const value = Number(input.value)
+  return Number.isFinite(value) && value > 0 ? value : fallback
+}
+
+const renderFoamBlock = () => {
+  const length = readBlockDimension(foamLengthInput, machineScene.foam.defaultLength)
+  const width = readBlockDimension(foamWidthInput, machineScene.foam.defaultWidth)
+  const height = readBlockDimension(foamHeightInput, machineScene.foam.defaultHeight)
+  const centerX = (minX3d + maxX3d) / 2
+  const centerY = minY3d + rangeY3d * 0.4
+  const centerDepth = (machineScene.leftDepth + machineScene.rightDepth) / 2
+  const lengthSpan = rangeX3d * machineScene.foam.referenceLengthSpan
+    * (length / machineScene.foam.defaultLength)
+  const widthSpan = machineScene.foam.referenceWidthSpan
+    * (width / machineScene.foam.defaultWidth)
+  const heightSpan = rangeY3d * machineScene.foam.referenceHeightSpan
+    * (height / machineScene.foam.defaultHeight)
+  const foamMinX = centerX - lengthSpan / 2
+  const foamMaxX = centerX + lengthSpan / 2
+  const foamMinY = centerY - heightSpan / 2
+  const foamMaxY = centerY + heightSpan / 2
+  const foamNearDepth = centerDepth - widthSpan / 2
+  const foamFarDepth = centerDepth + widthSpan / 2
+  const foamCorners = {
+    nearBottomLeft: project3d(foamMinX, foamMinY, foamNearDepth),
+    nearBottomRight: project3d(foamMaxX, foamMinY, foamNearDepth),
+    nearTopLeft: project3d(foamMinX, foamMaxY, foamNearDepth),
+    nearTopRight: project3d(foamMaxX, foamMaxY, foamNearDepth),
+    farBottomLeft: project3d(foamMinX, foamMinY, foamFarDepth),
+    farBottomRight: project3d(foamMaxX, foamMinY, foamFarDepth),
+    farTopLeft: project3d(foamMinX, foamMaxY, foamFarDepth),
+    farTopRight: project3d(foamMaxX, foamMaxY, foamFarDepth)
+  }
+
+  foamLayer.replaceChildren()
+
+  svgElement("polygon", {
+    points: polygonPoints([
+      foamCorners.nearTopLeft,
+      foamCorners.nearTopRight,
+      foamCorners.farTopRight,
+      foamCorners.farTopLeft
+    ]),
+    fill: "#fef3c7",
+    stroke: "#d97706",
+    "stroke-width": "2"
+  }, foamLayer)
+
+  svgElement("polygon", {
+    points: polygonPoints([
+      foamCorners.nearBottomRight,
+      foamCorners.farBottomRight,
+      foamCorners.farTopRight,
+      foamCorners.nearTopRight
+    ]),
+    fill: "#fde68a",
+    stroke: "#d97706",
+    "stroke-width": "2"
+  }, foamLayer)
+
+  svgElement("polygon", {
+    points: polygonPoints([
+      foamCorners.nearBottomLeft,
+      foamCorners.nearBottomRight,
+      foamCorners.nearTopRight,
+      foamCorners.nearTopLeft
+    ]),
+    fill: "#fff7d6",
+    "fill-opacity": "0.78",
+    stroke: "#d97706",
+    "stroke-width": "2"
+  }, foamLayer)
+}
+
+renderActiveFoamBlock = renderFoamBlock
+renderFoamBlock()
+
+const makePath3d = (points, depth, color) => {
   const svgPoints = points
     .map(p => project3d(p.x, p.y, depth).join(","))
     .join(" ")
 
-  polyline.setAttribute("points", svgPoints)
-  polyline.setAttribute("fill", "none")
-  polyline.setAttribute("stroke", color)
-  polyline.setAttribute("stroke-width", "3")
-
-  svg3d.appendChild(polyline)
+  svgElement("polyline", {
+    points: svgPoints,
+    fill: "none",
+    stroke: color,
+    "stroke-width": "3",
+    "stroke-linejoin": "round"
+  }, pathLayer)
 }
 
-makePath3d(leftPoints, 0, "blue")
-makePath3d(rightPoints, 180, "red")
+makePath3d(leftPoints, machineScene.leftDepth, "#2563eb")
+makePath3d(rightPoints, machineScene.rightDepth, "#dc2626")
 
 const count3d = Math.min(leftPoints.length, rightPoints.length)
 const step3d = Math.max(1, Math.floor(count3d / 12))
 
 for (let i = 0; i < count3d; i += step3d) {
-  const a = project3d(leftPoints[i].x, leftPoints[i].y, 0)
-  const b = project3d(rightPoints[i].x, rightPoints[i].y, 180)
+  const a = project3d(leftPoints[i].x, leftPoints[i].y, machineScene.leftDepth)
+  const b = project3d(rightPoints[i].x, rightPoints[i].y, machineScene.rightDepth)
 
-  const wire = document.createElementNS(
-    "http://www.w3.org/2000/svg",
-    "line"
+  svgElement("line", {
+    x1: a[0],
+    y1: a[1],
+    x2: b[0],
+    y2: b[1],
+    stroke: "#64748b",
+    "stroke-opacity": "0.35",
+    "stroke-width": "1"
+  }, historyLayer)
+}
+
+const movingWire = svgElement("line", {
+  stroke: "#22c55e",
+  "stroke-width": "4",
+  "stroke-linecap": "round"
+}, motionLayer)
+
+const makeCarriage = (color, label) => {
+  const carriage = svgElement("g", {}, motionLayer)
+
+  svgElement("rect", {
+    x: "-12",
+    y: "-9",
+    width: "24",
+    height: "18",
+    rx: "4",
+    fill: color,
+    stroke: "#111827",
+    "stroke-width": "2"
+  }, carriage)
+
+  svgElement("circle", {
+    cx: "0",
+    cy: "0",
+    r: "3",
+    fill: "#f8fafc"
+  }, carriage)
+
+  svgElement("text", {
+    x: "16",
+    y: "5",
+    fill: color,
+    "font-size": "13",
+    "font-weight": "700"
+  }, carriage).textContent = label
+
+  return carriage
+}
+
+const leftCarriage = makeCarriage("#2563eb", "X/Y")
+const rightCarriage = makeCarriage("#dc2626", "A/Z")
+
+const updateMachinePosition = index => {
+  const i = Math.min(index, count3d - 1)
+  const leftPosition = project3d(
+    leftPoints[i].x,
+    leftPoints[i].y,
+    machineScene.leftDepth
+  )
+  const rightPosition = project3d(
+    rightPoints[i].x,
+    rightPoints[i].y,
+    machineScene.rightDepth
   )
 
-  wire.setAttribute("x1", a[0])
-  wire.setAttribute("y1", a[1])
-  wire.setAttribute("x2", b[0])
-  wire.setAttribute("y2", b[1])
-  wire.setAttribute("stroke", "#777")
-  wire.setAttribute("stroke-width", "1")
-
-  svg3d.appendChild(wire)
+  leftCarriage.setAttribute("transform", `translate(${leftPosition[0]} ${leftPosition[1]})`)
+  rightCarriage.setAttribute("transform", `translate(${rightPosition[0]} ${rightPosition[1]})`)
+  movingWire.setAttribute("x1", leftPosition[0])
+  movingWire.setAttribute("y1", leftPosition[1])
+  movingWire.setAttribute("x2", rightPosition[0])
+  movingWire.setAttribute("y2", rightPosition[1])
 }
-const movingWire = document.createElementNS(
-  "http://www.w3.org/2000/svg",
-  "line"
-)
 
-movingWire.setAttribute("stroke", "lime")
-movingWire.setAttribute("stroke-width", "4")
-movingWire.setAttribute("stroke-linecap", "round")
-svg3d.appendChild(movingWire)
-
-if (window.foamWireAnimation) {
-  cancelAnimationFrame(window.foamWireAnimation)
-}
+cancelWireAnimation3D()
 
 let wireIndex = 0
 let lastWireTime = 0
 
 const animateWire3D = (time) => {
-  if (isPaused3d) {
-  window.foamWireAnimation = requestAnimationFrame(animateWire3D)
-  return
-}
+  window.foamWireAnimation = null
+
+  if (isPaused3d || isStopped3d) return
+
 if (time - lastWireTime > 101 - Number(speed3d.value)) {
     const i = Math.min(wireIndex, count3d - 1)
 
-    const a = project3d(
-      leftPoints[i].x,
-      leftPoints[i].y,
-      0
-    )
-
-    const b = project3d(
-      rightPoints[i].x,
-      rightPoints[i].y,
-      180
-    )
-
-    movingWire.setAttribute("x1", a[0])
-    movingWire.setAttribute("y1", a[1])
-    movingWire.setAttribute("x2", b[0])
-    movingWire.setAttribute("y2", b[1])
+    updateMachinePosition(i)
 
     wireIndex++
 
@@ -377,6 +579,7 @@ if (time - lastWireTime > 101 - Number(speed3d.value)) {
   window.foamWireAnimation = requestAnimationFrame(animateWire3D)
 }
 
+updateMachinePosition(0)
 window.foamWireAnimation = requestAnimationFrame(animateWire3D)
 
  status.textContent =
