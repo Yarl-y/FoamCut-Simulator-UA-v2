@@ -555,23 +555,23 @@ const renderMachineScene = () => {
     "stroke-linecap": "round"
   }, motionLayer)
 
-  const makeCarriage = (color, label) => {
+  const makeCarriage = label => {
     const carriage = svgElement("g", {}, motionLayer)
 
     svgElement("rect", {
       x: "-12", y: "-9", width: "24", height: "18", rx: "4",
-      fill: color, stroke: "#111827", "stroke-width": "2"
+      fill: "none", stroke: "#374151", "stroke-width": "2"
     }, carriage)
-    svgElement("circle", { cx: "0", cy: "0", r: "3", fill: "#f8fafc" }, carriage)
+    svgElement("circle", { cx: "0", cy: "0", r: "3", fill: "#22c55e" }, carriage)
     svgElement("text", {
-      x: "16", y: "5", fill: color, "font-size": "13", "font-weight": "700"
+      x: "16", y: "5", fill: "#374151", "font-size": "13", "font-weight": "700"
     }, carriage).textContent = label
 
     return carriage
   }
 
-  leftCarriage = makeCarriage("#2563eb", "X/Y")
-  rightCarriage = makeCarriage("#dc2626", "A/Z")
+  leftCarriage = makeCarriage("X/Y")
+  rightCarriage = makeCarriage("A/Z")
   updateMachinePosition(wireIndex)
 }
 
