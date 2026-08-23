@@ -16,6 +16,8 @@ document.querySelector('#app').innerHTML = `
       <label>Довжина піноблока, мм: <input id="foamLength" type="number" min="1" step="1" value="500"></label>
       <label>Ширина піноблока, мм: <input id="foamWidth" type="number" min="1" step="1" value="200"></label>
       <label>Висота піноблока, мм: <input id="foamHeight" type="number" min="1" step="1" value="100"></label>
+      <label>Відступ профілю по довжині, мм: <input id="profileLengthOffset" type="number" min="0" step="1" value="0"></label>
+      <label>Відступ профілю по висоті, мм: <input id="profileHeightOffset" type="number" min="0" step="1" value="0"></label>
     </div>
 
     <h2>Траєкторія різання</h2>
@@ -38,6 +40,8 @@ const status = document.querySelector('#status')
 const foamLengthInput = document.getElementById('foamLength')
 const foamWidthInput = document.getElementById('foamWidth')
 const foamHeightInput = document.getElementById('foamHeight')
+const profileLengthOffsetInput = document.getElementById('profileLengthOffset')
+const profileHeightOffsetInput = document.getElementById('profileHeightOffset')
 let renderActiveFoamBlock = null
 
 const updateFoamBlockDimensions = () => {
@@ -47,6 +51,8 @@ const updateFoamBlockDimensions = () => {
 foamLengthInput.addEventListener('input', updateFoamBlockDimensions)
 foamWidthInput.addEventListener('input', updateFoamBlockDimensions)
 foamHeightInput.addEventListener('input', updateFoamBlockDimensions)
+profileLengthOffsetInput.addEventListener('input', updateFoamBlockDimensions)
+profileHeightOffsetInput.addEventListener('input', updateFoamBlockDimensions)
 
 loadButton.addEventListener('click', async () => {
   const file = fileInput.files[0]
@@ -299,6 +305,10 @@ const machineScene = {
     defaultWidth: 200,
     defaultHeight: 100
   },
+  profileOffset: {
+    x: 0,
+    y: 0
+  },
   projection: {
     depthX: 0.55,
     depthY: 0.28,
@@ -327,6 +337,11 @@ const readBlockDimension = (input, fallback) => {
   const value = Number(input.value)
   return Number.isFinite(value) && value > 0 ? value : fallback
 }
+
+const readProfileOffset = input => {
+  const value = Number(input.value)
+  return Number.isFinite(value) ? Math.max(0, value) : 0
+}
 const count3d = Math.min(leftPoints.length, rightPoints.length)
 let wireIndex = 0
 let lastWireTime = 0
@@ -338,13 +353,13 @@ let rightCarriage = null
 const updateMachinePosition = index => {
   const i = Math.min(index, count3d - 1)
   const leftPosition = project3d(
-    leftPoints[i].x,
-    leftPoints[i].y,
+    leftPoints[i].x + machineScene.profileOffset.x,
+    leftPoints[i].y + machineScene.profileOffset.y,
     machineScene.leftDepth
   )
   const rightPosition = project3d(
-    rightPoints[i].x,
-    rightPoints[i].y,
+    rightPoints[i].x + machineScene.profileOffset.x,
+    rightPoints[i].y + machineScene.profileOffset.y,
     machineScene.rightDepth
   )
 
@@ -360,10 +375,12 @@ const renderMachineScene = () => {
   const length = readBlockDimension(foamLengthInput, machineScene.foam.defaultLength)
   const width = readBlockDimension(foamWidthInput, machineScene.foam.defaultWidth)
   const height = readBlockDimension(foamHeightInput, machineScene.foam.defaultHeight)
-  const sceneMinX = Math.min(0, minX3d)
-  const sceneMaxX = Math.max(length, maxX3d)
-  const sceneMinY = Math.min(0, minY3d)
-  const sceneMaxY = Math.max(height, maxY3d)
+  const profileOffsetX = readProfileOffset(profileLengthOffsetInput)
+  const profileOffsetY = readProfileOffset(profileHeightOffsetInput)
+  const sceneMinX = Math.min(0, minX3d + profileOffsetX)
+  const sceneMaxX = Math.max(length, maxX3d + profileOffsetX)
+  const sceneMinY = Math.min(0, minY3d + profileOffsetY)
+  const sceneMaxY = Math.max(height, maxY3d + profileOffsetY)
   const verticalPadding = Math.max(sceneMaxY - sceneMinY, 1) * 0.12
   const frameBottom = sceneMinY - verticalPadding
   const frameTop = sceneMaxY + verticalPadding
@@ -371,6 +388,8 @@ const renderMachineScene = () => {
   const rawCorners = []
 
   machineScene.rightDepth = width
+  machineScene.profileOffset.x = profileOffsetX
+  machineScene.profileOffset.y = profileOffsetY
 
   for (const x of [sceneMinX, sceneMaxX]) {
     for (const y of [frameBottom, frameTop]) {
@@ -488,7 +507,11 @@ const renderMachineScene = () => {
 
   const makePath3d = (points, depth, color) => {
     svgElement("polyline", {
-      points: points.map(point => project3d(point.x, point.y, depth).join(",")).join(" "),
+      points: points.map(point => project3d(
+        point.x + machineScene.profileOffset.x,
+        point.y + machineScene.profileOffset.y,
+        depth
+      ).join(",")).join(" "),
       fill: "none",
       stroke: color,
       "stroke-width": "3",
@@ -502,8 +525,16 @@ const renderMachineScene = () => {
   const step3d = Math.max(1, Math.floor(count3d / 12))
 
   for (let i = 0; i < count3d; i += step3d) {
-    const leftPosition = project3d(leftPoints[i].x, leftPoints[i].y, machineScene.leftDepth)
-    const rightPosition = project3d(rightPoints[i].x, rightPoints[i].y, machineScene.rightDepth)
+    const leftPosition = project3d(
+      leftPoints[i].x + machineScene.profileOffset.x,
+      leftPoints[i].y + machineScene.profileOffset.y,
+      machineScene.leftDepth
+    )
+    const rightPosition = project3d(
+      rightPoints[i].x + machineScene.profileOffset.x,
+      rightPoints[i].y + machineScene.profileOffset.y,
+      machineScene.rightDepth
+    )
 
     svgElement("line", {
       x1: leftPosition[0],
