@@ -150,6 +150,22 @@ const assignSelectedDxfContour = side => {
     reverse: dxfReverseInput.checked
   }
   updateDxfAssignmentStatus()
+
+  if (preparedDxfProfiles.left && preparedDxfProfiles.right) {
+    const leftPoints = preparedDxfProfiles.left.points
+    const rightPoints = preparedDxfProfiles.right.points
+
+    if (leftPoints.length !== rightPoints.length) {
+      dxfAssignmentStatus.textContent += '; кількість точок сторін не збігається'
+      return
+    }
+
+    renderSimulation(
+      leftPoints,
+      rightPoints,
+      `DXF-траєкторія — X/Y: ${leftPoints.length} точок, A/Z: ${rightPoints.length} точок`
+    )
+  }
 }
 
 dxfContourSelect.addEventListener('change', () => {
@@ -286,6 +302,14 @@ if (zMatch) z = isAbsoluteMode ? Number(zMatch[1]) : z + Number(zMatch[1])
         return
     }
 
+    renderSimulation(
+      leftPoints,
+      rightPoints,
+      `Файл: ${file.name} — X/Y: ${leftPoints.length} точок, A/Z: ${rightPoints.length} точок`
+    )
+})
+
+const renderSimulation = (leftPoints, rightPoints, simulationStatus) => {
     const allPoints = [...leftPoints, ...rightPoints]
 
     const minX = Math.min(...allPoints.map(p => p.x))
@@ -771,7 +795,5 @@ if (time - lastWireTime > 101 - Number(speed3d.value)) {
 updateMachinePosition(0)
 window.foamWireAnimation = requestAnimationFrame(animateWire3D)
 
- status.textContent =
-    
- `Файл: ${file.name} — X/Y: ${leftPoints.length} точок, A/Z: ${rightPoints.length} точок`
-})
+ status.textContent = simulationStatus
+}
