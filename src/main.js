@@ -62,6 +62,15 @@ document.querySelector('#app').innerHTML = `
       </div>
       <p id="dxfAssignmentStatus">Профілі ще не призначені</p>
       <section class="nc-generator">
+        <div class="machine-limit-controls">
+          <label>Хід X, мм <input id="limitX" type="number" min="1" step="1" value="600"></label>
+          <label>Хід Y, мм <input id="limitY" type="number" min="1" step="1" value="600"></label>
+          <label>Хід A, мм <input id="limitA" type="number" min="1" step="1" value="600"></label>
+          <label>Хід Z, мм <input id="limitZ" type="number" min="1" step="1" value="600"></label>
+          <label>Робоча довжина струни, мм
+            <input id="wireSpan" type="number" min="1" step="1" value="1060">
+          </label>
+        </div>
         <div class="nc-generator-actions">
           <button id="generateNc" disabled>Створити NC для Mach3</button>
           <button id="downloadNc" disabled>Завантажити NC-файл</button>
@@ -118,6 +127,13 @@ const generateNcButton = document.querySelector('#generateNc')
 const downloadNcButton = document.querySelector('#downloadNc')
 const generatedNcPreview = document.querySelector('#generatedNcPreview')
 const generatedNcStatus = document.querySelector('#generatedNcStatus')
+const machineLimitInputs = {
+  x: document.querySelector('#limitX'),
+  y: document.querySelector('#limitY'),
+  a: document.querySelector('#limitA'),
+  z: document.querySelector('#limitZ')
+}
+const wireSpanInput = document.querySelector('#wireSpan')
 const svg = document.querySelector('#trajectory')
 const status = document.querySelector('#status')
 const foamLengthInput = document.getElementById('foamLength')
@@ -325,12 +341,51 @@ const createMach3Nc = trajectory => {
   return `${lines.join('\n')}\n`
 }
 
+const validateMachineEnvelope = trajectory => {
+  const offsetX = Math.max(0, Number(profileLengthOffsetInput.value) || 0)
+  const offsetY = Math.max(0, Number(profileHeightOffsetInput.value) || 0)
+  const axes = {
+    x: trajectory.leftPoints.map(point => point.x + offsetX),
+    y: trajectory.leftPoints.map(point => point.y + offsetY),
+    a: trajectory.rightPoints.map(point => point.x + offsetX),
+    z: trajectory.rightPoints.map(point => point.y + offsetY)
+  }
+  const labels = { x: 'X', y: 'Y', a: 'A', z: 'Z' }
+  const ranges = {}
+  const errors = []
+
+  for (const [axis, values] of Object.entries(axes)) {
+    const minimum = Math.min(...values)
+    const maximum = Math.max(...values)
+    const travel = maximum - minimum
+    const configuredLimit = Number(machineLimitInputs[axis].value)
+    const limit = Number.isFinite(configuredLimit) && configuredLimit > 0 ? configuredLimit : 600
+    ranges[axis] = { minimum, maximum, travel, limit }
+
+    if (travel > limit + 0.0005) {
+      errors.push(`${labels[axis]}: потрібно ${formatNcNumber(travel)} мм, доступно ${limit} мм`)
+    }
+  }
+
+  const configuredWireSpan = Number(wireSpanInput.value)
+  const wireSpan = Number.isFinite(configuredWireSpan) && configuredWireSpan > 0
+    ? configuredWireSpan
+    : 1060
+  const foamWidth = Number(foamWidthInput.value) || 0
+  if (foamWidth > wireSpan) {
+    errors.push(`ширина блока ${formatNcNumber(foamWidth)} мм більша за робочу довжину струни ${wireSpan} мм`)
+  }
+
+  return { valid: errors.length === 0, errors, ranges, wireSpan }
+}
+
 const updateGeneratedNcPreview = () => {
   if (!preparedCuttingTrajectory) {
     generatedNcText = ''
     generatedNcPreview.value = ''
     generateNcButton.disabled = true
     downloadNcButton.disabled = true
+    generatedNcStatus.className = ''
     generatedNcStatus.textContent = 'Спочатку призначте профілі X/Y та A/Z'
     return
   }
@@ -338,10 +393,21 @@ const updateGeneratedNcPreview = () => {
   generatedNcText = createMach3Nc(preparedCuttingTrajectory)
   generatedNcPreview.value = generatedNcText
   generateNcButton.disabled = false
-  downloadNcButton.disabled = false
+  const validation = validateMachineEnvelope(preparedCuttingTrajectory)
+  downloadNcButton.disabled = !validation.valid
   const movementCount = generatedNcText.split('\n').filter(line => line.startsWith('G1 ')).length
-  generatedNcStatus.textContent = `NC готовий: ${movementCount} синхронних рухів; `
-    + `F${formatNcNumber(preparedCuttingTrajectory.feedRate)} мм/хв; G21; G90`
+  const travelSummary = Object.entries(validation.ranges)
+    .map(([axis, range]) => `${axis.toUpperCase()} ${formatNcNumber(range.travel)}/${range.limit} мм`)
+    .join('; ')
+
+  if (validation.valid) {
+    generatedNcStatus.className = 'nc-status-valid'
+    generatedNcStatus.textContent = `NC готовий: ${movementCount} синхронних рухів; `
+      + `F${formatNcNumber(preparedCuttingTrajectory.feedRate)} мм/хв; ${travelSummary}`
+  } else {
+    generatedNcStatus.className = 'nc-status-error'
+    generatedNcStatus.textContent = `NC не можна завантажити: ${validation.errors.join('; ')}. ${travelSummary}`
+  }
 }
 
 const renderPreparedDxfSimulation = () => {
@@ -503,6 +569,10 @@ dxfPointCountInput.addEventListener('change', () => {
 cutPassModeInput.addEventListener('change', renderPreparedDxfSimulation)
 leadDistanceInput.addEventListener('input', renderPreparedDxfSimulation)
 cutFeedRateInput.addEventListener('input', renderPreparedDxfSimulation)
+Object.values(machineLimitInputs).forEach(input => {
+  input.addEventListener('input', updateGeneratedNcPreview)
+})
+wireSpanInput.addEventListener('input', updateGeneratedNcPreview)
 generateNcButton.addEventListener('click', updateGeneratedNcPreview)
 downloadNcButton.addEventListener('click', () => {
   if (!generatedNcText) return
