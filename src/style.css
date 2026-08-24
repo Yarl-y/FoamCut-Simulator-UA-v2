@@ -344,6 +344,26 @@ code {
   width: 72px;
 }
 
+.cut-planning-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 8px 16px;
+  margin-top: 8px;
+}
+
+.cut-planning-controls label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 14px;
+}
+
+.cut-planning-controls input[type='number'] {
+  width: 72px;
+}
+
 .dxf-tools {
   display: flex;
   flex-wrap: wrap;

@@ -16,6 +16,17 @@ document.querySelector('#app').innerHTML = `
       <label class="dxf-point-count">Синхронізованих точок траєкторії
         <input id="dxfPointCount" type="number" min="2" step="1" value="200">
       </label>
+      <div class="cut-planning-controls">
+        <label>Режим різання
+          <select id="cutPassMode">
+            <option value="single">Один прохід — повний контур</option>
+            <option value="double">Два проходи — верх і низ</option>
+          </select>
+        </label>
+        <label>Підхід і вихід, мм
+          <input id="leadDistance" type="number" min="0" step="1" value="20">
+        </label>
+      </div>
       <div class="dxf-profile-grid">
         <section id="dxfLeftPanel" class="dxf-profile-panel" data-side="left">
           <h3>Кореневий профіль X/Y</h3>
@@ -87,6 +98,8 @@ view3d.innerHTML = `
 const fileInput = document.querySelector('#ncFile')
 const loadButton = document.querySelector('#load')
 const dxfPointCountInput = document.querySelector('#dxfPointCount')
+const cutPassModeInput = document.querySelector('#cutPassMode')
+const leadDistanceInput = document.querySelector('#leadDistance')
 const dxfAssignmentStatus = document.querySelector('#dxfAssignmentStatus')
 const svg = document.querySelector('#trajectory')
 const status = document.querySelector('#status')
@@ -175,6 +188,104 @@ const updateDxfAssignmentStatus = () => {
   dxfAssignmentStatus.textContent = `X/Y: ${left}; A/Z: ${right}`
 }
 
+const interpolateMove = (start, end, segmentCount = 12) => Array.from(
+  { length: segmentCount },
+  (_, index) => {
+    const ratio = (index + 1) / segmentCount
+    return {
+      x: start.x + (end.x - start.x) * ratio,
+      y: start.y + (end.y - start.y) * ratio
+    }
+  }
+)
+
+const getOutsidePoint = (points, point, distance) => {
+  const center = points.reduce((sum, current) => ({
+    x: sum.x + current.x / points.length,
+    y: sum.y + current.y / points.length
+  }), { x: 0, y: 0 })
+  const dx = point.x - center.x
+  const dy = point.y - center.y
+  const vectorLength = Math.hypot(dx, dy) || 1
+
+  return {
+    x: point.x + dx / vectorLength * distance,
+    y: point.y + dy / vectorLength * distance
+  }
+}
+
+const buildCuttingPath = points => {
+  if (points.length < 2) return points.map(point => ({ ...point }))
+
+  let orderedPoints = points
+  if (cutPassModeInput.value === 'double') {
+    const half = Math.floor(points.length / 2)
+    const averageY = surface => surface.reduce((sum, point) => sum + point.y, 0)
+      / Math.max(surface.length, 1)
+    const firstAverageY = averageY(points.slice(0, half + 1))
+    const secondAverageY = averageY(points.slice(half))
+
+    if (firstAverageY < secondAverageY) {
+      orderedPoints = [points[0], ...points.slice(1).reverse()]
+    }
+  }
+
+  const leadDistance = Math.max(0, Number(leadDistanceInput.value) || 0)
+  const start = orderedPoints[0]
+  const splitIndex = Math.floor(orderedPoints.length / 2)
+  const opposite = orderedPoints[splitIndex]
+  const outsideStart = getOutsidePoint(orderedPoints, start, leadDistance)
+  const approachStart = [outsideStart, ...interpolateMove(outsideStart, start)]
+
+  if (cutPassModeInput.value === 'double') {
+    const outsideOpposite = getOutsidePoint(orderedPoints, opposite, leadDistance)
+    const firstSurface = orderedPoints.slice(1, splitIndex + 1)
+    const exitFirst = interpolateMove(opposite, outsideOpposite)
+    const enterSecond = interpolateMove(outsideOpposite, opposite)
+    const secondSurface = orderedPoints.slice(splitIndex + 1)
+    const closeAtStart = [{ ...start }]
+    const exitSecond = interpolateMove(start, outsideStart)
+
+    return [
+      ...approachStart,
+      ...firstSurface,
+      ...exitFirst,
+      ...enterSecond,
+      ...secondSurface,
+      ...closeAtStart,
+      ...exitSecond
+    ]
+  }
+
+  return [
+    ...approachStart,
+    ...orderedPoints.slice(1),
+    { ...start },
+    ...interpolateMove(start, outsideStart)
+  ]
+}
+
+const renderPreparedDxfSimulation = () => {
+  if (!preparedDxfProfiles.left || !preparedDxfProfiles.right) return
+
+  const leftPoints = buildCuttingPath(preparedDxfProfiles.left.points)
+  const rightPoints = buildCuttingPath(preparedDxfProfiles.right.points)
+
+  if (leftPoints.length !== rightPoints.length) {
+    dxfAssignmentStatus.textContent += '; кількість точок сторін не збігається'
+    return
+  }
+
+  const passLabel = cutPassModeInput.value === 'double'
+    ? 'два проходи (верх/низ)'
+    : 'один прохід'
+  renderSimulation(
+    leftPoints,
+    rightPoints,
+    `DXF-траєкторія — ${passLabel}; X/Y і A/Z: ${leftPoints.length} синхронних точок`
+  )
+}
+
 const assignSelectedDxfContour = side => {
   const state = dxfSides[side]
   const contour = getSelectedDxfContour(side)
@@ -191,19 +302,7 @@ const assignSelectedDxfContour = side => {
   updateDxfAssignmentStatus()
 
   if (preparedDxfProfiles.left && preparedDxfProfiles.right) {
-    const leftPoints = preparedDxfProfiles.left.points
-    const rightPoints = preparedDxfProfiles.right.points
-
-    if (leftPoints.length !== rightPoints.length) {
-      dxfAssignmentStatus.textContent += '; кількість точок сторін не збігається'
-      return
-    }
-
-    renderSimulation(
-      leftPoints,
-      rightPoints,
-      `DXF-траєкторія — X/Y: ${leftPoints.length} точок, A/Z: ${rightPoints.length} точок`
-    )
+    renderPreparedDxfSimulation()
   }
 }
 
@@ -303,6 +402,8 @@ dxfPointCountInput.addEventListener('change', () => {
     if (preparedDxfProfiles[side]) assignSelectedDxfContour(side)
   }
 })
+cutPassModeInput.addEventListener('change', renderPreparedDxfSimulation)
+leadDistanceInput.addEventListener('input', renderPreparedDxfSimulation)
 
 loadButton.addEventListener('click', async () => {
   const file = fileInput.files[0]
