@@ -313,6 +313,33 @@ code {
   margin: 0 auto;
 }
 
+.dxf-tools {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 8px 12px;
+  margin: 12px 0 20px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+.dxf-tools label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 14px;
+}
+
+.dxf-tools input[type='number'] {
+  width: 72px;
+}
+
+#dxfAssignmentStatus {
+  flex-basis: 100%;
+}
+
 .three-d-controls {
   display: flex;
   flex-direction: column;

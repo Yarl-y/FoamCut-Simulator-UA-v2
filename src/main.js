@@ -1,5 +1,5 @@
 import './style.css'
-import { parseDxf, renderDxfPreview } from './dxf.js'
+import { parseDxf, renderDxfPreview, resampleDxfContour } from './dxf.js'
 
 document.querySelector('#app').innerHTML = `
   <div class="container">
@@ -18,6 +18,15 @@ document.querySelector('#app').innerHTML = `
       <svg id="dxfSvg" viewBox="0 0 800 500" width="800" height="500"
            style="border:1px solid #888"></svg>
       <p id="dxfStatus">DXF ще не завантажено</p>
+      <div id="dxfTools" class="dxf-tools" hidden>
+        <label>Контур <select id="dxfContourSelect"></select></label>
+        <label>Початкова точка <input id="dxfStartPoint" type="number" min="0" step="1" value="0"></label>
+        <label><input id="dxfReverse" type="checkbox"> Зворотний напрямок</label>
+        <label>Точок траєкторії <input id="dxfPointCount" type="number" min="2" step="1" value="200"></label>
+        <button id="assignDxfLeft">Призначити X/Y</button>
+        <button id="assignDxfRight">Призначити A/Z</button>
+        <p id="dxfAssignmentStatus">Профілі ще не призначені</p>
+      </div>
     </section>
 
     <h2>Траєкторія різання</h2>
@@ -62,6 +71,14 @@ const loadDxfButton = document.querySelector('#loadDxf')
 const dxfPreview = document.querySelector('#dxfPreview')
 const dxfSvg = document.querySelector('#dxfSvg')
 const dxfStatus = document.querySelector('#dxfStatus')
+const dxfTools = document.querySelector('#dxfTools')
+const dxfContourSelect = document.querySelector('#dxfContourSelect')
+const dxfStartPointInput = document.querySelector('#dxfStartPoint')
+const dxfReverseInput = document.querySelector('#dxfReverse')
+const dxfPointCountInput = document.querySelector('#dxfPointCount')
+const assignDxfLeftButton = document.querySelector('#assignDxfLeft')
+const assignDxfRightButton = document.querySelector('#assignDxfRight')
+const dxfAssignmentStatus = document.querySelector('#dxfAssignmentStatus')
 const svg = document.querySelector('#trajectory')
 const status = document.querySelector('#status')
 const foamLengthInput = document.getElementById('foamLength')
@@ -75,6 +92,8 @@ const stop3d = document.getElementById('stop3d')
 const reset3d = document.getElementById('reset3d')
 const speed3d = document.getElementById('speed3d')
 let renderActiveFoamBlock = null
+let activeDxfModel = null
+const preparedDxfProfiles = { left: null, right: null }
 
 const updateFoamBlockDimensions = () => {
   if (renderActiveFoamBlock) renderActiveFoamBlock()
@@ -85,6 +104,89 @@ foamWidthInput.addEventListener('input', updateFoamBlockDimensions)
 foamHeightInput.addEventListener('input', updateFoamBlockDimensions)
 profileLengthOffsetInput.addEventListener('input', updateFoamBlockDimensions)
 profileHeightOffsetInput.addEventListener('input', updateFoamBlockDimensions)
+
+const getSelectedDxfContour = () => {
+  if (!activeDxfModel) return null
+  return activeDxfModel.contours[Number(dxfContourSelect.value)] || null
+}
+
+const refreshDxfContourPreview = () => {
+  const contour = getSelectedDxfContour()
+  if (!contour) return
+
+  dxfStartPointInput.max = Math.max(0, contour.points.length - 1)
+  const startIndex = Math.min(
+    Math.max(0, Number(dxfStartPointInput.value) || 0),
+    contour.points.length - 1
+  )
+  dxfStartPointInput.value = startIndex
+  renderDxfPreview(dxfSvg, activeDxfModel, {
+    contour,
+    startIndex,
+    reverse: dxfReverseInput.checked
+  })
+}
+
+const updateDxfAssignmentStatus = () => {
+  const left = preparedDxfProfiles.left
+    ? `${preparedDxfProfiles.left.points.length} точок`
+    : 'не призначено'
+  const right = preparedDxfProfiles.right
+    ? `${preparedDxfProfiles.right.points.length} точок`
+    : 'не призначено'
+  dxfAssignmentStatus.textContent = `X/Y: ${left}; A/Z: ${right}`
+}
+
+const assignSelectedDxfContour = side => {
+  const contour = getSelectedDxfContour()
+  if (!contour) return
+
+  const pointCount = Math.max(2, Number(dxfPointCountInput.value) || 200)
+  const startIndex = Number(dxfStartPointInput.value) || 0
+  preparedDxfProfiles[side] = {
+    points: resampleDxfContour(contour, pointCount, startIndex, dxfReverseInput.checked),
+    contourIndex: Number(dxfContourSelect.value),
+    startIndex,
+    reverse: dxfReverseInput.checked
+  }
+  updateDxfAssignmentStatus()
+}
+
+dxfContourSelect.addEventListener('change', () => {
+  dxfStartPointInput.value = 0
+  refreshDxfContourPreview()
+})
+dxfStartPointInput.addEventListener('input', refreshDxfContourPreview)
+dxfReverseInput.addEventListener('change', refreshDxfContourPreview)
+assignDxfLeftButton.addEventListener('click', () => assignSelectedDxfContour('left'))
+assignDxfRightButton.addEventListener('click', () => assignSelectedDxfContour('right'))
+
+dxfSvg.addEventListener('click', event => {
+  const contour = getSelectedDxfContour()
+  if (!contour || !activeDxfModel) return
+
+  const rectangle = dxfSvg.getBoundingClientRect()
+  const pointerX = (event.clientX - rectangle.left) * 800 / rectangle.width
+  const pointerY = (event.clientY - rectangle.top) * 500 / rectangle.height
+  const { minX, minY, width, height } = activeDxfModel.bounds
+  const scale = Math.min(720 / Math.max(width, 1), 420 / Math.max(height, 1))
+  let nearestIndex = 0
+  let nearestDistance = Infinity
+
+  contour.points.forEach((point, index) => {
+    const x = 40 + (point.x - minX) * scale
+    const y = 460 - (point.y - minY) * scale
+    const distance = Math.hypot(pointerX - x, pointerY - y)
+
+    if (distance < nearestDistance) {
+      nearestDistance = distance
+      nearestIndex = index
+    }
+  })
+
+  dxfStartPointInput.value = nearestIndex
+  refreshDxfContourPreview()
+})
 
 loadDxfButton.addEventListener('click', async () => {
   const file = dxfFileInput.files[0]
@@ -100,7 +202,24 @@ loadDxfButton.addEventListener('click', async () => {
 
   try {
     const model = parseDxf(await file.text())
-    renderDxfPreview(dxfSvg, model)
+    activeDxfModel = model
+    preparedDxfProfiles.left = null
+    preparedDxfProfiles.right = null
+    dxfContourSelect.replaceChildren()
+
+    model.contours.forEach((contour, index) => {
+      const option = document.createElement('option')
+      option.value = index
+      option.textContent = `Контур ${index + 1}: ${contour.closed ? 'замкнений' : 'відкритий'}, `
+        + `${contour.sourcePathCount} сегм.`
+      dxfContourSelect.appendChild(option)
+    })
+
+    dxfTools.hidden = false
+    dxfStartPointInput.value = 0
+    dxfReverseInput.checked = false
+    updateDxfAssignmentStatus()
+    refreshDxfContourPreview()
 
     const unsupportedText = model.unsupported.length
       ? ` Непідтримані об’єкти: ${model.unsupported.join(', ')}.`
@@ -108,10 +227,14 @@ loadDxfButton.addEventListener('click', async () => {
 
     dxfStatus.textContent =
       `${file.name}: ${model.paths.length} об’єктів; `
+      + `${model.contours.length} контурів `
+      + `(${model.contours.filter(contour => contour.closed).length} замкнених); `
       + `${model.bounds.width.toFixed(2)} × ${model.bounds.height.toFixed(2)} мм; `
       + `одиниці: ${model.units}.${unsupportedText}`
   } catch (error) {
+    activeDxfModel = null
     dxfSvg.replaceChildren()
+    dxfTools.hidden = true
     dxfStatus.textContent = `Не вдалося прочитати DXF: ${error.message}`
   }
 })

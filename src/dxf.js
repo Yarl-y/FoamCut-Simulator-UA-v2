@@ -210,6 +210,128 @@ const scalePath = (path, factor) => ({
   points: path.points.map(point => ({ x: point.x * factor, y: point.y * factor }))
 })
 
+const pointDistance = (first, second) => Math.hypot(first.x - second.x, first.y - second.y)
+
+export const orderDxfContours = (paths, tolerance = 0.01) => {
+  const unused = new Set(paths.map((_, index) => index))
+  const contours = []
+
+  while (unused.size) {
+    const firstIndex = unused.values().next().value
+    const firstPath = paths[firstIndex]
+    const contourPoints = firstPath.points.map(point => ({ ...point }))
+    const sourcePathIndexes = [firstIndex]
+    unused.delete(firstIndex)
+
+    if (!firstPath.closed) {
+      let connected = true
+
+      while (connected && unused.size) {
+        connected = false
+        const contourStart = contourPoints[0]
+        const contourEnd = contourPoints[contourPoints.length - 1]
+
+        for (const candidateIndex of unused) {
+          const candidate = paths[candidateIndex]
+          const candidateStart = candidate.points[0]
+          const candidateEnd = candidate.points[candidate.points.length - 1]
+
+          if (pointDistance(contourEnd, candidateStart) <= tolerance) {
+            contourPoints.push(...candidate.points.slice(1).map(point => ({ ...point })))
+          } else if (pointDistance(contourEnd, candidateEnd) <= tolerance) {
+            contourPoints.push(...candidate.points.slice(0, -1).reverse().map(point => ({ ...point })))
+          } else if (pointDistance(contourStart, candidateEnd) <= tolerance) {
+            contourPoints.unshift(...candidate.points.slice(0, -1).map(point => ({ ...point })))
+          } else if (pointDistance(contourStart, candidateStart) <= tolerance) {
+            contourPoints.unshift(...candidate.points.slice(1).reverse().map(point => ({ ...point })))
+          } else {
+            continue
+          }
+
+          unused.delete(candidateIndex)
+          sourcePathIndexes.push(candidateIndex)
+          connected = true
+          break
+        }
+      }
+    }
+
+    const closed = firstPath.closed
+      || pointDistance(contourPoints[0], contourPoints[contourPoints.length - 1]) <= tolerance
+
+    if (closed && pointDistance(contourPoints[0], contourPoints[contourPoints.length - 1]) <= tolerance) {
+      contourPoints.pop()
+    }
+
+    contours.push({
+      points: contourPoints,
+      closed,
+      sourcePathIndexes,
+      sourcePathCount: sourcePathIndexes.length,
+      tolerance
+    })
+  }
+
+  return contours
+}
+
+export const resampleDxfContour = (contour, pointCount, startIndex = 0, reverse = false) => {
+  const count = Math.max(2, Math.round(pointCount))
+  const source = contour.points
+
+  if (source.length < 2) return source.map(point => ({ ...point }))
+
+  const normalizedStart = ((Math.round(startIndex) % source.length) + source.length) % source.length
+  const ordered = []
+
+  if (contour.closed) {
+    for (let offset = 0; offset < source.length; offset++) {
+      const direction = reverse ? -offset : offset
+      const index = (normalizedStart + direction + source.length) % source.length
+      ordered.push(source[index])
+    }
+    ordered.push(ordered[0])
+  } else {
+    const openSource = reverse ? [...source].reverse() : [...source]
+    ordered.push(...openSource)
+  }
+
+  const cumulative = [0]
+
+  for (let index = 1; index < ordered.length; index++) {
+    cumulative.push(cumulative[index - 1] + pointDistance(ordered[index - 1], ordered[index]))
+  }
+
+  const totalLength = cumulative[cumulative.length - 1]
+  if (!totalLength) return Array.from({ length: count }, () => ({ ...ordered[0] }))
+
+  const result = []
+  const divisor = contour.closed ? count : count - 1
+
+  for (let sampleIndex = 0; sampleIndex < count; sampleIndex++) {
+    const targetDistance = totalLength * sampleIndex / divisor
+    let segmentIndex = 1
+
+    while (segmentIndex < cumulative.length - 1 && cumulative[segmentIndex] < targetDistance) {
+      segmentIndex++
+    }
+
+    const segmentStartDistance = cumulative[segmentIndex - 1]
+    const segmentEndDistance = cumulative[segmentIndex]
+    const segmentLength = segmentEndDistance - segmentStartDistance
+    const ratio = segmentLength ? (targetDistance - segmentStartDistance) / segmentLength : 0
+    const start = ordered[segmentIndex - 1]
+    const end = ordered[segmentIndex]
+
+    result.push({
+      x: start.x + (end.x - start.x) * ratio,
+      y: start.y + (end.y - start.y) * ratio
+    })
+  }
+
+  return result
+}
+
 export const parseDxf = text => {
   const pairs = parsePairs(text)
   const blocks = getEntityBlocks(pairs)
@@ -291,20 +413,26 @@ export const parseDxf = text => {
   const maxX = Math.max(...points.map(point => point.x))
   const minY = Math.min(...points.map(point => point.y))
   const maxY = Math.max(...points.map(point => point.y))
+  const contours = orderDxfContours(paths)
 
   return {
     paths,
+    contours,
     bounds: { minX, maxX, minY, maxY, width: maxX - minX, height: maxY - minY },
     units: unitInfo.units,
     unsupported: [...unsupported].sort()
   }
 }
 
-export const renderDxfPreview = (svg, model) => {
+export const renderDxfPreview = (svg, model, options = {}) => {
   const namespace = 'http://www.w3.org/2000/svg'
   const { minX, minY, width, height } = model.bounds
   const padding = 40
   const scale = Math.min(720 / Math.max(width, 1), 420 / Math.max(height, 1))
+  const toSvgPoint = point => ({
+    x: padding + (point.x - minX) * scale,
+    y: 460 - (point.y - minY) * scale
+  })
 
   svg.replaceChildren()
 
@@ -314,9 +442,8 @@ export const renderDxfPreview = (svg, model) => {
       ? [...path.points, path.points[0]]
       : path.points
     const svgPoints = points.map(point => {
-      const x = padding + (point.x - minX) * scale
-      const y = 460 - (point.y - minY) * scale
-      return `${x},${y}`
+      const svgPoint = toSvgPoint(point)
+      return `${svgPoint.x},${svgPoint.y}`
     }).join(' ')
 
     polyline.setAttribute('points', svgPoints)
@@ -328,5 +455,53 @@ export const renderDxfPreview = (svg, model) => {
     polyline.dataset.entity = path.type
     polyline.dataset.layer = path.layer
     svg.appendChild(polyline)
+  }
+
+  if (options.contour?.points.length) {
+    const contour = options.contour
+    const activePolyline = document.createElementNS(namespace, 'polyline')
+    const activePoints = contour.closed
+      ? [...contour.points, contour.points[0]]
+      : contour.points
+
+    activePolyline.setAttribute('points', activePoints.map(point => {
+      const svgPoint = toSvgPoint(point)
+      return `${svgPoint.x},${svgPoint.y}`
+    }).join(' '))
+    activePolyline.setAttribute('fill', 'none')
+    activePolyline.setAttribute('stroke', '#2563eb')
+    activePolyline.setAttribute('stroke-width', '3')
+    activePolyline.setAttribute('stroke-linejoin', 'round')
+    svg.appendChild(activePolyline)
+
+    const startIndex = ((Math.round(options.startIndex || 0) % contour.points.length)
+      + contour.points.length) % contour.points.length
+    const nextOffset = options.reverse ? -1 : 1
+    const nextIndex = (startIndex + nextOffset + contour.points.length) % contour.points.length
+    const startPoint = toSvgPoint(contour.points[startIndex])
+    const nextPoint = toSvgPoint(contour.points[nextIndex])
+    const directionLength = Math.hypot(nextPoint.x - startPoint.x, nextPoint.y - startPoint.y)
+
+    if (directionLength) {
+      const direction = document.createElementNS(namespace, 'line')
+      const visibleLength = Math.min(24, directionLength)
+      direction.setAttribute('x1', startPoint.x)
+      direction.setAttribute('y1', startPoint.y)
+      direction.setAttribute('x2', startPoint.x + (nextPoint.x - startPoint.x) / directionLength * visibleLength)
+      direction.setAttribute('y2', startPoint.y + (nextPoint.y - startPoint.y) / directionLength * visibleLength)
+      direction.setAttribute('stroke', '#22c55e')
+      direction.setAttribute('stroke-width', '4')
+      direction.setAttribute('stroke-linecap', 'round')
+      svg.appendChild(direction)
+    }
+
+    const startMarker = document.createElementNS(namespace, 'circle')
+    startMarker.setAttribute('cx', startPoint.x)
+    startMarker.setAttribute('cy', startPoint.y)
+    startMarker.setAttribute('r', '6')
+    startMarker.setAttribute('fill', '#22c55e')
+    startMarker.setAttribute('stroke', '#14532d')
+    startMarker.setAttribute('stroke-width', '2')
+    svg.appendChild(startMarker)
   }
 }
