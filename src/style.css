@@ -302,15 +302,46 @@ code {
   text-align: center;
 }
 
-#dxfPreview {
+.dxf-profiles {
   margin-top: 20px;
 }
 
-#dxfSvg {
+.dxf-profile-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+  margin-top: 12px;
+}
+
+.dxf-profile-panel {
+  min-width: 0;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+.dxf-profile-panel h3 {
+  margin: 0 0 10px;
+  color: var(--text-h);
+  font-size: 18px;
+}
+
+.dxf-profile-panel svg {
   display: block;
   max-width: 100%;
   height: auto;
-  margin: 0 auto;
+  margin: 10px auto;
+}
+
+.dxf-point-count {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 14px;
+}
+
+.dxf-point-count input {
+  width: 72px;
 }
 
 .dxf-tools {
@@ -338,6 +369,13 @@ code {
 
 #dxfAssignmentStatus {
   flex-basis: 100%;
+  margin-top: 10px;
+}
+
+@media (max-width: 800px) {
+  .dxf-profile-grid {
+    grid-template-columns: 1fr;
+  }
 }
 
 .three-d-controls {
