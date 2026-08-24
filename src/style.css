@@ -302,6 +302,17 @@ code {
   text-align: center;
 }
 
+#dxfPreview {
+  margin-top: 20px;
+}
+
+#dxfSvg {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  margin: 0 auto;
+}
+
 .three-d-controls {
   display: flex;
   flex-direction: column;

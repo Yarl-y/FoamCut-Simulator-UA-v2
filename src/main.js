@@ -1,4 +1,5 @@
 import './style.css'
+import { parseDxf, renderDxfPreview } from './dxf.js'
 
 document.querySelector('#app').innerHTML = `
   <div class="container">
@@ -11,6 +12,13 @@ document.querySelector('#app').innerHTML = `
       <input type="file" id="dxfFile" accept=".dxf">
       <button id="loadDxf">Завантажити DXF</button>
     </div>
+
+    <section id="dxfPreview" hidden>
+      <h2>Контур DXF</h2>
+      <svg id="dxfSvg" viewBox="0 0 800 500" width="800" height="500"
+           style="border:1px solid #888"></svg>
+      <p id="dxfStatus">DXF ще не завантажено</p>
+    </section>
 
     <h2>Траєкторія різання</h2>
 
@@ -49,6 +57,11 @@ view3d.innerHTML = `
 
 const fileInput = document.querySelector('#ncFile')
 const loadButton = document.querySelector('#load')
+const dxfFileInput = document.querySelector('#dxfFile')
+const loadDxfButton = document.querySelector('#loadDxf')
+const dxfPreview = document.querySelector('#dxfPreview')
+const dxfSvg = document.querySelector('#dxfSvg')
+const dxfStatus = document.querySelector('#dxfStatus')
 const svg = document.querySelector('#trajectory')
 const status = document.querySelector('#status')
 const foamLengthInput = document.getElementById('foamLength')
@@ -72,6 +85,36 @@ foamWidthInput.addEventListener('input', updateFoamBlockDimensions)
 foamHeightInput.addEventListener('input', updateFoamBlockDimensions)
 profileLengthOffsetInput.addEventListener('input', updateFoamBlockDimensions)
 profileHeightOffsetInput.addEventListener('input', updateFoamBlockDimensions)
+
+loadDxfButton.addEventListener('click', async () => {
+  const file = dxfFileInput.files[0]
+
+  if (!file) {
+    dxfPreview.hidden = false
+    dxfStatus.textContent = 'Спочатку виберіть DXF-файл'
+    return
+  }
+
+  dxfPreview.hidden = false
+  dxfStatus.textContent = `Читання файлу ${file.name}...`
+
+  try {
+    const model = parseDxf(await file.text())
+    renderDxfPreview(dxfSvg, model)
+
+    const unsupportedText = model.unsupported.length
+      ? ` Непідтримані об’єкти: ${model.unsupported.join(', ')}.`
+      : ''
+
+    dxfStatus.textContent =
+      `${file.name}: ${model.paths.length} об’єктів; `
+      + `${model.bounds.width.toFixed(2)} × ${model.bounds.height.toFixed(2)} мм; `
+      + `одиниці: ${model.units}.${unsupportedText}`
+  } catch (error) {
+    dxfSvg.replaceChildren()
+    dxfStatus.textContent = `Не вдалося прочитати DXF: ${error.message}`
+  }
+})
 
 loadButton.addEventListener('click', async () => {
   const file = fileInput.files[0]
