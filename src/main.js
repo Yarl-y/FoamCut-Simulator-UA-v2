@@ -26,6 +26,9 @@ document.querySelector('#app').innerHTML = `
         <label>Підхід і вихід, мм
           <input id="leadDistance" type="number" min="0" step="1" value="20">
         </label>
+        <label>Швидкість різання, мм/хв
+          <input id="cutFeedRate" type="number" min="1" step="10" value="300">
+        </label>
       </div>
       <div class="dxf-profile-grid">
         <section id="dxfLeftPanel" class="dxf-profile-panel" data-side="left">
@@ -100,6 +103,7 @@ const loadButton = document.querySelector('#load')
 const dxfPointCountInput = document.querySelector('#dxfPointCount')
 const cutPassModeInput = document.querySelector('#cutPassMode')
 const leadDistanceInput = document.querySelector('#leadDistance')
+const cutFeedRateInput = document.querySelector('#cutFeedRate')
 const dxfAssignmentStatus = document.querySelector('#dxfAssignmentStatus')
 const svg = document.querySelector('#trajectory')
 const status = document.querySelector('#status')
@@ -115,6 +119,7 @@ const reset3d = document.getElementById('reset3d')
 const speed3d = document.getElementById('speed3d')
 let renderActiveFoamBlock = null
 const preparedDxfProfiles = { left: null, right: null }
+const cuttingSettings = { feedRate: 300 }
 const dxfSides = {
   left: {
     label: 'X/Y',
@@ -268,6 +273,10 @@ const buildCuttingPath = points => {
 const renderPreparedDxfSimulation = () => {
   if (!preparedDxfProfiles.left || !preparedDxfProfiles.right) return
 
+  const requestedFeedRate = Number(cutFeedRateInput.value)
+  cuttingSettings.feedRate = Number.isFinite(requestedFeedRate) && requestedFeedRate > 0
+    ? requestedFeedRate
+    : 300
   const leftPoints = buildCuttingPath(preparedDxfProfiles.left.points)
   const rightPoints = buildCuttingPath(preparedDxfProfiles.right.points)
 
@@ -282,7 +291,8 @@ const renderPreparedDxfSimulation = () => {
   renderSimulation(
     leftPoints,
     rightPoints,
-    `DXF-траєкторія — ${passLabel}; X/Y і A/Z: ${leftPoints.length} синхронних точок`
+    `DXF-траєкторія — ${passLabel}; X/Y і A/Z: ${leftPoints.length} синхронних точок; `
+      + `швидкість різання: ${cuttingSettings.feedRate} мм/хв`
   )
 }
 
@@ -404,6 +414,7 @@ dxfPointCountInput.addEventListener('change', () => {
 })
 cutPassModeInput.addEventListener('change', renderPreparedDxfSimulation)
 leadDistanceInput.addEventListener('input', renderPreparedDxfSimulation)
+cutFeedRateInput.addEventListener('input', renderPreparedDxfSimulation)
 
 loadButton.addEventListener('click', async () => {
   const file = fileInput.files[0]
