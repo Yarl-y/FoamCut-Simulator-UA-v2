@@ -392,6 +392,34 @@ code {
   margin-top: 10px;
 }
 
+.nc-generator {
+  margin: 12px 0 20px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+.nc-generator-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+#generatedNcPreview {
+  width: 100%;
+  box-sizing: border-box;
+  resize: vertical;
+  font-family: var(--mono);
+  font-size: 13px;
+  line-height: 1.35;
+}
+
+#generatedNcStatus {
+  margin-top: 8px;
+}
+
 @media (max-width: 800px) {
   .dxf-profile-grid {
     grid-template-columns: 1fr;

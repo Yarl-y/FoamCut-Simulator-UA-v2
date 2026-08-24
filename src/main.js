@@ -61,6 +61,15 @@ document.querySelector('#app').innerHTML = `
         </section>
       </div>
       <p id="dxfAssignmentStatus">Профілі ще не призначені</p>
+      <section class="nc-generator">
+        <div class="nc-generator-actions">
+          <button id="generateNc" disabled>Створити NC для Mach3</button>
+          <button id="downloadNc" disabled>Завантажити NC-файл</button>
+        </div>
+        <textarea id="generatedNcPreview" rows="12" readonly
+          placeholder="Після призначення обох профілів тут з’явиться NC/G-code"></textarea>
+        <p id="generatedNcStatus">Спочатку призначте профілі X/Y та A/Z</p>
+      </section>
     </section>
 
     <h2>Траєкторія різання</h2>
@@ -105,6 +114,10 @@ const cutPassModeInput = document.querySelector('#cutPassMode')
 const leadDistanceInput = document.querySelector('#leadDistance')
 const cutFeedRateInput = document.querySelector('#cutFeedRate')
 const dxfAssignmentStatus = document.querySelector('#dxfAssignmentStatus')
+const generateNcButton = document.querySelector('#generateNc')
+const downloadNcButton = document.querySelector('#downloadNc')
+const generatedNcPreview = document.querySelector('#generatedNcPreview')
+const generatedNcStatus = document.querySelector('#generatedNcStatus')
 const svg = document.querySelector('#trajectory')
 const status = document.querySelector('#status')
 const foamLengthInput = document.getElementById('foamLength')
@@ -120,6 +133,8 @@ const speed3d = document.getElementById('speed3d')
 let renderActiveFoamBlock = null
 const preparedDxfProfiles = { left: null, right: null }
 const cuttingSettings = { feedRate: 300 }
+let preparedCuttingTrajectory = null
+let generatedNcText = ''
 const dxfSides = {
   left: {
     label: 'X/Y',
@@ -151,6 +166,7 @@ const dxfSides = {
 
 const updateFoamBlockDimensions = () => {
   if (renderActiveFoamBlock) renderActiveFoamBlock()
+  if (preparedCuttingTrajectory) updateGeneratedNcPreview()
 }
 
 foamLengthInput.addEventListener('input', updateFoamBlockDimensions)
@@ -270,6 +286,64 @@ const buildCuttingPath = points => {
   ]
 }
 
+const formatNcNumber = value => {
+  const normalized = Math.abs(value) < 0.0005 ? 0 : value
+  return normalized.toFixed(3)
+}
+
+const createMach3Nc = trajectory => {
+  const readNcOffset = input => {
+    const value = Number(input.value)
+    return Number.isFinite(value) ? Math.max(0, value) : 0
+  }
+  const offsetX = readNcOffset(profileLengthOffsetInput)
+  const offsetY = readNcOffset(profileHeightOffsetInput)
+  const lines = [
+    '%',
+    '(FoamCut Simulator - 4 axis X/Y + A/Z)',
+    '(Metric units, absolute coordinates)',
+    'G21',
+    'G90',
+    'G94',
+    `F${formatNcNumber(trajectory.feedRate)}`
+  ]
+  let previousLine = null
+
+  for (let index = 0; index < trajectory.leftPoints.length; index++) {
+    const left = trajectory.leftPoints[index]
+    const right = trajectory.rightPoints[index]
+    const movement = `G1 X${formatNcNumber(left.x + offsetX)} `
+      + `Y${formatNcNumber(left.y + offsetY)} `
+      + `A${formatNcNumber(right.x + offsetX)} `
+      + `Z${formatNcNumber(right.y + offsetY)}`
+
+    if (movement !== previousLine) lines.push(movement)
+    previousLine = movement
+  }
+
+  lines.push('M30', '%')
+  return `${lines.join('\n')}\n`
+}
+
+const updateGeneratedNcPreview = () => {
+  if (!preparedCuttingTrajectory) {
+    generatedNcText = ''
+    generatedNcPreview.value = ''
+    generateNcButton.disabled = true
+    downloadNcButton.disabled = true
+    generatedNcStatus.textContent = 'Спочатку призначте профілі X/Y та A/Z'
+    return
+  }
+
+  generatedNcText = createMach3Nc(preparedCuttingTrajectory)
+  generatedNcPreview.value = generatedNcText
+  generateNcButton.disabled = false
+  downloadNcButton.disabled = false
+  const movementCount = generatedNcText.split('\n').filter(line => line.startsWith('G1 ')).length
+  generatedNcStatus.textContent = `NC готовий: ${movementCount} синхронних рухів; `
+    + `F${formatNcNumber(preparedCuttingTrajectory.feedRate)} мм/хв; G21; G90`
+}
+
 const renderPreparedDxfSimulation = () => {
   if (!preparedDxfProfiles.left || !preparedDxfProfiles.right) return
 
@@ -281,9 +355,19 @@ const renderPreparedDxfSimulation = () => {
   const rightPoints = buildCuttingPath(preparedDxfProfiles.right.points)
 
   if (leftPoints.length !== rightPoints.length) {
+    preparedCuttingTrajectory = null
+    updateGeneratedNcPreview()
     dxfAssignmentStatus.textContent += '; кількість точок сторін не збігається'
     return
   }
+
+  preparedCuttingTrajectory = {
+    leftPoints,
+    rightPoints,
+    feedRate: cuttingSettings.feedRate,
+    passMode: cutPassModeInput.value
+  }
+  updateGeneratedNcPreview()
 
   const passLabel = cutPassModeInput.value === 'double'
     ? 'два проходи (верх/низ)'
@@ -359,6 +443,8 @@ const loadDxfSide = async side => {
     const model = parseDxf(await file.text())
     state.model = model
     preparedDxfProfiles[side] = null
+    preparedCuttingTrajectory = null
+    updateGeneratedNcPreview()
     state.contourSelect.replaceChildren()
 
     model.contours.forEach((contour, index) => {
@@ -388,6 +474,8 @@ const loadDxfSide = async side => {
   } catch (error) {
     state.model = null
     preparedDxfProfiles[side] = null
+    preparedCuttingTrajectory = null
+    updateGeneratedNcPreview()
     state.svg.replaceChildren()
     state.tools.hidden = true
     updateDxfAssignmentStatus()
@@ -415,6 +503,17 @@ dxfPointCountInput.addEventListener('change', () => {
 cutPassModeInput.addEventListener('change', renderPreparedDxfSimulation)
 leadDistanceInput.addEventListener('input', renderPreparedDxfSimulation)
 cutFeedRateInput.addEventListener('input', renderPreparedDxfSimulation)
+generateNcButton.addEventListener('click', updateGeneratedNcPreview)
+downloadNcButton.addEventListener('click', () => {
+  if (!generatedNcText) return
+
+  const blobUrl = URL.createObjectURL(new Blob([generatedNcText], { type: 'text/plain' }))
+  const downloadLink = document.createElement('a')
+  downloadLink.href = blobUrl
+  downloadLink.download = 'foamcut-generated.nc'
+  downloadLink.click()
+  URL.revokeObjectURL(blobUrl)
+})
 
 loadButton.addEventListener('click', async () => {
   const file = fileInput.files[0]
