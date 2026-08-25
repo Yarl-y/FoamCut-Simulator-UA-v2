@@ -1,5 +1,6 @@
 import './style.css'
 import { parseDxf, renderDxfPreview, resampleDxfContour } from './dxf.js'
+import { createDxfPolyline, createPreviewModel, recoverNcProfiles } from './nc-dxf.js'
 
 document.querySelector('#app').innerHTML = `
   <div class="container">
@@ -9,6 +10,11 @@ document.querySelector('#app').innerHTML = `
     <div>
       <input type="file" id="ncFile" accept=".nc,.tap,.gcode,.txt">
       <button id="load">Завантажити NC</button>
+    </div>
+    <div class="nc-to-dxf-controls">
+      <button id="downloadNcDxfLeft" disabled>Завантажити DXF X/Y</button>
+      <button id="downloadNcDxfRight" disabled>Завантажити DXF A/Z</button>
+      <span id="ncToDxfStatus">Відкрийте NC для відновлення профілів</span>
     </div>
 
     <section id="dxfProfiles" class="dxf-profiles">
@@ -118,6 +124,9 @@ view3d.innerHTML = `
 
 const fileInput = document.querySelector('#ncFile')
 const loadButton = document.querySelector('#load')
+const downloadNcDxfLeftButton = document.querySelector('#downloadNcDxfLeft')
+const downloadNcDxfRightButton = document.querySelector('#downloadNcDxfRight')
+const ncToDxfStatus = document.querySelector('#ncToDxfStatus')
 const dxfPointCountInput = document.querySelector('#dxfPointCount')
 const cutPassModeInput = document.querySelector('#cutPassMode')
 const leadDistanceInput = document.querySelector('#leadDistance')
@@ -151,6 +160,7 @@ const preparedDxfProfiles = { left: null, right: null }
 const cuttingSettings = { feedRate: 300 }
 let preparedCuttingTrajectory = null
 let generatedNcText = ''
+let recoveredNcProfiles = null
 const dxfSides = {
   left: {
     label: 'X/Y',
@@ -317,12 +327,26 @@ const createMach3Nc = trajectory => {
   const lines = [
     '%',
     '(FoamCut Simulator - 4 axis X/Y + A/Z)',
-    '(Metric units, absolute coordinates)',
-    'G21',
-    'G90',
-    'G94',
-    `F${formatNcNumber(trajectory.feedRate)}`
+    '(Metric units, absolute coordinates)'
   ]
+
+  if (trajectory.sourceLeftPoints && trajectory.sourceRightPoints) {
+    lines.push('(FOAMCUT_PROFILE_DATA_BEGIN)')
+    const profileCount = Math.min(
+      trajectory.sourceLeftPoints.length,
+      trajectory.sourceRightPoints.length
+    )
+
+    for (let index = 0; index < profileCount; index++) {
+      const left = trajectory.sourceLeftPoints[index]
+      const right = trajectory.sourceRightPoints[index]
+      lines.push(`(FOAMCUT_PROFILE X${formatNcNumber(left.x)} Y${formatNcNumber(left.y)} `
+        + `A${formatNcNumber(right.x)} Z${formatNcNumber(right.y)})`)
+    }
+    lines.push('(FOAMCUT_PROFILE_DATA_END)')
+  }
+
+  lines.push('G21', 'G90', 'G94', `F${formatNcNumber(trajectory.feedRate)}`)
   let previousLine = null
 
   for (let index = 0; index < trajectory.leftPoints.length; index++) {
@@ -430,6 +454,8 @@ const renderPreparedDxfSimulation = () => {
   preparedCuttingTrajectory = {
     leftPoints,
     rightPoints,
+    sourceLeftPoints: preparedDxfProfiles.left.points.map(point => ({ ...point })),
+    sourceRightPoints: preparedDxfProfiles.right.points.map(point => ({ ...point })),
     feedRate: cuttingSettings.feedRate,
     passMode: cutPassModeInput.value
   }
@@ -585,6 +611,26 @@ downloadNcButton.addEventListener('click', () => {
   URL.revokeObjectURL(blobUrl)
 })
 
+const downloadRecoveredDxf = side => {
+  if (!recoveredNcProfiles) return
+
+  const isLeft = side === 'left'
+  const points = isLeft ? recoveredNcProfiles.leftPoints : recoveredNcProfiles.rightPoints
+  const closed = isLeft ? recoveredNcProfiles.leftClosed : recoveredNcProfiles.rightClosed
+  const fileName = isLeft ? 'profile_XY.dxf' : 'profile_AZ.dxf'
+  const layer = isLeft ? 'XY_PROFILE' : 'AZ_PROFILE'
+  const dxfText = createDxfPolyline(points, layer, closed)
+  const blobUrl = URL.createObjectURL(new Blob([dxfText], { type: 'application/dxf' }))
+  const downloadLink = document.createElement('a')
+  downloadLink.href = blobUrl
+  downloadLink.download = fileName
+  downloadLink.click()
+  URL.revokeObjectURL(blobUrl)
+}
+
+downloadNcDxfLeftButton.addEventListener('click', () => downloadRecoveredDxf('left'))
+downloadNcDxfRightButton.addEventListener('click', () => downloadRecoveredDxf('right'))
+
 loadButton.addEventListener('click', async () => {
   const file = fileInput.files[0]
 
@@ -594,6 +640,10 @@ loadButton.addEventListener('click', async () => {
   }
 
   const text = await file.text()
+recoveredNcProfiles = null
+downloadNcDxfLeftButton.disabled = true
+downloadNcDxfRightButton.disabled = true
+ncToDxfStatus.textContent = 'Пошук профілів у NC...'
 const leftPoints = []
 const rightPoints = []
 
@@ -629,8 +679,41 @@ if (zMatch) z = isAbsoluteMode ? Number(zMatch[1]) : z + Number(zMatch[1])
 }
    if (leftPoints.length < 2 || rightPoints.length < 2) {
         status.textContent = 'У файлі не знайдено траєкторію 4 осей'
+        ncToDxfStatus.textContent = 'Не вдалося відновити профілі з цього NC'
         return
     }
+
+    recoveredNcProfiles = recoverNcProfiles(text, leftPoints, rightPoints)
+    downloadNcDxfLeftButton.disabled = false
+    downloadNcDxfRightButton.disabled = false
+
+    const recoveredSides = [
+      ['left', recoveredNcProfiles.leftPoints, recoveredNcProfiles.leftClosed],
+      ['right', recoveredNcProfiles.rightPoints, recoveredNcProfiles.rightClosed]
+    ]
+
+    for (const [side, points, closed] of recoveredSides) {
+      const state = dxfSides[side]
+      state.model = createPreviewModel(points, closed)
+      state.contourSelect.replaceChildren()
+      const option = document.createElement('option')
+      option.value = '0'
+      option.textContent = `Відновлений контур: ${closed ? 'замкнений' : 'відкритий'}, ${points.length} точок`
+      state.contourSelect.appendChild(option)
+      state.startInput.value = 0
+      state.reverseInput.checked = false
+      state.tools.hidden = false
+      state.status.textContent = `Відновлено з ${file.name}: ${points.length} точок, `
+        + `${closed ? 'замкнений профіль' : 'повна відкрита траєкторія'}`
+      refreshDxfContourPreview(side)
+    }
+
+    const recoveryMessage = {
+      embedded: 'Точні чисті профілі відновлено зі службових даних FoamCut',
+      detected: 'Замкнені профілі знайдено автоматично',
+      full: 'Службових даних немає: DXF міститиме повну траєкторію NC'
+    }
+    ncToDxfStatus.textContent = recoveryMessage[recoveredNcProfiles.method]
 
     renderSimulation(
       leftPoints,

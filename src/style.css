@@ -306,6 +306,20 @@ code {
   margin-top: 20px;
 }
 
+.nc-to-dxf-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  margin: 10px 0 18px;
+}
+
+#ncToDxfStatus {
+  flex-basis: 100%;
+  font-size: 14px;
+}
+
 .dxf-profile-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
