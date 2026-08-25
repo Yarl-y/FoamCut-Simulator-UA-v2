@@ -85,27 +85,47 @@ export const createDxfPolyline = (points, layer, closed = true) => {
   const cleanPoints = closed ? stripDuplicateEnd(points) : points
   if (cleanPoints.length < 2) throw new Error('Недостатньо точок для створення DXF')
 
+  const minX = Math.min(...cleanPoints.map(point => point.x))
+  const maxX = Math.max(...cleanPoints.map(point => point.x))
+  const minY = Math.min(...cleanPoints.map(point => point.y))
+  const maxY = Math.max(...cleanPoints.map(point => point.y))
+
   const lines = [
     '0', 'SECTION', '2', 'HEADER',
-    '9', '$ACADVER', '1', 'AC1015',
-    '9', '$INSUNITS', '70', '4',
+    '9', '$ACADVER', '1', 'AC1009',
+    '9', '$EXTMIN', '10', dxfNumber(minX), '20', dxfNumber(minY), '30', '0',
+    '9', '$EXTMAX', '10', dxfNumber(maxX), '20', dxfNumber(maxY), '30', '0',
     '9', '$MEASUREMENT', '70', '1',
     '0', 'ENDSEC',
+    '0', 'SECTION', '2', 'TABLES',
+    '0', 'TABLE', '2', 'LAYER', '70', '1',
+    '0', 'LAYER', '2', layer, '70', '0', '62', '7', '6', 'CONTINUOUS',
+    '0', 'ENDTAB',
+    '0', 'ENDSEC',
+    '0', 'SECTION', '2', 'BLOCKS',
+    '0', 'ENDSEC',
     '0', 'SECTION', '2', 'ENTITIES',
-    '0', 'LWPOLYLINE',
-    '100', 'AcDbEntity',
+    '0', 'POLYLINE',
     '8', layer,
-    '100', 'AcDbPolyline',
-    '90', String(cleanPoints.length),
-    '70', closed ? '1' : '0'
+    '66', '1',
+    '70', closed ? '1' : '0',
+    '10', '0', '20', '0', '30', '0'
   ]
 
   for (const point of cleanPoints) {
-    lines.push('10', dxfNumber(point.x), '20', dxfNumber(point.y))
+    lines.push(
+      '0', 'VERTEX',
+      '8', layer,
+      '10', dxfNumber(point.x),
+      '20', dxfNumber(point.y),
+      '30', '0',
+      '70', '0'
+    )
   }
 
+  lines.push('0', 'SEQEND', '8', layer)
   lines.push('0', 'ENDSEC', '0', 'EOF')
-  return `${lines.join('\n')}\n`
+  return `${lines.join('\r\n')}\r\n`
 }
 
 export const createPreviewModel = (points, closed) => {

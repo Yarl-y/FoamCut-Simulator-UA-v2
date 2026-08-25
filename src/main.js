@@ -624,8 +624,10 @@ const downloadRecoveredDxf = side => {
   const downloadLink = document.createElement('a')
   downloadLink.href = blobUrl
   downloadLink.download = fileName
+  document.body.appendChild(downloadLink)
   downloadLink.click()
-  URL.revokeObjectURL(blobUrl)
+  downloadLink.remove()
+  setTimeout(() => URL.revokeObjectURL(blobUrl), 1000)
 }
 
 downloadNcDxfLeftButton.addEventListener('click', () => downloadRecoveredDxf('left'))
