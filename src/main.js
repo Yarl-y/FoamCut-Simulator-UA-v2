@@ -118,6 +118,14 @@ view3d.innerHTML = `
       <button id="reset3d">На початок</button>
       <label>Швидкість <input id="speed3d" type="range" min="1" max="100" value="25"></label>
     </div>
+    <div class="orbit-controls">
+      <button data-camera-view="iso">Ізометрія</button>
+      <button data-camera-view="front">Спереду</button>
+      <button data-camera-view="left">Зліва</button>
+      <button data-camera-view="right">Справа</button>
+      <button data-camera-view="top">Зверху</button>
+    </div>
+    <p class="orbit-help">Миша: ліва — орбіта; Shift + ліва або права — переміщення; коліщатко — масштаб</p>
   </div>
   <svg id="svg3d" width="800" height="500" style="border:1px solid #999"></svg>
 `
@@ -917,12 +925,17 @@ const machineScene = {
     y: 0
   },
   projection: {
-    depthX: 0.55,
-    depthY: 0.28,
     marginX: 50,
     marginY: 50,
     width: 800,
     height: 500
+  },
+  camera: {
+    yaw: -28,
+    pitch: -18,
+    zoom: 1,
+    panX: 0,
+    panY: 0
   },
   additionalAxes: []
 }
@@ -992,19 +1005,39 @@ const renderMachineScene = () => {
   const frameBottom = sceneMinY - verticalPadding
   const frameTop = sceneMaxY + verticalPadding
   const projection = machineScene.projection
+  const camera = machineScene.camera
   const rawCorners = []
 
   machineScene.rightDepth = width
   machineScene.profileOffset.x = profileOffsetX
   machineScene.profileOffset.y = profileOffsetY
 
+  const sceneCenter = {
+    x: (sceneMinX + sceneMaxX) / 2,
+    y: (frameBottom + frameTop) / 2,
+    depth: (machineScene.leftDepth + machineScene.rightDepth) / 2
+  }
+  const yaw = camera.yaw * Math.PI / 180
+  const pitch = camera.pitch * Math.PI / 180
+  const cosYaw = Math.cos(yaw)
+  const sinYaw = Math.sin(yaw)
+  const cosPitch = Math.cos(pitch)
+  const sinPitch = Math.sin(pitch)
+  const rotateForCamera = (x, y, depth) => {
+    const dx = x - sceneCenter.x
+    const dy = y - sceneCenter.y
+    const dz = depth - sceneCenter.depth
+    const yawX = dx * cosYaw - dz * sinYaw
+    const yawDepth = dx * sinYaw + dz * cosYaw
+    const pitchY = dy * cosPitch - yawDepth * sinPitch
+
+    return [yawX, pitchY]
+  }
+
   for (const x of [sceneMinX, sceneMaxX]) {
     for (const y of [frameBottom, frameTop]) {
       for (const depth of [machineScene.leftDepth, machineScene.rightDepth]) {
-        rawCorners.push([
-          x + depth * projection.depthX,
-          y + depth * projection.depthY
-        ])
+        rawCorners.push(rotateForCamera(x, y, depth))
       }
     }
   }
@@ -1018,16 +1051,16 @@ const renderMachineScene = () => {
   const millimetersToSvg = Math.min(
     availableWidth / Math.max(rawMaxX - rawMinX, 1),
     availableHeight / Math.max(rawMaxY - rawMinY, 1)
-  )
+  ) * camera.zoom
+  const rawCenterX = (rawMinX + rawMaxX) / 2
+  const rawCenterY = (rawMinY + rawMaxY) / 2
 
   project3d = (x, y, depth) => {
-    const projectedX = x + depth * projection.depthX
-    const projectedY = y + depth * projection.depthY
+    const [projectedX, projectedY] = rotateForCamera(x, y, depth)
 
     return [
-      projection.marginX + (projectedX - rawMinX) * millimetersToSvg,
-      projection.height - projection.marginY
-        - (projectedY - rawMinY) * millimetersToSvg
+      projection.width / 2 + (projectedX - rawCenterX) * millimetersToSvg + camera.panX,
+      projection.height / 2 - (projectedY - rawCenterY) * millimetersToSvg + camera.panY
     ]
   }
 
@@ -1182,6 +1215,67 @@ const renderMachineScene = () => {
 
 renderActiveFoamBlock = renderMachineScene
 renderMachineScene()
+
+const cameraViews = {
+  iso: { yaw: -28, pitch: -18 },
+  front: { yaw: 0, pitch: 0 },
+  left: { yaw: -90, pitch: 0 },
+  right: { yaw: 90, pitch: 0 },
+  top: { yaw: 0, pitch: -90 }
+}
+const resetCameraView = viewName => {
+  const view = cameraViews[viewName] || cameraViews.iso
+  machineScene.camera.yaw = view.yaw
+  machineScene.camera.pitch = view.pitch
+  machineScene.camera.zoom = 1
+  machineScene.camera.panX = 0
+  machineScene.camera.panY = 0
+  renderMachineScene()
+}
+let cameraDrag = null
+
+svg3d.onpointerdown = event => {
+  const pan = event.button === 2 || (event.button === 0 && event.shiftKey)
+  if (event.button !== 0 && event.button !== 2) return
+  cameraDrag = { x: event.clientX, y: event.clientY, pan }
+  svg3d.setPointerCapture(event.pointerId)
+  event.preventDefault()
+}
+svg3d.onpointermove = event => {
+  if (!cameraDrag) return
+  const deltaX = event.clientX - cameraDrag.x
+  const deltaY = event.clientY - cameraDrag.y
+  cameraDrag.x = event.clientX
+  cameraDrag.y = event.clientY
+
+  if (cameraDrag.pan) {
+    machineScene.camera.panX += deltaX
+    machineScene.camera.panY += deltaY
+  } else {
+    machineScene.camera.yaw += deltaX * 0.45
+    machineScene.camera.pitch = Math.max(
+      -89,
+      Math.min(89, machineScene.camera.pitch - deltaY * 0.4)
+    )
+  }
+  renderMachineScene()
+}
+svg3d.onpointerup = event => {
+  cameraDrag = null
+  if (svg3d.hasPointerCapture(event.pointerId)) svg3d.releasePointerCapture(event.pointerId)
+}
+svg3d.onpointercancel = () => { cameraDrag = null }
+svg3d.oncontextmenu = event => event.preventDefault()
+svg3d.onwheel = event => {
+  event.preventDefault()
+  const zoomFactor = Math.exp(-event.deltaY * 0.001)
+  machineScene.camera.zoom = Math.max(0.25, Math.min(5, machineScene.camera.zoom * zoomFactor))
+  renderMachineScene()
+}
+svg3d.ondblclick = () => resetCameraView('iso')
+document.querySelectorAll('[data-camera-view]').forEach(button => {
+  button.onclick = () => resetCameraView(button.dataset.cameraView)
+})
 
 cancelWireAnimation3D()
 
