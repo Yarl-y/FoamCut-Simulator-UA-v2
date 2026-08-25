@@ -302,6 +302,20 @@ code {
   text-align: center;
 }
 
+.project-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  margin: 10px 0;
+}
+
+#projectStatus {
+  flex-basis: 100%;
+  font-size: 14px;
+}
+
 .dxf-profiles {
   margin-top: 20px;
 }

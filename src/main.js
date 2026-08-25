@@ -1,11 +1,19 @@
 import './style.css'
 import { parseDxf, renderDxfPreview, resampleDxfContour } from './dxf.js'
 import { createDxfPolyline, createPreviewModel, recoverNcProfiles } from './nc-dxf.js'
+import { createFoamCutProject, parseFoamCutProject } from './project-file.js'
 
 document.querySelector('#app').innerHTML = `
   <div class="container">
     <h1>FoamCut Simulator</h1>
     <p>Симулятор піноріза — 4 осі</p>
+
+    <div class="project-controls">
+      <input type="file" id="projectFile" accept=".json,.foamcut">
+      <button id="loadProject">Відкрити проєкт</button>
+      <button id="saveProject" disabled>Зберегти проєкт</button>
+      <span id="projectStatus">Проєкт ще не збережено</span>
+    </div>
 
     <div>
       <input type="file" id="ncFile" accept=".nc,.tap,.gcode,.txt">
@@ -132,6 +140,10 @@ view3d.innerHTML = `
 
 const fileInput = document.querySelector('#ncFile')
 const loadButton = document.querySelector('#load')
+const projectFileInput = document.querySelector('#projectFile')
+const loadProjectButton = document.querySelector('#loadProject')
+const saveProjectButton = document.querySelector('#saveProject')
+const projectStatus = document.querySelector('#projectStatus')
 const downloadNcDxfLeftButton = document.querySelector('#downloadNcDxfLeft')
 const downloadNcDxfRightButton = document.querySelector('#downloadNcDxfRight')
 const ncToDxfStatus = document.querySelector('#ncToDxfStatus')
@@ -242,6 +254,124 @@ const updateDxfAssignmentStatus = () => {
     : 'не призначено'
   dxfAssignmentStatus.textContent = `X/Y: ${left}; A/Z: ${right}`
 }
+
+const updateProjectSaveAvailability = () => {
+  saveProjectButton.disabled = !(
+    preparedDxfProfiles.left
+    && preparedDxfProfiles.right
+    && preparedDxfProfiles.left.points.length === preparedDxfProfiles.right.points.length
+  )
+}
+
+const showProfileInDxfPanel = (side, points, closed, sourceLabel) => {
+  const state = dxfSides[side]
+  state.model = createPreviewModel(points, closed)
+  state.contourSelect.replaceChildren()
+  const option = document.createElement('option')
+  option.value = '0'
+  option.textContent = `${sourceLabel}: ${closed ? 'замкнений' : 'відкритий'}, ${points.length} точок`
+  state.contourSelect.appendChild(option)
+  state.startInput.value = 0
+  state.reverseInput.checked = false
+  state.tools.hidden = false
+  state.status.textContent = `${sourceLabel}: ${points.length} точок, `
+    + `${closed ? 'замкнений профіль' : 'відкрита траєкторія'}`
+  refreshDxfContourPreview(side)
+}
+
+const downloadTextFile = (text, fileName, type) => {
+  const blobUrl = URL.createObjectURL(new Blob([text], { type }))
+  const downloadLink = document.createElement('a')
+  downloadLink.href = blobUrl
+  downloadLink.download = fileName
+  document.body.appendChild(downloadLink)
+  downloadLink.click()
+  downloadLink.remove()
+  setTimeout(() => URL.revokeObjectURL(blobUrl), 1000)
+}
+
+const getProjectSettings = () => ({
+  pointCount: Number(dxfPointCountInput.value),
+  passMode: cutPassModeInput.value,
+  leadDistance: Number(leadDistanceInput.value),
+  feedRate: Number(cutFeedRateInput.value),
+  foamLength: Number(foamLengthInput.value),
+  foamWidth: Number(foamWidthInput.value),
+  foamHeight: Number(foamHeightInput.value),
+  profileLengthOffset: Number(profileLengthOffsetInput.value),
+  profileHeightOffset: Number(profileHeightOffsetInput.value),
+  limitX: Number(machineLimitInputs.x.value),
+  limitY: Number(machineLimitInputs.y.value),
+  limitA: Number(machineLimitInputs.a.value),
+  limitZ: Number(machineLimitInputs.z.value),
+  wireSpan: Number(wireSpanInput.value),
+  animationSpeed: Number(speed3d.value)
+})
+
+const applyProjectSettings = settings => {
+  const inputs = {
+    pointCount: dxfPointCountInput,
+    leadDistance: leadDistanceInput,
+    feedRate: cutFeedRateInput,
+    foamLength: foamLengthInput,
+    foamWidth: foamWidthInput,
+    foamHeight: foamHeightInput,
+    profileLengthOffset: profileLengthOffsetInput,
+    profileHeightOffset: profileHeightOffsetInput,
+    limitX: machineLimitInputs.x,
+    limitY: machineLimitInputs.y,
+    limitA: machineLimitInputs.a,
+    limitZ: machineLimitInputs.z,
+    wireSpan: wireSpanInput,
+    animationSpeed: speed3d
+  }
+
+  for (const [name, input] of Object.entries(inputs)) {
+    const value = Number(settings[name])
+    if (Number.isFinite(value)) input.value = value
+  }
+  if (['single', 'double'].includes(settings.passMode)) cutPassModeInput.value = settings.passMode
+}
+
+saveProjectButton.addEventListener('click', () => {
+  if (!preparedDxfProfiles.left || !preparedDxfProfiles.right) return
+
+  const project = createFoamCutProject({
+    settings: getProjectSettings(),
+    leftPoints: preparedDxfProfiles.left.points,
+    rightPoints: preparedDxfProfiles.right.points
+  })
+  const date = new Date().toISOString().slice(0, 10)
+  downloadTextFile(
+    `${JSON.stringify(project, null, 2)}\n`,
+    `foamcut-project-${date}.foamcut.json`,
+    'application/json'
+  )
+  projectStatus.textContent = `Проєкт збережено: ${project.profiles.left.length} синхронних точок`
+})
+
+loadProjectButton.addEventListener('click', async () => {
+  const file = projectFileInput.files[0]
+  if (!file) {
+    projectStatus.textContent = 'Спочатку виберіть файл проєкту'
+    return
+  }
+
+  try {
+    const project = parseFoamCutProject(await file.text())
+    applyProjectSettings(project.settings)
+    preparedDxfProfiles.left = { points: project.leftPoints, source: 'project' }
+    preparedDxfProfiles.right = { points: project.rightPoints, source: 'project' }
+    showProfileInDxfPanel('left', project.leftPoints, true, `Проєкт ${file.name} — X/Y`)
+    showProfileInDxfPanel('right', project.rightPoints, true, `Проєкт ${file.name} — A/Z`)
+    updateDxfAssignmentStatus()
+    updateProjectSaveAvailability()
+    renderPreparedDxfSimulation()
+    projectStatus.textContent = `Проєкт ${file.name} відкрито; відновлено ${project.leftPoints.length} точок`
+  } catch (error) {
+    projectStatus.textContent = `Не вдалося відкрити проєкт: ${error.message}`
+  }
+})
 
 const interpolateMove = (start, end, segmentCount = 12) => Array.from(
   { length: segmentCount },
@@ -494,6 +624,7 @@ const assignSelectedDxfContour = side => {
     reverse: state.reverseInput.checked
   }
   updateDxfAssignmentStatus()
+  updateProjectSaveAvailability()
 
   if (preparedDxfProfiles.left && preparedDxfProfiles.right) {
     renderPreparedDxfSimulation()
@@ -545,6 +676,7 @@ const loadDxfSide = async side => {
     preparedDxfProfiles[side] = null
     preparedCuttingTrajectory = null
     updateGeneratedNcPreview()
+    updateProjectSaveAvailability()
     state.contourSelect.replaceChildren()
 
     model.contours.forEach((contour, index) => {
@@ -576,6 +708,7 @@ const loadDxfSide = async side => {
     preparedDxfProfiles[side] = null
     preparedCuttingTrajectory = null
     updateGeneratedNcPreview()
+    updateProjectSaveAvailability()
     state.svg.replaceChildren()
     state.tools.hidden = true
     updateDxfAssignmentStatus()
@@ -696,27 +829,24 @@ if (zMatch) z = isAbsoluteMode ? Number(zMatch[1]) : z + Number(zMatch[1])
     recoveredNcProfiles = recoverNcProfiles(text, leftPoints, rightPoints)
     downloadNcDxfLeftButton.disabled = false
     downloadNcDxfRightButton.disabled = false
-
-    const recoveredSides = [
-      ['left', recoveredNcProfiles.leftPoints, recoveredNcProfiles.leftClosed],
-      ['right', recoveredNcProfiles.rightPoints, recoveredNcProfiles.rightClosed]
-    ]
-
-    for (const [side, points, closed] of recoveredSides) {
-      const state = dxfSides[side]
-      state.model = createPreviewModel(points, closed)
-      state.contourSelect.replaceChildren()
-      const option = document.createElement('option')
-      option.value = '0'
-      option.textContent = `Відновлений контур: ${closed ? 'замкнений' : 'відкритий'}, ${points.length} точок`
-      state.contourSelect.appendChild(option)
-      state.startInput.value = 0
-      state.reverseInput.checked = false
-      state.tools.hidden = false
-      state.status.textContent = `Відновлено з ${file.name}: ${points.length} точок, `
-        + `${closed ? 'замкнений профіль' : 'повна відкрита траєкторія'}`
-      refreshDxfContourPreview(side)
-    }
+    preparedDxfProfiles.left = { points: recoveredNcProfiles.leftPoints, source: 'nc' }
+    preparedDxfProfiles.right = { points: recoveredNcProfiles.rightPoints, source: 'nc' }
+    preparedCuttingTrajectory = null
+    updateGeneratedNcPreview()
+    showProfileInDxfPanel(
+      'left',
+      recoveredNcProfiles.leftPoints,
+      recoveredNcProfiles.leftClosed,
+      `Відновлено з ${file.name} — X/Y`
+    )
+    showProfileInDxfPanel(
+      'right',
+      recoveredNcProfiles.rightPoints,
+      recoveredNcProfiles.rightClosed,
+      `Відновлено з ${file.name} — A/Z`
+    )
+    updateDxfAssignmentStatus()
+    updateProjectSaveAvailability()
 
     const recoveryMessage = {
       embedded: 'Точні чисті профілі відновлено зі службових даних FoamCut',
