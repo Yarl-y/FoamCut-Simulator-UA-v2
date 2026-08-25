@@ -7,26 +7,16 @@ const stripDuplicateEnd = points => {
   return points
 }
 
-const removeRetracedExcursions = points => {
-  const result = points.map(point => ({ ...point }))
-  let changed = true
+const trimMirroredApproach = points => {
+  let start = 0
+  let end = points.length - 1
 
-  while (changed) {
-    changed = false
-
-    for (let start = 1; start < result.length - 3; start++) {
-      for (let end = result.length - 2; end >= start + 2; end--) {
-        if (pointDistance(result[start], result[end]) <= 0.01) {
-          result.splice(start + 1, end - start - 1)
-          changed = true
-          break
-        }
-      }
-      if (changed) break
-    }
+  while (end - start >= 4 && pointDistance(points[start + 1], points[end - 1]) <= 0.01) {
+    start++
+    end--
   }
 
-  return result
+  return points.slice(start, end + 1)
 }
 
 const findLongestClosedSegment = points => {
@@ -36,7 +26,7 @@ const findLongestClosedSegment = points => {
     for (let end = points.length - 1; end >= start + 3; end--) {
       if (pointDistance(points[start], points[end]) <= 0.01) {
         const candidate = stripDuplicateEnd(
-          removeRetracedExcursions(points.slice(start, end + 1))
+          trimMirroredApproach(points.slice(start, end + 1))
         )
         if (candidate.length >= 3 && (!best || candidate.length > best.points.length)) {
           best = { points: candidate }
