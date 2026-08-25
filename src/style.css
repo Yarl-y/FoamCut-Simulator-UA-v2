@@ -504,7 +504,8 @@ code {
 }
 
 .dimension-controls label,
-.animation-controls label {
+.animation-controls label,
+.orbit-controls label {
   display: inline-flex;
   align-items: center;
   gap: 6px;

@@ -132,6 +132,7 @@ view3d.innerHTML = `
       <button data-camera-view="left">Зліва</button>
       <button data-camera-view="right">Справа</button>
       <button data-camera-view="top">Зверху</button>
+      <label><input id="showCutSurface" type="checkbox" checked> Показувати вирізану поверхню</label>
     </div>
     <p class="orbit-help">Миша: ліва — орбіта; Shift + ліва або права — переміщення; коліщатко — масштаб</p>
   </div>
@@ -175,6 +176,7 @@ const pause3d = document.getElementById('pause3d')
 const stop3d = document.getElementById('stop3d')
 const reset3d = document.getElementById('reset3d')
 const speed3d = document.getElementById('speed3d')
+const showCutSurfaceInput = document.getElementById('showCutSurface')
 let renderActiveFoamBlock = null
 const preparedDxfProfiles = { left: null, right: null }
 const cuttingSettings = { feedRate: 300 }
@@ -1099,9 +1101,68 @@ let project3d = null
 let movingWire = null
 let leftCarriage = null
 let rightCarriage = null
+let cutSurfaceLayer = null
+let lastCutSurfaceIndex = 0
+let activeFoamBounds = null
+
+const appendCutSurfaceSegment = index => {
+  if (!cutSurfaceLayer || !showCutSurfaceInput.checked || index <= 0 || index >= count3d) return
+
+  const offsetX = machineScene.profileOffset.x
+  const offsetY = machineScene.profileOffset.y
+  const previousLeft = {
+    x: leftPoints[index - 1].x + offsetX,
+    y: leftPoints[index - 1].y + offsetY
+  }
+  const currentLeft = {
+    x: leftPoints[index].x + offsetX,
+    y: leftPoints[index].y + offsetY
+  }
+  const previousRight = {
+    x: rightPoints[index - 1].x + offsetX,
+    y: rightPoints[index - 1].y + offsetY
+  }
+  const currentRight = {
+    x: rightPoints[index].x + offsetX,
+    y: rightPoints[index].y + offsetY
+  }
+  const insideFoam = point => activeFoamBounds
+    && point.x >= activeFoamBounds.minX
+    && point.x <= activeFoamBounds.maxX
+    && point.y >= activeFoamBounds.minY
+    && point.y <= activeFoamBounds.maxY
+
+  if (![previousLeft, currentLeft, previousRight, currentRight].every(insideFoam)) return
+
+  const corners = [
+    project3d(previousLeft.x, previousLeft.y, machineScene.leftDepth),
+    project3d(currentLeft.x, currentLeft.y, machineScene.leftDepth),
+    project3d(currentRight.x, currentRight.y, machineScene.rightDepth),
+    project3d(previousRight.x, previousRight.y, machineScene.rightDepth)
+  ]
+  svgElement("polygon", {
+    points: polygonPoints(corners),
+    fill: "#38bdf8",
+    "fill-opacity": "0.28",
+    stroke: "#0284c7",
+    "stroke-opacity": "0.32",
+    "stroke-width": "0.7"
+  }, cutSurfaceLayer)
+}
 
 const updateMachinePosition = index => {
   const i = Math.min(index, count3d - 1)
+
+  if (i === 0 && lastCutSurfaceIndex > 0) {
+    cutSurfaceLayer?.replaceChildren()
+    lastCutSurfaceIndex = 0
+  } else if (i > lastCutSurfaceIndex) {
+    for (let segmentIndex = lastCutSurfaceIndex + 1; segmentIndex <= i; segmentIndex++) {
+      appendCutSurfaceSegment(segmentIndex)
+    }
+    lastCutSurfaceIndex = i
+  }
+
   const leftPosition = project3d(
     leftPoints[i].x + machineScene.profileOffset.x,
     leftPoints[i].y + machineScene.profileOffset.y,
@@ -1141,6 +1202,7 @@ const renderMachineScene = () => {
   machineScene.rightDepth = width
   machineScene.profileOffset.x = profileOffsetX
   machineScene.profileOffset.y = profileOffsetY
+  activeFoamBounds = { minX: 0, maxX: length, minY: 0, maxY: height }
 
   const sceneCenter = {
     x: (sceneMinX + sceneMaxX) / 2,
@@ -1198,6 +1260,7 @@ const renderMachineScene = () => {
 
   const frameLayer = svgElement("g", { "data-layer": "machine-frame" })
   const foamLayer = svgElement("g", { "data-layer": "foam-block" })
+  cutSurfaceLayer = svgElement("g", { "data-layer": "cut-surface" })
   const historyLayer = svgElement("g", { "data-layer": "wire-history" })
   const pathLayer = svgElement("g", { "data-layer": "toolpaths" })
   const motionLayer = svgElement("g", { "data-layer": "moving-parts" })
@@ -1340,6 +1403,12 @@ const renderMachineScene = () => {
 
   leftCarriage = makeCarriage("X/Y")
   rightCarriage = makeCarriage("A/Z")
+  lastCutSurfaceIndex = 0
+  const visibleCutIndex = Math.min(wireIndex, count3d - 1)
+  for (let segmentIndex = 1; segmentIndex <= visibleCutIndex; segmentIndex++) {
+    appendCutSurfaceSegment(segmentIndex)
+  }
+  lastCutSurfaceIndex = visibleCutIndex
   updateMachinePosition(wireIndex)
 }
 
@@ -1406,6 +1475,7 @@ svg3d.ondblclick = () => resetCameraView('iso')
 document.querySelectorAll('[data-camera-view]').forEach(button => {
   button.onclick = () => resetCameraView(button.dataset.cameraView)
 })
+showCutSurfaceInput.onchange = renderMachineScene
 
 cancelWireAnimation3D()
 
