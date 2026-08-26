@@ -316,6 +316,59 @@ code {
   font-size: 14px;
 }
 
+.profile-library {
+  margin: 14px 0 20px;
+}
+
+.profile-library-panel {
+  margin-top: 10px;
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--social-bg);
+}
+
+.profile-library-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px 14px;
+  margin: 12px 0;
+}
+
+.profile-library-grid label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  text-align: left;
+  font-size: 13px;
+}
+
+.profile-library-grid input,
+.profile-library-grid select {
+  box-sizing: border-box;
+  width: 100%;
+}
+
+#profileLibraryStatus {
+  margin-top: 10px;
+  font-size: 14px;
+}
+
+.profile-library-valid {
+  color: #15803d;
+}
+
+.profile-library-error {
+  color: #dc2626;
+  font-weight: 700;
+}
+
+@media (max-width: 800px) {
+  .profile-library-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
 .dxf-profiles {
   margin-top: 20px;
 }

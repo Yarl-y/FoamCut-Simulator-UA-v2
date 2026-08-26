@@ -2,6 +2,12 @@ import './style.css'
 import { parseDxf, renderDxfPreview, resampleDxfContour } from './dxf.js'
 import { createDxfPolyline, createPreviewModel, recoverNcProfiles } from './nc-dxf.js'
 import { createFoamCutProject, parseFoamCutProject } from './project-file.js'
+import {
+  createLibraryProfile,
+  normalizeProfilePair,
+  profileLibraryEntries,
+  transformLibraryProfile
+} from './profile-library.js'
 
 document.querySelector('#app').innerHTML = `
   <div class="container">
@@ -14,6 +20,41 @@ document.querySelector('#app').innerHTML = `
       <button id="saveProject" disabled>Зберегти проєкт</button>
       <span id="projectStatus">Проєкт ще не збережено</span>
     </div>
+
+    <section class="profile-library">
+      <button id="toggleProfileLibrary" type="button" aria-expanded="false">Бібліотека профілів</button>
+      <div id="profileLibraryPanel" class="profile-library-panel" hidden>
+        <h2>Конструктор крила</h2>
+        <div class="profile-library-grid">
+          <label>Кореневий профіль
+            <select id="rootLibraryProfile"></select>
+          </label>
+          <label>Хорда кореня, мм
+            <input id="rootLibraryChord" type="number" min="1" step="1" value="300">
+          </label>
+          <label>Кінцевий профіль
+            <select id="tipLibraryProfile"></select>
+          </label>
+          <label>Хорда кінця, мм
+            <input id="tipLibraryChord" type="number" min="1" step="1" value="150">
+          </label>
+          <label>Розмах півкрила, мм
+            <input id="halfSpan" type="number" min="1" step="1" value="800">
+          </label>
+          <label>Стрілоподібність, мм
+            <input id="wingSweep" type="number" step="1" value="40">
+          </label>
+          <label>Крутка кінця, °
+            <input id="tipTwist" type="number" step="0.1" value="-2">
+          </label>
+          <label>Вісь крутки, % хорди
+            <input id="twistAxis" type="number" min="0" max="100" step="1" value="25">
+          </label>
+        </div>
+        <button id="buildLibraryWing" type="button">Побудувати 3D-крило</button>
+        <p id="profileLibraryStatus">Виберіть параметри кореневого та кінцевого профілів</p>
+      </div>
+    </section>
 
     <div>
       <input type="file" id="ncFile" accept=".nc,.tap,.gcode,.txt">
@@ -145,6 +186,18 @@ const projectFileInput = document.querySelector('#projectFile')
 const loadProjectButton = document.querySelector('#loadProject')
 const saveProjectButton = document.querySelector('#saveProject')
 const projectStatus = document.querySelector('#projectStatus')
+const toggleProfileLibraryButton = document.querySelector('#toggleProfileLibrary')
+const profileLibraryPanel = document.querySelector('#profileLibraryPanel')
+const rootLibraryProfileInput = document.querySelector('#rootLibraryProfile')
+const tipLibraryProfileInput = document.querySelector('#tipLibraryProfile')
+const rootLibraryChordInput = document.querySelector('#rootLibraryChord')
+const tipLibraryChordInput = document.querySelector('#tipLibraryChord')
+const halfSpanInput = document.querySelector('#halfSpan')
+const wingSweepInput = document.querySelector('#wingSweep')
+const tipTwistInput = document.querySelector('#tipTwist')
+const twistAxisInput = document.querySelector('#twistAxis')
+const buildLibraryWingButton = document.querySelector('#buildLibraryWing')
+const profileLibraryStatus = document.querySelector('#profileLibraryStatus')
 const downloadNcDxfLeftButton = document.querySelector('#downloadNcDxfLeft')
 const downloadNcDxfRightButton = document.querySelector('#downloadNcDxfRight')
 const ncToDxfStatus = document.querySelector('#ncToDxfStatus')
@@ -211,6 +264,22 @@ const dxfSides = {
     assignButton: document.querySelector('#assignDxfRight')
   }
 }
+
+for (const { id, name } of profileLibraryEntries) {
+  for (const select of [rootLibraryProfileInput, tipLibraryProfileInput]) {
+    const option = document.createElement('option')
+    option.value = id
+    option.textContent = name
+    select.appendChild(option)
+  }
+}
+rootLibraryProfileInput.value = 'naca2412'
+tipLibraryProfileInput.value = 'naca2412'
+
+toggleProfileLibraryButton.addEventListener('click', () => {
+  profileLibraryPanel.hidden = !profileLibraryPanel.hidden
+  toggleProfileLibraryButton.setAttribute('aria-expanded', String(!profileLibraryPanel.hidden))
+})
 
 const updateFoamBlockDimensions = () => {
   if (renderActiveFoamBlock) renderActiveFoamBlock()
@@ -611,6 +680,59 @@ const renderPreparedDxfSimulation = () => {
       + `швидкість різання: ${cuttingSettings.feedRate} мм/хв`
   )
 }
+
+const readPositiveLibraryNumber = (input, label) => {
+  const value = Number(input.value)
+  if (!Number.isFinite(value) || value <= 0) throw new Error(`${label} має бути більшою за 0`)
+  return value
+}
+
+buildLibraryWingButton.addEventListener('click', () => {
+  try {
+    const pointCount = Math.max(20, Number(dxfPointCountInput.value) || 200)
+    const rootChord = readPositiveLibraryNumber(rootLibraryChordInput, 'Хорда кореня')
+    const tipChord = readPositiveLibraryNumber(tipLibraryChordInput, 'Хорда кінця')
+    const halfSpan = readPositiveLibraryNumber(halfSpanInput, 'Розмах півкрила')
+    const sweep = Number(wingSweepInput.value) || 0
+    const twist = Number(tipTwistInput.value) || 0
+    const twistAxis = Math.min(100, Math.max(0, Number(twistAxisInput.value) || 0))
+    const rootNormalized = createLibraryProfile(rootLibraryProfileInput.value, pointCount)
+    const tipNormalized = createLibraryProfile(tipLibraryProfileInput.value, pointCount)
+    const rootPoints = transformLibraryProfile(rootNormalized, { chord: rootChord })
+    const tipPoints = transformLibraryProfile(tipNormalized, {
+      chord: tipChord,
+      sweep,
+      twistDegrees: twist,
+      twistAxisPercent: twistAxis
+    })
+    const normalizedPair = normalizeProfilePair(rootPoints, tipPoints)
+
+    preparedDxfProfiles.left = { points: normalizedPair.leftPoints, source: 'library' }
+    preparedDxfProfiles.right = { points: normalizedPair.rightPoints, source: 'library' }
+    showProfileInDxfPanel(
+      'left',
+      normalizedPair.leftPoints,
+      true,
+      `Бібліотека ${rootLibraryProfileInput.selectedOptions[0].textContent}`
+    )
+    showProfileInDxfPanel(
+      'right',
+      normalizedPair.rightPoints,
+      true,
+      `Бібліотека ${tipLibraryProfileInput.selectedOptions[0].textContent}`
+    )
+    foamWidthInput.value = halfSpan
+    updateDxfAssignmentStatus()
+    updateProjectSaveAvailability()
+    renderPreparedDxfSimulation()
+    profileLibraryStatus.className = 'profile-library-valid'
+    profileLibraryStatus.textContent = `Крило побудовано: корінь ${rootChord} мм, кінець ${tipChord} мм, `
+      + `піврозмах ${halfSpan} мм, крутка ${twist}°`
+  } catch (error) {
+    profileLibraryStatus.className = 'profile-library-error'
+    profileLibraryStatus.textContent = `Не вдалося побудувати крило: ${error.message}`
+  }
+})
 
 const assignSelectedDxfContour = side => {
   const state = dxfSides[side]
