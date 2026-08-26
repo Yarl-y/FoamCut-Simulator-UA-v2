@@ -47,7 +47,7 @@ const partGeometry = part => {
   }
 }
 
-export const renderAssemblyView = (svg, parts) => {
+export const renderAssemblyView = (svg, parts, camera = {}) => {
   svg.replaceChildren()
   const visibleParts = parts.filter(part => part.visible)
   if (!visibleParts.length) {
@@ -63,8 +63,8 @@ export const renderAssemblyView = (svg, parts) => {
 
   const geometries = visibleParts.map(part => ({ part, ...partGeometry(part) }))
   const allPoints = geometries.flatMap(geometry => [...geometry.root, ...geometry.tip])
-  const yaw = -35 * Math.PI / 180
-  const pitch = -22 * Math.PI / 180
+  const yaw = (Number(camera.yaw) || 0) * Math.PI / 180
+  const pitch = (Number(camera.pitch) || 0) * Math.PI / 180
   const rotate = point => {
     const yawX = point.x * Math.cos(yaw) - point.z * Math.sin(yaw)
     const yawDepth = point.x * Math.sin(yaw) + point.z * Math.cos(yaw)
@@ -79,11 +79,14 @@ export const renderAssemblyView = (svg, parts) => {
   const minY = Math.min(...rotated.map(point => point.y))
   const maxY = Math.max(...rotated.map(point => point.y))
   const scale = Math.min(720 / Math.max(maxX - minX, 1), 420 / Math.max(maxY - minY, 1))
+    * Math.max(0.2, Number(camera.zoom) || 1)
+  const centerX = (minX + maxX) / 2
+  const centerY = (minY + maxY) / 2
   const project = point => {
     const rotatedPoint = rotate(point)
     return [
-      40 + (rotatedPoint.x - minX) * scale,
-      460 - (rotatedPoint.y - minY) * scale
+      400 + (rotatedPoint.x - centerX) * scale + (Number(camera.panX) || 0),
+      250 - (rotatedPoint.y - centerY) * scale + (Number(camera.panY) || 0)
     ]
   }
   const colors = {

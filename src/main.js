@@ -1,4 +1,5 @@
 import './style.css'
+import { createAssemblyFile, parseAssemblyFile } from './assembly-file.js'
 import { renderAssemblyView } from './assembly-view.js'
 import { parseDxf, renderDxfPreview, resampleDxfContour } from './dxf.js'
 import { createDxfPolyline, createPreviewModel, recoverNcProfiles } from './nc-dxf.js'
@@ -258,8 +259,21 @@ view3d.innerHTML = `
       <button id="addRightWing" disabled>Додати праве півкрило</button>
       <button id="addFuselagePart" disabled>Додати секцію фюзеляжу</button>
     </div>
+    <div class="assembly-file-controls">
+      <input id="assemblyFile" type="file" accept=".json,.foamcut-assembly">
+      <button id="loadAssembly">Відкрити збірку</button>
+      <button id="saveAssembly" disabled>Зберегти всю збірку</button>
+      <span id="assemblyFileStatus">Збірку ще не збережено</span>
+    </div>
     <p id="assemblyCandidateStatus">Спочатку побудуйте крило або секцію фюзеляжу</p>
     <div id="assemblyPartsList" class="assembly-parts-list"></div>
+    <div class="assembly-orbit-controls">
+      <button data-assembly-camera="iso">Ізометрія</button>
+      <button data-assembly-camera="front">Спереду</button>
+      <button data-assembly-camera="side">Збоку</button>
+      <button data-assembly-camera="top">Зверху</button>
+    </div>
+    <p class="orbit-help">Збірка: ліва кнопка — орбіта; Shift + ліва або права — переміщення; коліщатко — масштаб</p>
     <svg id="assemblySvg" viewBox="0 0 800 500" width="800" height="500"></svg>
     <p id="assemblyStatus">Збірка поки порожня</p>
   </section>
@@ -348,6 +362,10 @@ const assemblyCandidateStatus = document.getElementById('assemblyCandidateStatus
 const assemblyPartsList = document.getElementById('assemblyPartsList')
 const assemblySvg = document.getElementById('assemblySvg')
 const assemblyStatus = document.getElementById('assemblyStatus')
+const assemblyFileInput = document.getElementById('assemblyFile')
+const loadAssemblyButton = document.getElementById('loadAssembly')
+const saveAssemblyButton = document.getElementById('saveAssembly')
+const assemblyFileStatus = document.getElementById('assemblyFileStatus')
 let renderActiveFoamBlock = null
 const preparedDxfProfiles = { left: null, right: null }
 const cuttingSettings = { feedRate: 300 }
@@ -359,6 +377,7 @@ let activeServoChannels = []
 let currentAssemblyCandidate = null
 const assemblyParts = []
 let nextAssemblyPartId = 1
+const assemblyCamera = { yaw: -35, pitch: -22, zoom: 1, panX: 0, panY: 0 }
 const dxfSides = {
   left: {
     label: 'X/Y',
@@ -1070,7 +1089,8 @@ const updateAssemblyCandidateControls = () => {
 }
 
 const updateAssemblySvg = () => {
-  const result = renderAssemblyView(assemblySvg, assemblyParts)
+  const result = renderAssemblyView(assemblySvg, assemblyParts, assemblyCamera)
+  saveAssemblyButton.disabled = assemblyParts.length === 0
   assemblyStatus.textContent = result.visibleCount
     ? `У збірці ${assemblyParts.length} деталей; показано ${result.visibleCount}. `
       + 'Виберіть потрібну деталь для симуляції та створення NC.'
@@ -1108,6 +1128,7 @@ const renderAssemblyPartsList = () => {
     visibleInput.checked = part.visible
     visibleInput.addEventListener('change', () => {
       part.visible = visibleInput.checked
+      assemblyFileStatus.textContent = 'Збірку змінено — збережіть файл'
       updateAssemblySvg()
     })
     visibleLabel.append(visibleInput, document.createTextNode(part.name))
@@ -1124,6 +1145,7 @@ const renderAssemblyPartsList = () => {
         const value = Number(input.value)
         if (Number.isFinite(value)) {
           part.offsets[axis] = value
+          assemblyFileStatus.textContent = 'Збірку змінено — збережіть файл'
           updateAssemblySvg()
         }
       })
@@ -1161,12 +1183,99 @@ const addCurrentCandidateToAssembly = side => {
     offsets: { ...candidate.defaultOffsets },
     visible: true
   })
+  assemblyFileStatus.textContent = 'Збірку змінено — збережіть файл'
   renderAssemblyPartsList()
 }
 
 addLeftWingButton.addEventListener('click', () => addCurrentCandidateToAssembly('left'))
 addRightWingButton.addEventListener('click', () => addCurrentCandidateToAssembly('right'))
 addFuselagePartButton.addEventListener('click', () => addCurrentCandidateToAssembly('fuselage'))
+
+saveAssemblyButton.addEventListener('click', () => {
+  if (!assemblyParts.length) return
+  const assembly = createAssemblyFile(assemblyParts)
+  const date = new Date().toISOString().slice(0, 10)
+  downloadTextFile(
+    `${JSON.stringify(assembly, null, 2)}\n`,
+    `foamcut-assembly-${date}.foamcut-assembly.json`,
+    'application/json'
+  )
+  assemblyFileStatus.textContent = `Збірку збережено: ${assembly.parts.length} деталей`
+})
+
+loadAssemblyButton.addEventListener('click', async () => {
+  const file = assemblyFileInput.files[0]
+  if (!file) {
+    assemblyFileStatus.textContent = 'Спочатку виберіть файл збірки'
+    return
+  }
+  try {
+    const assembly = parseAssemblyFile(await file.text())
+    assemblyParts.splice(0, assemblyParts.length, ...assembly.parts)
+    nextAssemblyPartId = Math.max(...assemblyParts.map(part => part.id), 0) + 1
+    renderAssemblyPartsList()
+    assemblyFileStatus.textContent = `Збірку ${file.name} відкрито: ${assemblyParts.length} деталей`
+  } catch (error) {
+    assemblyFileStatus.textContent = `Не вдалося відкрити збірку: ${error.message}`
+  }
+})
+
+const assemblyCameraViews = {
+  iso: { yaw: -35, pitch: -22 },
+  front: { yaw: 0, pitch: 0 },
+  side: { yaw: -90, pitch: 0 },
+  top: { yaw: 0, pitch: -90 }
+}
+const resetAssemblyCamera = viewName => {
+  const view = assemblyCameraViews[viewName] || assemblyCameraViews.iso
+  assemblyCamera.yaw = view.yaw
+  assemblyCamera.pitch = view.pitch
+  assemblyCamera.zoom = 1
+  assemblyCamera.panX = 0
+  assemblyCamera.panY = 0
+  updateAssemblySvg()
+}
+document.querySelectorAll('[data-assembly-camera]').forEach(button => {
+  button.addEventListener('click', () => resetAssemblyCamera(button.dataset.assemblyCamera))
+})
+let assemblyCameraDrag = null
+assemblySvg.addEventListener('pointerdown', event => {
+  const pan = event.button === 2 || (event.button === 0 && event.shiftKey)
+  if (event.button !== 0 && event.button !== 2) return
+  assemblyCameraDrag = { x: event.clientX, y: event.clientY, pan }
+  assemblySvg.setPointerCapture(event.pointerId)
+  event.preventDefault()
+})
+assemblySvg.addEventListener('pointermove', event => {
+  if (!assemblyCameraDrag) return
+  const deltaX = event.clientX - assemblyCameraDrag.x
+  const deltaY = event.clientY - assemblyCameraDrag.y
+  assemblyCameraDrag.x = event.clientX
+  assemblyCameraDrag.y = event.clientY
+  if (assemblyCameraDrag.pan) {
+    assemblyCamera.panX += deltaX
+    assemblyCamera.panY += deltaY
+  } else {
+    assemblyCamera.yaw += deltaX * 0.45
+    assemblyCamera.pitch = Math.max(-89, Math.min(89, assemblyCamera.pitch - deltaY * 0.4))
+  }
+  updateAssemblySvg()
+})
+assemblySvg.addEventListener('pointerup', event => {
+  assemblyCameraDrag = null
+  if (assemblySvg.hasPointerCapture(event.pointerId)) assemblySvg.releasePointerCapture(event.pointerId)
+})
+assemblySvg.addEventListener('pointercancel', () => { assemblyCameraDrag = null })
+assemblySvg.addEventListener('contextmenu', event => event.preventDefault())
+assemblySvg.addEventListener('wheel', event => {
+  event.preventDefault()
+  assemblyCamera.zoom = Math.max(
+    0.25,
+    Math.min(5, assemblyCamera.zoom * Math.exp(-event.deltaY * 0.001))
+  )
+  updateAssemblySvg()
+}, { passive: false })
+assemblySvg.addEventListener('dblclick', () => resetAssemblyCamera('iso'))
 updateAssemblyCandidateControls()
 renderAssemblyPartsList()
 
