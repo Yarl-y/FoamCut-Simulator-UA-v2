@@ -233,6 +233,19 @@ export const createSparHoleContour = ({
   }, { chord, sweep, twistDegrees, twistAxisPercent })
 })
 
+export const createStraightSparHoleContour = ({
+  x,
+  y,
+  diameter,
+  pointCount = 32
+}) => Array.from({ length: pointCount }, (_, index) => {
+  const angle = Math.PI * 2 * index / pointCount
+  return {
+    x: x + Math.cos(angle) * diameter / 2,
+    y: y + Math.sin(angle) * diameter / 2
+  }
+})
+
 const pointInsidePolygon = (point, polygon) => {
   let inside = false
   for (let index = 0, previous = polygon.length - 1; index < polygon.length; previous = index++) {
@@ -333,6 +346,7 @@ export const normalizeProfilePair = (leftPoints, rightPoints) => {
 
   return {
     leftPoints: translate(leftPoints),
-    rightPoints: translate(rightPoints)
+    rightPoints: translate(rightPoints),
+    translation: { x: -minX, y: -minY }
   }
 }

@@ -6,6 +6,7 @@ import {
   createGliderFuselageSegment,
   createLibraryProfile,
   createSparHoleContour,
+  createStraightSparHoleContour,
   fuselageSegmentEntries,
   insertPairedSparHoles,
   normalizeProfilePair,
@@ -58,21 +59,27 @@ document.querySelector('#app').innerHTML = `
         </div>
         <div class="spar-hole-controls">
           <h3>Отвори лонжеронів</h3>
+          <label class="spar-hole-mode">Режим позиціонування
+            <select id="sparHoleMode">
+              <option value="profile">За відсотком хорди</option>
+              <option value="straight">Наскрізні прямі прути</option>
+            </select>
+          </label>
           <div class="spar-hole-row">
             <label><input id="spar1Enabled" type="checkbox" checked> Отвір 1</label>
-            <label>Положення, % хорди <input id="spar1Position" type="number" min="1" max="99" step="1" value="30"></label>
+            <label><span id="spar1PositionLabel">Положення, % хорди</span> <input id="spar1Position" type="number" min="1" max="99" step="1" value="30"></label>
             <label>Висота від хорди, мм <input id="spar1Height" type="number" step="1" value="0"></label>
             <label>Ø кореня, мм <input id="spar1RootDiameter" type="number" min="1" step="1" value="12"></label>
-            <label>Ø кінця, мм <input id="spar1TipDiameter" type="number" min="1" step="1" value="10"></label>
+            <label id="spar1TipDiameterLabel">Ø кінця, мм <input id="spar1TipDiameter" type="number" min="1" step="1" value="10"></label>
           </div>
           <div class="spar-hole-row">
             <label><input id="spar2Enabled" type="checkbox"> Отвір 2</label>
-            <label>Положення, % хорди <input id="spar2Position" type="number" min="1" max="99" step="1" value="55"></label>
+            <label><span id="spar2PositionLabel">Положення, % хорди</span> <input id="spar2Position" type="number" min="1" max="99" step="1" value="55"></label>
             <label>Висота від хорди, мм <input id="spar2Height" type="number" step="1" value="0"></label>
             <label>Ø кореня, мм <input id="spar2RootDiameter" type="number" min="1" step="1" value="10"></label>
-            <label>Ø кінця, мм <input id="spar2TipDiameter" type="number" min="1" step="1" value="8"></label>
+            <label id="spar2TipDiameterLabel">Ø кінця, мм <input id="spar2TipDiameter" type="number" min="1" step="1" value="8"></label>
           </div>
-          <p>Струна входить до кожного отвору від найближчої поверхні та повертається тим самим каналом.</p>
+          <p id="sparHoleHelp">Струна входить до кожного отвору від найближчої поверхні та повертається тим самим каналом.</p>
         </div>
         <button id="buildLibraryWing" type="button">Побудувати 3D-крило</button>
         <p id="profileLibraryStatus">Виберіть параметри кореневого та кінцевого профілів</p>
@@ -241,12 +248,16 @@ const tipTwistInput = document.querySelector('#tipTwist')
 const twistAxisInput = document.querySelector('#twistAxis')
 const buildLibraryWingButton = document.querySelector('#buildLibraryWing')
 const profileLibraryStatus = document.querySelector('#profileLibraryStatus')
+const sparHoleModeInput = document.querySelector('#sparHoleMode')
+const sparHoleHelp = document.querySelector('#sparHoleHelp')
 const sparHoleInputs = [1, 2].map(number => ({
   enabled: document.querySelector(`#spar${number}Enabled`),
   position: document.querySelector(`#spar${number}Position`),
   height: document.querySelector(`#spar${number}Height`),
   rootDiameter: document.querySelector(`#spar${number}RootDiameter`),
-  tipDiameter: document.querySelector(`#spar${number}TipDiameter`)
+  tipDiameter: document.querySelector(`#spar${number}TipDiameter`),
+  positionLabel: document.querySelector(`#spar${number}PositionLabel`),
+  tipDiameterLabel: document.querySelector(`#spar${number}TipDiameterLabel`)
 }))
 const fuselageSegmentInput = document.querySelector('#fuselageSegment')
 const fuselageLengthInput = document.querySelector('#fuselageLength')
@@ -292,6 +303,7 @@ const cuttingSettings = { feedRate: 300 }
 let preparedCuttingTrajectory = null
 let generatedNcText = ''
 let recoveredNcProfiles = null
+let activeStraightSparRods = []
 const dxfSides = {
   left: {
     label: 'X/Y',
@@ -342,6 +354,24 @@ for (const { id, name } of fuselageSegmentEntries) {
 toggleProfileLibraryButton.addEventListener('click', () => {
   profileLibraryPanel.hidden = !profileLibraryPanel.hidden
   toggleProfileLibraryButton.setAttribute('aria-expanded', String(!profileLibraryPanel.hidden))
+})
+
+sparHoleModeInput.addEventListener('change', () => {
+  const straightMode = sparHoleModeInput.value === 'straight'
+  const rootChord = Math.max(1, Number(rootLibraryChordInput.value) || 300)
+  for (const hole of sparHoleInputs) {
+    const currentPosition = Number(hole.position.value) || 0
+    hole.position.value = straightMode
+      ? Math.round(currentPosition * rootChord / 100 * 1000) / 1000
+      : Math.round(currentPosition / rootChord * 100 * 1000) / 1000
+    hole.position.min = straightMode ? 0 : 1
+    hole.position.max = straightMode ? rootChord : 99
+    hole.positionLabel.textContent = straightMode ? 'X від передньої крайки, мм' : 'Положення, % хорди'
+    hole.tipDiameterLabel.hidden = straightMode
+  }
+  sparHoleHelp.textContent = straightMode
+    ? 'Обидва отвори лежать на одній абсолютній прямій осі; діаметр однаковий по всьому розмаху.'
+    : 'Струна входить до кожного отвору від найближчої поверхні та повертається тим самим каналом.'
 })
 
 const updateFoamBlockDimensions = () => {
@@ -492,6 +522,7 @@ loadProjectButton.addEventListener('click', async () => {
   }
 
   try {
+    activeStraightSparRods = []
     const project = parseFoamCutProject(await file.text())
     applyProjectSettings(project.settings)
     preparedDxfProfiles.left = { points: project.leftPoints, source: 'project' }
@@ -752,6 +783,7 @@ const readPositiveLibraryNumber = (input, label) => {
 
 buildLibraryWingButton.addEventListener('click', () => {
   try {
+    activeStraightSparRods = []
     const pointCount = Math.max(20, Number(dxfPointCountInput.value) || 200)
     const rootChord = readPositiveLibraryNumber(rootLibraryChordInput, 'Хорда кореня')
     const tipChord = readPositiveLibraryNumber(tipLibraryChordInput, 'Хорда кінця')
@@ -770,23 +802,40 @@ buildLibraryWingButton.addEventListener('click', () => {
     }
     const rootPoints = transformLibraryProfile(rootNormalized, rootTransform)
     const tipPoints = transformLibraryProfile(tipNormalized, tipTransform)
+    const straightSparAxes = []
     const sparHoles = sparHoleInputs.filter(hole => hole.enabled.checked).map((hole, index) => {
-      const positionPercent = Math.min(99, Math.max(1, Number(hole.position.value) || 1))
       const height = Number(hole.height.value) || 0
       const rootDiameter = readPositiveLibraryNumber(hole.rootDiameter, `Діаметр кореня отвору ${index + 1}`)
-      const tipDiameter = readPositiveLibraryNumber(hole.tipDiameter, `Діаметр кінця отвору ${index + 1}`)
-      const left = createSparHoleContour({
+      let left
+      let right
+
+      if (sparHoleModeInput.value === 'straight') {
+        const x = Number(hole.position.value)
+        if (!Number.isFinite(x) || x < 0) {
+          throw new Error(`Положення X отвору ${index + 1} має бути додатним числом`)
+        }
+        left = createStraightSparHoleContour({ x, y: height, diameter: rootDiameter })
+        right = createStraightSparHoleContour({ x, y: height, diameter: rootDiameter })
+        straightSparAxes.push({ x, y: height, diameter: rootDiameter })
+      } else {
+        const positionPercent = Math.min(99, Math.max(1, Number(hole.position.value) || 1))
+        const tipDiameter = readPositiveLibraryNumber(
+          hole.tipDiameter,
+          `Діаметр кінця отвору ${index + 1}`
+        )
+        left = createSparHoleContour({
           ...rootTransform,
           positionPercent,
           height,
           diameter: rootDiameter
         })
-      const right = createSparHoleContour({
+        right = createSparHoleContour({
           ...tipTransform,
           positionPercent,
           height,
           diameter: tipDiameter
         })
+      }
       if (!sparHoleFitsProfile(rootPoints, left)) {
         throw new Error(`Отвір ${index + 1} не вміщується в кореневому профілі`)
       }
@@ -800,6 +849,11 @@ buildLibraryWingButton.addEventListener('click', () => {
       profilesWithHoles.leftPoints,
       profilesWithHoles.rightPoints
     )
+    activeStraightSparRods = straightSparAxes.map(axis => ({
+      x: axis.x + normalizedPair.translation.x,
+      y: axis.y + normalizedPair.translation.y,
+      diameter: axis.diameter
+    }))
 
     preparedDxfProfiles.left = { points: normalizedPair.leftPoints, source: 'library' }
     preparedDxfProfiles.right = { points: normalizedPair.rightPoints, source: 'library' }
@@ -821,7 +875,8 @@ buildLibraryWingButton.addEventListener('click', () => {
     renderPreparedDxfSimulation()
     profileLibraryStatus.className = 'profile-library-valid'
     profileLibraryStatus.textContent = `Крило побудовано: корінь ${rootChord} мм, кінець ${tipChord} мм, `
-      + `піврозмах ${halfSpan} мм, крутка ${twist}°, отворів лонжеронів: ${sparHoles.length}`
+      + `піврозмах ${halfSpan} мм, крутка ${twist}°, отворів лонжеронів: ${sparHoles.length}; `
+      + `${sparHoleModeInput.value === 'straight' ? 'наскрізні прямі осі' : 'позиція за хордою'}`
   } catch (error) {
     profileLibraryStatus.className = 'profile-library-error'
     profileLibraryStatus.textContent = `Не вдалося побудувати крило: ${error.message}`
@@ -830,6 +885,7 @@ buildLibraryWingButton.addEventListener('click', () => {
 
 buildFuselageSegmentButton.addEventListener('click', () => {
   try {
+    activeStraightSparRods = []
     const pointCount = Math.max(20, Number(dxfPointCountInput.value) || 200)
     const totalLength = readPositiveLibraryNumber(fuselageLengthInput, 'Довжина фюзеляжу')
     const maximumWidth = readPositiveLibraryNumber(fuselageWidthInput, 'Ширина фюзеляжу')
@@ -866,6 +922,7 @@ const assignSelectedDxfContour = side => {
 
   const pointCount = Math.max(2, Number(dxfPointCountInput.value) || 200)
   const startIndex = Number(state.startInput.value) || 0
+  activeStraightSparRods = []
   preparedDxfProfiles[side] = {
     points: resampleDxfContour(contour, pointCount, startIndex, state.reverseInput.checked),
     contourIndex: Number(state.contourSelect.value),
@@ -920,6 +977,7 @@ const loadDxfSide = async side => {
   state.status.textContent = `Читання файлу ${file.name}...`
 
   try {
+    activeStraightSparRods = []
     const model = parseDxf(await file.text())
     state.model = model
     preparedDxfProfiles[side] = null
@@ -1032,6 +1090,7 @@ loadButton.addEventListener('click', async () => {
   }
 
   const text = await file.text()
+activeStraightSparRods = []
 recoveredNcProfiles = null
 downloadNcDxfLeftButton.disabled = true
 downloadNcDxfRightButton.disabled = true
@@ -1507,6 +1566,7 @@ const renderMachineScene = () => {
 
   const frameLayer = svgElement("g", { "data-layer": "machine-frame" })
   const foamLayer = svgElement("g", { "data-layer": "foam-block" })
+  const sparLayer = svgElement("g", { "data-layer": "straight-spar-rods" })
   cutSurfaceLayer = svgElement("g", { "data-layer": "cut-surface" })
   const historyLayer = svgElement("g", { "data-layer": "wire-history" })
   const pathLayer = svgElement("g", { "data-layer": "toolpaths" })
@@ -1584,6 +1644,36 @@ const renderMachineScene = () => {
     stroke: "#d97706",
     "stroke-width": "2"
   }, foamLayer)
+
+  activeStraightSparRods.forEach((rod, index) => {
+    const leftEnd = project3d(
+      rod.x + machineScene.profileOffset.x,
+      rod.y + machineScene.profileOffset.y,
+      machineScene.leftDepth
+    )
+    const rightEnd = project3d(
+      rod.x + machineScene.profileOffset.x,
+      rod.y + machineScene.profileOffset.y,
+      machineScene.rightDepth
+    )
+    svgElement("line", {
+      x1: leftEnd[0],
+      y1: leftEnd[1],
+      x2: rightEnd[0],
+      y2: rightEnd[1],
+      stroke: "#111827",
+      "stroke-width": Math.max(3, rod.diameter * millimetersToSvg),
+      "stroke-opacity": "0.78",
+      "stroke-linecap": "round"
+    }, sparLayer)
+    svgElement("text", {
+      x: leftEnd[0] + 7,
+      y: leftEnd[1] - 7,
+      fill: "#111827",
+      "font-size": "12",
+      "font-weight": "700"
+    }, sparLayer).textContent = `Прут ${index + 1} Ø${rod.diameter} мм`
+  })
 
   const makePath3d = (points, depth, color) => {
     svgElement("polyline", {

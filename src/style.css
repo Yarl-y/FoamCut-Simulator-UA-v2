@@ -361,6 +361,15 @@ code {
   color: var(--text-h);
 }
 
+.spar-hole-mode {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  margin-bottom: 6px;
+  font-size: 14px;
+  font-weight: 600;
+}
+
 .spar-hole-row {
   display: flex;
   flex-wrap: wrap;
@@ -375,6 +384,10 @@ code {
   align-items: center;
   gap: 5px;
   font-size: 13px;
+}
+
+.spar-hole-row label[hidden] {
+  display: none;
 }
 
 .spar-hole-row input[type='number'] {
