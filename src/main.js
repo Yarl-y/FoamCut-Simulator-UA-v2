@@ -81,6 +81,28 @@ document.querySelector('#app').innerHTML = `
           </div>
           <p id="sparHoleHelp">Струна входить до кожного отвору від найближчої поверхні та повертається тим самим каналом.</p>
         </div>
+        <div class="servo-channel-controls">
+          <h3>Канали проводів сервоприводів</h3>
+          <p>Координати задаються в міліметрах від передньої крайки кореневого профілю та його лінії хорди.</p>
+          <div class="servo-channel-row">
+            <label><input id="servo1Enabled" type="checkbox"> Канал 1</label>
+            <label>X кореня <input id="servo1RootX" type="number" step="1" value="180"></label>
+            <label>Y кореня <input id="servo1RootY" type="number" step="1" value="0"></label>
+            <label>Ø кореня <input id="servo1RootDiameter" type="number" min="1" step="1" value="8"></label>
+            <label>X кінця <input id="servo1TipX" type="number" step="1" value="120"></label>
+            <label>Y кінця <input id="servo1TipY" type="number" step="1" value="0"></label>
+            <label>Ø кінця <input id="servo1TipDiameter" type="number" min="1" step="1" value="8"></label>
+          </div>
+          <div class="servo-channel-row">
+            <label><input id="servo2Enabled" type="checkbox"> Канал 2</label>
+            <label>X кореня <input id="servo2RootX" type="number" step="1" value="220"></label>
+            <label>Y кореня <input id="servo2RootY" type="number" step="1" value="0"></label>
+            <label>Ø кореня <input id="servo2RootDiameter" type="number" min="1" step="1" value="6"></label>
+            <label>X кінця <input id="servo2TipX" type="number" step="1" value="150"></label>
+            <label>Y кінця <input id="servo2TipY" type="number" step="1" value="0"></label>
+            <label>Ø кінця <input id="servo2TipDiameter" type="number" min="1" step="1" value="6"></label>
+          </div>
+        </div>
         <button id="buildLibraryWing" type="button">Побудувати 3D-крило</button>
         <p id="profileLibraryStatus">Виберіть параметри кореневого та кінцевого профілів</p>
         <div class="fuselage-library">
@@ -259,6 +281,15 @@ const sparHoleInputs = [1, 2].map(number => ({
   positionLabel: document.querySelector(`#spar${number}PositionLabel`),
   tipDiameterLabel: document.querySelector(`#spar${number}TipDiameterLabel`)
 }))
+const servoChannelInputs = [1, 2].map(number => ({
+  enabled: document.querySelector(`#servo${number}Enabled`),
+  rootX: document.querySelector(`#servo${number}RootX`),
+  rootY: document.querySelector(`#servo${number}RootY`),
+  rootDiameter: document.querySelector(`#servo${number}RootDiameter`),
+  tipX: document.querySelector(`#servo${number}TipX`),
+  tipY: document.querySelector(`#servo${number}TipY`),
+  tipDiameter: document.querySelector(`#servo${number}TipDiameter`)
+}))
 const fuselageSegmentInput = document.querySelector('#fuselageSegment')
 const fuselageLengthInput = document.querySelector('#fuselageLength')
 const fuselageWidthInput = document.querySelector('#fuselageWidth')
@@ -304,6 +335,7 @@ let preparedCuttingTrajectory = null
 let generatedNcText = ''
 let recoveredNcProfiles = null
 let activeStraightSparRods = []
+let activeServoChannels = []
 const dxfSides = {
   left: {
     label: 'X/Y',
@@ -523,6 +555,7 @@ loadProjectButton.addEventListener('click', async () => {
 
   try {
     activeStraightSparRods = []
+    activeServoChannels = []
     const project = parseFoamCutProject(await file.text())
     applyProjectSettings(project.settings)
     preparedDxfProfiles.left = { points: project.leftPoints, source: 'project' }
@@ -781,9 +814,16 @@ const readPositiveLibraryNumber = (input, label) => {
   return value
 }
 
+const readLibraryNumber = (input, label) => {
+  const value = Number(input.value)
+  if (!Number.isFinite(value)) throw new Error(`${label} має бути числом`)
+  return value
+}
+
 buildLibraryWingButton.addEventListener('click', () => {
   try {
     activeStraightSparRods = []
+    activeServoChannels = []
     const pointCount = Math.max(20, Number(dxfPointCountInput.value) || 200)
     const rootChord = readPositiveLibraryNumber(rootLibraryChordInput, 'Хорда кореня')
     const tipChord = readPositiveLibraryNumber(tipLibraryChordInput, 'Хорда кінця')
@@ -844,7 +884,47 @@ buildLibraryWingButton.addEventListener('click', () => {
       }
       return { left, right }
     })
-    const profilesWithHoles = insertPairedSparHoles(rootPoints, tipPoints, sparHoles)
+    const servoChannels = servoChannelInputs.filter(channel => channel.enabled.checked)
+      .map((channel, index) => {
+        const rootX = readLibraryNumber(channel.rootX, `X кореня каналу ${index + 1}`)
+        const rootY = readLibraryNumber(channel.rootY, `Y кореня каналу ${index + 1}`)
+        const rootDiameter = readPositiveLibraryNumber(
+          channel.rootDiameter,
+          `Діаметр кореня каналу ${index + 1}`
+        )
+        const tipX = readLibraryNumber(channel.tipX, `X кінця каналу ${index + 1}`)
+        const tipY = readLibraryNumber(channel.tipY, `Y кінця каналу ${index + 1}`)
+        const tipDiameter = readPositiveLibraryNumber(
+          channel.tipDiameter,
+          `Діаметр кінця каналу ${index + 1}`
+        )
+        const left = createStraightSparHoleContour({
+          x: rootX,
+          y: rootY,
+          diameter: rootDiameter
+        })
+        const right = createStraightSparHoleContour({
+          x: tipX,
+          y: tipY,
+          diameter: tipDiameter
+        })
+        if (!sparHoleFitsProfile(rootPoints, left)) {
+          throw new Error(`Канал ${index + 1} не вміщується в кореневому профілі`)
+        }
+        if (!sparHoleFitsProfile(tipPoints, right)) {
+          throw new Error(`Канал ${index + 1} не вміщується в кінцевому профілі`)
+        }
+        return {
+          left,
+          right,
+          axis: { rootX, rootY, rootDiameter, tipX, tipY, tipDiameter }
+        }
+      })
+    const profilesWithHoles = insertPairedSparHoles(
+      rootPoints,
+      tipPoints,
+      [...sparHoles, ...servoChannels]
+    )
     const normalizedPair = normalizeProfilePair(
       profilesWithHoles.leftPoints,
       profilesWithHoles.rightPoints
@@ -853,6 +933,14 @@ buildLibraryWingButton.addEventListener('click', () => {
       x: axis.x + normalizedPair.translation.x,
       y: axis.y + normalizedPair.translation.y,
       diameter: axis.diameter
+    }))
+    activeServoChannels = servoChannels.map(({ axis }) => ({
+      rootX: axis.rootX + normalizedPair.translation.x,
+      rootY: axis.rootY + normalizedPair.translation.y,
+      rootDiameter: axis.rootDiameter,
+      tipX: axis.tipX + normalizedPair.translation.x,
+      tipY: axis.tipY + normalizedPair.translation.y,
+      tipDiameter: axis.tipDiameter
     }))
 
     preparedDxfProfiles.left = { points: normalizedPair.leftPoints, source: 'library' }
@@ -876,7 +964,8 @@ buildLibraryWingButton.addEventListener('click', () => {
     profileLibraryStatus.className = 'profile-library-valid'
     profileLibraryStatus.textContent = `Крило побудовано: корінь ${rootChord} мм, кінець ${tipChord} мм, `
       + `піврозмах ${halfSpan} мм, крутка ${twist}°, отворів лонжеронів: ${sparHoles.length}; `
-      + `${sparHoleModeInput.value === 'straight' ? 'наскрізні прямі осі' : 'позиція за хордою'}`
+      + `${sparHoleModeInput.value === 'straight' ? 'наскрізні прямі осі' : 'позиція за хордою'}; `
+      + `каналів проводів: ${servoChannels.length}`
   } catch (error) {
     profileLibraryStatus.className = 'profile-library-error'
     profileLibraryStatus.textContent = `Не вдалося побудувати крило: ${error.message}`
@@ -886,6 +975,7 @@ buildLibraryWingButton.addEventListener('click', () => {
 buildFuselageSegmentButton.addEventListener('click', () => {
   try {
     activeStraightSparRods = []
+    activeServoChannels = []
     const pointCount = Math.max(20, Number(dxfPointCountInput.value) || 200)
     const totalLength = readPositiveLibraryNumber(fuselageLengthInput, 'Довжина фюзеляжу')
     const maximumWidth = readPositiveLibraryNumber(fuselageWidthInput, 'Ширина фюзеляжу')
@@ -923,6 +1013,7 @@ const assignSelectedDxfContour = side => {
   const pointCount = Math.max(2, Number(dxfPointCountInput.value) || 200)
   const startIndex = Number(state.startInput.value) || 0
   activeStraightSparRods = []
+  activeServoChannels = []
   preparedDxfProfiles[side] = {
     points: resampleDxfContour(contour, pointCount, startIndex, state.reverseInput.checked),
     contourIndex: Number(state.contourSelect.value),
@@ -978,6 +1069,7 @@ const loadDxfSide = async side => {
 
   try {
     activeStraightSparRods = []
+    activeServoChannels = []
     const model = parseDxf(await file.text())
     state.model = model
     preparedDxfProfiles[side] = null
@@ -1091,6 +1183,7 @@ loadButton.addEventListener('click', async () => {
 
   const text = await file.text()
 activeStraightSparRods = []
+activeServoChannels = []
 recoveredNcProfiles = null
 downloadNcDxfLeftButton.disabled = true
 downloadNcDxfRightButton.disabled = true
@@ -1567,6 +1660,7 @@ const renderMachineScene = () => {
   const frameLayer = svgElement("g", { "data-layer": "machine-frame" })
   const foamLayer = svgElement("g", { "data-layer": "foam-block" })
   const sparLayer = svgElement("g", { "data-layer": "straight-spar-rods" })
+  const servoChannelLayer = svgElement("g", { "data-layer": "servo-wire-channels" })
   cutSurfaceLayer = svgElement("g", { "data-layer": "cut-surface" })
   const historyLayer = svgElement("g", { "data-layer": "wire-history" })
   const pathLayer = svgElement("g", { "data-layer": "toolpaths" })
@@ -1673,6 +1767,38 @@ const renderMachineScene = () => {
       "font-size": "12",
       "font-weight": "700"
     }, sparLayer).textContent = `Прут ${index + 1} Ø${rod.diameter} мм`
+  })
+
+  activeServoChannels.forEach((channel, index) => {
+    const rootEnd = project3d(
+      channel.rootX + machineScene.profileOffset.x,
+      channel.rootY + machineScene.profileOffset.y,
+      machineScene.leftDepth
+    )
+    const tipEnd = project3d(
+      channel.tipX + machineScene.profileOffset.x,
+      channel.tipY + machineScene.profileOffset.y,
+      machineScene.rightDepth
+    )
+    const averageDiameter = (channel.rootDiameter + channel.tipDiameter) / 2
+    svgElement("line", {
+      x1: rootEnd[0],
+      y1: rootEnd[1],
+      x2: tipEnd[0],
+      y2: tipEnd[1],
+      stroke: "#f97316",
+      "stroke-width": Math.max(3, averageDiameter * millimetersToSvg),
+      "stroke-opacity": "0.62",
+      "stroke-dasharray": "7 4",
+      "stroke-linecap": "round"
+    }, servoChannelLayer)
+    svgElement("text", {
+      x: rootEnd[0] + 7,
+      y: rootEnd[1] + 16,
+      fill: "#c2410c",
+      "font-size": "12",
+      "font-weight": "700"
+    }, servoChannelLayer).textContent = `Канал серви ${index + 1}`
   })
 
   const makePath3d = (points, depth, color) => {

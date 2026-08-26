@@ -399,6 +399,43 @@ code {
   font-size: 13px;
 }
 
+.servo-channel-controls {
+  margin: 14px 0;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+.servo-channel-controls h3 {
+  margin: 0 0 4px;
+  color: var(--text-h);
+}
+
+.servo-channel-controls > p {
+  margin-bottom: 8px;
+  font-size: 13px;
+}
+
+.servo-channel-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 8px 10px;
+  margin: 8px 0;
+}
+
+.servo-channel-row label {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+}
+
+.servo-channel-row input[type='number'] {
+  width: 58px;
+}
+
 #profileLibraryStatus {
   margin-top: 10px;
   font-size: 14px;
