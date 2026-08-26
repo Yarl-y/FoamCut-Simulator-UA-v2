@@ -189,7 +189,7 @@ export const createGliderFuselageSegment = ({
   }
 }
 
-export const transformLibraryProfile = (points, {
+const transformPhysicalPoint = (point, {
   chord,
   sweep = 0,
   twistDegrees = 0,
@@ -199,16 +199,127 @@ export const transformLibraryProfile = (points, {
   const angle = twistDegrees * Math.PI / 180
   const cosine = Math.cos(angle)
   const sine = Math.sin(angle)
+  const relativeX = point.x - axisX
 
-  return points.map(point => {
-    const scaledX = point.x * chord
-    const scaledY = point.y * chord
-    const relativeX = scaledX - axisX
+  return {
+    x: sweep + axisX + relativeX * cosine - point.y * sine,
+    y: relativeX * sine + point.y * cosine
+  }
+}
+
+export const transformLibraryProfile = (points, options) => {
+  const { chord } = options
+
+  return points.map(point => transformPhysicalPoint({
+    x: point.x * chord,
+    y: point.y * chord
+  }, options))
+}
+
+export const createSparHoleContour = ({
+  chord,
+  positionPercent,
+  height,
+  diameter,
+  sweep = 0,
+  twistDegrees = 0,
+  twistAxisPercent = 25,
+  pointCount = 32
+}) => Array.from({ length: pointCount }, (_, index) => {
+  const angle = Math.PI * 2 * index / pointCount
+  return transformPhysicalPoint({
+    x: chord * positionPercent / 100 + Math.cos(angle) * diameter / 2,
+    y: height + Math.sin(angle) * diameter / 2
+  }, { chord, sweep, twistDegrees, twistAxisPercent })
+})
+
+const pointInsidePolygon = (point, polygon) => {
+  let inside = false
+  for (let index = 0, previous = polygon.length - 1; index < polygon.length; previous = index++) {
+    const currentPoint = polygon[index]
+    const previousPoint = polygon[previous]
+    const crosses = (currentPoint.y > point.y) !== (previousPoint.y > point.y)
+      && point.x < (previousPoint.x - currentPoint.x) * (point.y - currentPoint.y)
+        / (previousPoint.y - currentPoint.y) + currentPoint.x
+    if (crosses) inside = !inside
+  }
+  return inside
+}
+
+export const sparHoleFitsProfile = (profilePoints, holeContour) => holeContour.every(
+  point => pointInsidePolygon(point, profilePoints)
+)
+
+const interpolateConnector = (start, end, segmentCount = 6) => Array.from(
+  { length: segmentCount },
+  (_, index) => {
+    const ratio = (index + 1) / segmentCount
     return {
-      x: sweep + axisX + relativeX * cosine - scaledY * sine,
-      y: relativeX * sine + scaledY * cosine
+      x: start.x + (end.x - start.x) * ratio,
+      y: start.y + (end.y - start.y) * ratio
+    }
+  }
+)
+
+const rotateContourToNearestPoint = (points, target) => {
+  let nearestIndex = 0
+  let nearestDistance = Infinity
+  points.forEach((point, index) => {
+    const distance = Math.hypot(point.x - target.x, point.y - target.y)
+    if (distance < nearestDistance) {
+      nearestDistance = distance
+      nearestIndex = index
     }
   })
+  const ordered = [...points.slice(nearestIndex), ...points.slice(0, nearestIndex)]
+  return [...ordered, { ...ordered[0] }]
+}
+
+const createKeyholeRoute = (boundaryPoint, holeContour) => {
+  const orderedHole = rotateContourToNearestPoint(holeContour, boundaryPoint)
+  const connector = interpolateConnector(boundaryPoint, orderedHole[0])
+  return [
+    ...connector,
+    ...orderedHole.slice(1),
+    ...connector.slice(0, -1).reverse(),
+    { ...boundaryPoint }
+  ]
+}
+
+export const insertPairedSparHoles = (leftPoints, rightPoints, holes) => {
+  const insertions = holes.map(hole => {
+    const leftCenter = hole.left.reduce((center, point) => ({
+      x: center.x + point.x / hole.left.length,
+      y: center.y + point.y / hole.left.length
+    }), { x: 0, y: 0 })
+    let baseIndex = 0
+    let nearestDistance = Infinity
+    leftPoints.forEach((point, index) => {
+      const distance = Math.hypot(point.x - leftCenter.x, point.y - leftCenter.y)
+      if (distance < nearestDistance) {
+        nearestDistance = distance
+        baseIndex = index
+      }
+    })
+    return { ...hole, baseIndex }
+  }).sort((first, second) => second.baseIndex - first.baseIndex)
+  const leftResult = leftPoints.map(point => ({ ...point }))
+  const rightResult = rightPoints.map(point => ({ ...point }))
+
+  for (const hole of insertions) {
+    leftResult.splice(
+      hole.baseIndex + 1,
+      0,
+      ...createKeyholeRoute(leftPoints[hole.baseIndex], hole.left)
+    )
+    rightResult.splice(
+      hole.baseIndex + 1,
+      0,
+      ...createKeyholeRoute(rightPoints[hole.baseIndex], hole.right)
+    )
+  }
+
+  return { leftPoints: leftResult, rightPoints: rightResult }
 }
 
 export const normalizeProfilePair = (leftPoints, rightPoints) => {

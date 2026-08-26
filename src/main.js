@@ -5,9 +5,12 @@ import { createFoamCutProject, parseFoamCutProject } from './project-file.js'
 import {
   createGliderFuselageSegment,
   createLibraryProfile,
+  createSparHoleContour,
   fuselageSegmentEntries,
+  insertPairedSparHoles,
   normalizeProfilePair,
   profileLibraryEntries,
+  sparHoleFitsProfile,
   transformLibraryProfile
 } from './profile-library.js'
 
@@ -52,6 +55,24 @@ document.querySelector('#app').innerHTML = `
           <label>Вісь крутки, % хорди
             <input id="twistAxis" type="number" min="0" max="100" step="1" value="25">
           </label>
+        </div>
+        <div class="spar-hole-controls">
+          <h3>Отвори лонжеронів</h3>
+          <div class="spar-hole-row">
+            <label><input id="spar1Enabled" type="checkbox" checked> Отвір 1</label>
+            <label>Положення, % хорди <input id="spar1Position" type="number" min="1" max="99" step="1" value="30"></label>
+            <label>Висота від хорди, мм <input id="spar1Height" type="number" step="1" value="0"></label>
+            <label>Ø кореня, мм <input id="spar1RootDiameter" type="number" min="1" step="1" value="12"></label>
+            <label>Ø кінця, мм <input id="spar1TipDiameter" type="number" min="1" step="1" value="10"></label>
+          </div>
+          <div class="spar-hole-row">
+            <label><input id="spar2Enabled" type="checkbox"> Отвір 2</label>
+            <label>Положення, % хорди <input id="spar2Position" type="number" min="1" max="99" step="1" value="55"></label>
+            <label>Висота від хорди, мм <input id="spar2Height" type="number" step="1" value="0"></label>
+            <label>Ø кореня, мм <input id="spar2RootDiameter" type="number" min="1" step="1" value="10"></label>
+            <label>Ø кінця, мм <input id="spar2TipDiameter" type="number" min="1" step="1" value="8"></label>
+          </div>
+          <p>Струна входить до кожного отвору від найближчої поверхні та повертається тим самим каналом.</p>
         </div>
         <button id="buildLibraryWing" type="button">Побудувати 3D-крило</button>
         <p id="profileLibraryStatus">Виберіть параметри кореневого та кінцевого профілів</p>
@@ -220,6 +241,13 @@ const tipTwistInput = document.querySelector('#tipTwist')
 const twistAxisInput = document.querySelector('#twistAxis')
 const buildLibraryWingButton = document.querySelector('#buildLibraryWing')
 const profileLibraryStatus = document.querySelector('#profileLibraryStatus')
+const sparHoleInputs = [1, 2].map(number => ({
+  enabled: document.querySelector(`#spar${number}Enabled`),
+  position: document.querySelector(`#spar${number}Position`),
+  height: document.querySelector(`#spar${number}Height`),
+  rootDiameter: document.querySelector(`#spar${number}RootDiameter`),
+  tipDiameter: document.querySelector(`#spar${number}TipDiameter`)
+}))
 const fuselageSegmentInput = document.querySelector('#fuselageSegment')
 const fuselageLengthInput = document.querySelector('#fuselageLength')
 const fuselageWidthInput = document.querySelector('#fuselageWidth')
@@ -733,14 +761,45 @@ buildLibraryWingButton.addEventListener('click', () => {
     const twistAxis = Math.min(100, Math.max(0, Number(twistAxisInput.value) || 0))
     const rootNormalized = createLibraryProfile(rootLibraryProfileInput.value, pointCount)
     const tipNormalized = createLibraryProfile(tipLibraryProfileInput.value, pointCount)
-    const rootPoints = transformLibraryProfile(rootNormalized, { chord: rootChord })
-    const tipPoints = transformLibraryProfile(tipNormalized, {
+    const rootTransform = { chord: rootChord }
+    const tipTransform = {
       chord: tipChord,
       sweep,
       twistDegrees: twist,
       twistAxisPercent: twistAxis
+    }
+    const rootPoints = transformLibraryProfile(rootNormalized, rootTransform)
+    const tipPoints = transformLibraryProfile(tipNormalized, tipTransform)
+    const sparHoles = sparHoleInputs.filter(hole => hole.enabled.checked).map((hole, index) => {
+      const positionPercent = Math.min(99, Math.max(1, Number(hole.position.value) || 1))
+      const height = Number(hole.height.value) || 0
+      const rootDiameter = readPositiveLibraryNumber(hole.rootDiameter, `Діаметр кореня отвору ${index + 1}`)
+      const tipDiameter = readPositiveLibraryNumber(hole.tipDiameter, `Діаметр кінця отвору ${index + 1}`)
+      const left = createSparHoleContour({
+          ...rootTransform,
+          positionPercent,
+          height,
+          diameter: rootDiameter
+        })
+      const right = createSparHoleContour({
+          ...tipTransform,
+          positionPercent,
+          height,
+          diameter: tipDiameter
+        })
+      if (!sparHoleFitsProfile(rootPoints, left)) {
+        throw new Error(`Отвір ${index + 1} не вміщується в кореневому профілі`)
+      }
+      if (!sparHoleFitsProfile(tipPoints, right)) {
+        throw new Error(`Отвір ${index + 1} не вміщується в кінцевому профілі`)
+      }
+      return { left, right }
     })
-    const normalizedPair = normalizeProfilePair(rootPoints, tipPoints)
+    const profilesWithHoles = insertPairedSparHoles(rootPoints, tipPoints, sparHoles)
+    const normalizedPair = normalizeProfilePair(
+      profilesWithHoles.leftPoints,
+      profilesWithHoles.rightPoints
+    )
 
     preparedDxfProfiles.left = { points: normalizedPair.leftPoints, source: 'library' }
     preparedDxfProfiles.right = { points: normalizedPair.rightPoints, source: 'library' }
@@ -762,7 +821,7 @@ buildLibraryWingButton.addEventListener('click', () => {
     renderPreparedDxfSimulation()
     profileLibraryStatus.className = 'profile-library-valid'
     profileLibraryStatus.textContent = `Крило побудовано: корінь ${rootChord} мм, кінець ${tipChord} мм, `
-      + `піврозмах ${halfSpan} мм, крутка ${twist}°`
+      + `піврозмах ${halfSpan} мм, крутка ${twist}°, отворів лонжеронів: ${sparHoles.length}`
   } catch (error) {
     profileLibraryStatus.className = 'profile-library-error'
     profileLibraryStatus.textContent = `Не вдалося побудувати крило: ${error.message}`
