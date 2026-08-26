@@ -354,6 +354,26 @@ code {
   font-size: 14px;
 }
 
+.fuselage-library {
+  margin-top: 18px;
+  padding-top: 16px;
+  border-top: 1px solid var(--border);
+}
+
+.fuselage-library h3 {
+  margin: 0 0 4px;
+  color: var(--text-h);
+}
+
+.fuselage-library > p {
+  font-size: 14px;
+}
+
+#fuselageLibraryStatus {
+  margin-top: 10px;
+  font-size: 14px;
+}
+
 .profile-library-valid {
   color: #15803d;
 }

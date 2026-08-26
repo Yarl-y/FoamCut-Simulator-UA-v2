@@ -3,7 +3,9 @@ import { parseDxf, renderDxfPreview, resampleDxfContour } from './dxf.js'
 import { createDxfPolyline, createPreviewModel, recoverNcProfiles } from './nc-dxf.js'
 import { createFoamCutProject, parseFoamCutProject } from './project-file.js'
 import {
+  createGliderFuselageSegment,
   createLibraryProfile,
+  fuselageSegmentEntries,
   normalizeProfilePair,
   profileLibraryEntries,
   transformLibraryProfile
@@ -53,6 +55,26 @@ document.querySelector('#app').innerHTML = `
         </div>
         <button id="buildLibraryWing" type="button">Побудувати 3D-крило</button>
         <p id="profileLibraryStatus">Виберіть параметри кореневого та кінцевого профілів</p>
+        <div class="fuselage-library">
+          <h3>Планерний фюзеляж</h3>
+          <p>Параметричний шаблон загального планерного компонування</p>
+          <div class="profile-library-grid fuselage-library-grid">
+            <label>Секція для різання
+              <select id="fuselageSegment"></select>
+            </label>
+            <label>Загальна довжина, мм
+              <input id="fuselageLength" type="number" min="1" step="1" value="900">
+            </label>
+            <label>Максимальна ширина, мм
+              <input id="fuselageWidth" type="number" min="1" step="1" value="140">
+            </label>
+            <label>Максимальна висота, мм
+              <input id="fuselageHeight" type="number" min="1" step="1" value="160">
+            </label>
+          </div>
+          <button id="buildFuselageSegment" type="button">Побудувати секцію фюзеляжу</button>
+          <p id="fuselageLibraryStatus">Виберіть секцію — для кожної створюється окремий NC-файл</p>
+        </div>
       </div>
     </section>
 
@@ -198,6 +220,12 @@ const tipTwistInput = document.querySelector('#tipTwist')
 const twistAxisInput = document.querySelector('#twistAxis')
 const buildLibraryWingButton = document.querySelector('#buildLibraryWing')
 const profileLibraryStatus = document.querySelector('#profileLibraryStatus')
+const fuselageSegmentInput = document.querySelector('#fuselageSegment')
+const fuselageLengthInput = document.querySelector('#fuselageLength')
+const fuselageWidthInput = document.querySelector('#fuselageWidth')
+const fuselageHeightInput = document.querySelector('#fuselageHeight')
+const buildFuselageSegmentButton = document.querySelector('#buildFuselageSegment')
+const fuselageLibraryStatus = document.querySelector('#fuselageLibraryStatus')
 const downloadNcDxfLeftButton = document.querySelector('#downloadNcDxfLeft')
 const downloadNcDxfRightButton = document.querySelector('#downloadNcDxfRight')
 const ncToDxfStatus = document.querySelector('#ncToDxfStatus')
@@ -275,6 +303,13 @@ for (const { id, name } of profileLibraryEntries) {
 }
 rootLibraryProfileInput.value = 'naca2412'
 tipLibraryProfileInput.value = 'naca2412'
+
+for (const { id, name } of fuselageSegmentEntries) {
+  const option = document.createElement('option')
+  option.value = id
+  option.textContent = name
+  fuselageSegmentInput.appendChild(option)
+}
 
 toggleProfileLibraryButton.addEventListener('click', () => {
   profileLibraryPanel.hidden = !profileLibraryPanel.hidden
@@ -731,6 +766,37 @@ buildLibraryWingButton.addEventListener('click', () => {
   } catch (error) {
     profileLibraryStatus.className = 'profile-library-error'
     profileLibraryStatus.textContent = `Не вдалося побудувати крило: ${error.message}`
+  }
+})
+
+buildFuselageSegmentButton.addEventListener('click', () => {
+  try {
+    const pointCount = Math.max(20, Number(dxfPointCountInput.value) || 200)
+    const totalLength = readPositiveLibraryNumber(fuselageLengthInput, 'Довжина фюзеляжу')
+    const maximumWidth = readPositiveLibraryNumber(fuselageWidthInput, 'Ширина фюзеляжу')
+    const maximumHeight = readPositiveLibraryNumber(fuselageHeightInput, 'Висота фюзеляжу')
+    const segment = createGliderFuselageSegment({
+      segmentId: fuselageSegmentInput.value,
+      totalLength,
+      maximumWidth,
+      maximumHeight,
+      pointCount
+    })
+
+    preparedDxfProfiles.left = { points: segment.leftPoints, source: 'fuselage-library' }
+    preparedDxfProfiles.right = { points: segment.rightPoints, source: 'fuselage-library' }
+    showProfileInDxfPanel('left', segment.leftPoints, true, `Фюзеляж — ${segment.leftName}`)
+    showProfileInDxfPanel('right', segment.rightPoints, true, `Фюзеляж — ${segment.rightName}`)
+    foamWidthInput.value = Math.round(segment.segmentLength * 1000) / 1000
+    updateDxfAssignmentStatus()
+    updateProjectSaveAvailability()
+    renderPreparedDxfSimulation()
+    fuselageLibraryStatus.className = 'profile-library-valid'
+    fuselageLibraryStatus.textContent = `Секцію ${segment.leftName} → ${segment.rightName} побудовано; `
+      + `довжина блока ${foamWidthInput.value} мм`
+  } catch (error) {
+    fuselageLibraryStatus.className = 'profile-library-error'
+    fuselageLibraryStatus.textContent = `Не вдалося побудувати секцію: ${error.message}`
   }
 })
 
