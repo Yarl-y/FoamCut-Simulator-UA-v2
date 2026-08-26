@@ -1,4 +1,5 @@
 import './style.css'
+import { renderAssemblyView } from './assembly-view.js'
 import { parseDxf, renderDxfPreview, resampleDxfContour } from './dxf.js'
 import { createDxfPolyline, createPreviewModel, recoverNcProfiles } from './nc-dxf.js'
 import { createFoamCutProject, parseFoamCutProject } from './project-file.js'
@@ -250,6 +251,18 @@ view3d.innerHTML = `
     <p class="orbit-help">Миша: ліва — орбіта; Shift + ліва або права — переміщення; коліщатко — масштаб</p>
   </div>
   <svg id="svg3d" width="800" height="500" style="border:1px solid #999"></svg>
+  <section class="assembly-workspace">
+    <h2>Збірка моделі</h2>
+    <div class="assembly-actions">
+      <button id="addLeftWing" disabled>Додати ліве півкрило</button>
+      <button id="addRightWing" disabled>Додати праве півкрило</button>
+      <button id="addFuselagePart" disabled>Додати секцію фюзеляжу</button>
+    </div>
+    <p id="assemblyCandidateStatus">Спочатку побудуйте крило або секцію фюзеляжу</p>
+    <div id="assemblyPartsList" class="assembly-parts-list"></div>
+    <svg id="assemblySvg" viewBox="0 0 800 500" width="800" height="500"></svg>
+    <p id="assemblyStatus">Збірка поки порожня</p>
+  </section>
 `
 
 const fileInput = document.querySelector('#ncFile')
@@ -328,6 +341,13 @@ const stop3d = document.getElementById('stop3d')
 const reset3d = document.getElementById('reset3d')
 const speed3d = document.getElementById('speed3d')
 const showCutSurfaceInput = document.getElementById('showCutSurface')
+const addLeftWingButton = document.getElementById('addLeftWing')
+const addRightWingButton = document.getElementById('addRightWing')
+const addFuselagePartButton = document.getElementById('addFuselagePart')
+const assemblyCandidateStatus = document.getElementById('assemblyCandidateStatus')
+const assemblyPartsList = document.getElementById('assemblyPartsList')
+const assemblySvg = document.getElementById('assemblySvg')
+const assemblyStatus = document.getElementById('assemblyStatus')
 let renderActiveFoamBlock = null
 const preparedDxfProfiles = { left: null, right: null }
 const cuttingSettings = { feedRate: 300 }
@@ -336,6 +356,9 @@ let generatedNcText = ''
 let recoveredNcProfiles = null
 let activeStraightSparRods = []
 let activeServoChannels = []
+let currentAssemblyCandidate = null
+const assemblyParts = []
+let nextAssemblyPartId = 1
 const dxfSides = {
   left: {
     label: 'X/Y',
@@ -942,6 +965,23 @@ buildLibraryWingButton.addEventListener('click', () => {
       tipY: axis.tipY + normalizedPair.translation.y,
       tipDiameter: axis.tipDiameter
     }))
+    const translateOuterProfile = points => points.map(point => ({
+      x: point.x + normalizedPair.translation.x,
+      y: point.y + normalizedPair.translation.y
+    }))
+    currentAssemblyCandidate = {
+      kind: 'wing',
+      name: `${rootLibraryProfileInput.selectedOptions[0].textContent} / ${tipLibraryProfileInput.selectedOptions[0].textContent}`,
+      span: halfSpan,
+      outerLeft: translateOuterProfile(rootPoints),
+      outerRight: translateOuterProfile(tipPoints),
+      cutLeft: normalizedPair.leftPoints.map(point => ({ ...point })),
+      cutRight: normalizedPair.rightPoints.map(point => ({ ...point })),
+      straightSparRods: activeStraightSparRods.map(rod => ({ ...rod })),
+      servoChannels: activeServoChannels.map(channel => ({ ...channel })),
+      defaultOffsets: { x: 0, y: 0, z: 0 }
+    }
+    updateAssemblyCandidateControls()
 
     preparedDxfProfiles.left = { points: normalizedPair.leftPoints, source: 'library' }
     preparedDxfProfiles.right = { points: normalizedPair.rightPoints, source: 'library' }
@@ -993,6 +1033,19 @@ buildFuselageSegmentButton.addEventListener('click', () => {
     showProfileInDxfPanel('left', segment.leftPoints, true, `Фюзеляж — ${segment.leftName}`)
     showProfileInDxfPanel('right', segment.rightPoints, true, `Фюзеляж — ${segment.rightName}`)
     foamWidthInput.value = Math.round(segment.segmentLength * 1000) / 1000
+    currentAssemblyCandidate = {
+      kind: 'fuselage',
+      name: `Фюзеляж ${segment.leftName} → ${segment.rightName}`,
+      span: segment.segmentLength,
+      outerLeft: segment.leftPoints.map(point => ({ ...point })),
+      outerRight: segment.rightPoints.map(point => ({ ...point })),
+      cutLeft: segment.leftPoints.map(point => ({ ...point })),
+      cutRight: segment.rightPoints.map(point => ({ ...point })),
+      straightSparRods: [],
+      servoChannels: [],
+      defaultOffsets: { x: segment.segmentStart, y: 0, z: 0 }
+    }
+    updateAssemblyCandidateControls()
     updateDxfAssignmentStatus()
     updateProjectSaveAvailability()
     renderPreparedDxfSimulation()
@@ -1004,6 +1057,118 @@ buildFuselageSegmentButton.addEventListener('click', () => {
     fuselageLibraryStatus.textContent = `Не вдалося побудувати секцію: ${error.message}`
   }
 })
+
+const updateAssemblyCandidateControls = () => {
+  const wingReady = currentAssemblyCandidate?.kind === 'wing'
+  const fuselageReady = currentAssemblyCandidate?.kind === 'fuselage'
+  addLeftWingButton.disabled = !wingReady
+  addRightWingButton.disabled = !wingReady
+  addFuselagePartButton.disabled = !fuselageReady
+  assemblyCandidateStatus.textContent = currentAssemblyCandidate
+    ? `Поточна деталь: ${currentAssemblyCandidate.name}`
+    : 'Спочатку побудуйте крило або секцію фюзеляжу'
+}
+
+const updateAssemblySvg = () => {
+  const result = renderAssemblyView(assemblySvg, assemblyParts)
+  assemblyStatus.textContent = result.visibleCount
+    ? `У збірці ${assemblyParts.length} деталей; показано ${result.visibleCount}. `
+      + 'Виберіть потрібну деталь для симуляції та створення NC.'
+    : `У збірці ${assemblyParts.length} деталей; усі деталі приховані`
+}
+
+const selectAssemblyPartForCutting = part => {
+  activeStraightSparRods = part.straightSparRods.map(rod => ({ ...rod }))
+  activeServoChannels = part.servoChannels.map(channel => ({ ...channel }))
+  preparedDxfProfiles.left = {
+    points: part.cutLeft.map(point => ({ ...point })),
+    source: 'assembly'
+  }
+  preparedDxfProfiles.right = {
+    points: part.cutRight.map(point => ({ ...point })),
+    source: 'assembly'
+  }
+  foamWidthInput.value = Math.round(part.span * 1000) / 1000
+  showProfileInDxfPanel('left', preparedDxfProfiles.left.points, true, `${part.name} — X/Y`)
+  showProfileInDxfPanel('right', preparedDxfProfiles.right.points, true, `${part.name} — A/Z`)
+  updateDxfAssignmentStatus()
+  updateProjectSaveAvailability()
+  renderPreparedDxfSimulation()
+  assemblyStatus.textContent = `${part.name} вибрано для різання; симуляція та NC оновлені`
+}
+
+const renderAssemblyPartsList = () => {
+  assemblyPartsList.replaceChildren()
+  for (const part of assemblyParts) {
+    const row = document.createElement('div')
+    row.className = 'assembly-part-row'
+    const visibleLabel = document.createElement('label')
+    const visibleInput = document.createElement('input')
+    visibleInput.type = 'checkbox'
+    visibleInput.checked = part.visible
+    visibleInput.addEventListener('change', () => {
+      part.visible = visibleInput.checked
+      updateAssemblySvg()
+    })
+    visibleLabel.append(visibleInput, document.createTextNode(part.name))
+    row.appendChild(visibleLabel)
+
+    for (const axis of ['x', 'y', 'z']) {
+      const label = document.createElement('label')
+      label.textContent = `${axis.toUpperCase()}, мм `
+      const input = document.createElement('input')
+      input.type = 'number'
+      input.step = '1'
+      input.value = part.offsets[axis]
+      input.addEventListener('input', () => {
+        const value = Number(input.value)
+        if (Number.isFinite(value)) {
+          part.offsets[axis] = value
+          updateAssemblySvg()
+        }
+      })
+      label.appendChild(input)
+      row.appendChild(label)
+    }
+
+    const selectButton = document.createElement('button')
+    selectButton.textContent = 'Вибрати для різання'
+    selectButton.addEventListener('click', () => selectAssemblyPartForCutting(part))
+    row.appendChild(selectButton)
+    assemblyPartsList.appendChild(row)
+  }
+  updateAssemblySvg()
+}
+
+const addCurrentCandidateToAssembly = side => {
+  if (!currentAssemblyCandidate) return
+  const candidate = currentAssemblyCandidate
+  if (candidate.kind === 'wing' && !['left', 'right'].includes(side)) return
+  if (candidate.kind === 'fuselage' && side !== 'fuselage') return
+  const sideLabel = side === 'left' ? 'Ліве півкрило' : side === 'right' ? 'Праве півкрило' : ''
+  assemblyParts.push({
+    id: nextAssemblyPartId++,
+    kind: candidate.kind,
+    side: candidate.kind === 'wing' ? side : null,
+    name: candidate.kind === 'wing' ? `${sideLabel}: ${candidate.name}` : candidate.name,
+    span: candidate.span,
+    outerLeft: candidate.outerLeft.map(point => ({ ...point })),
+    outerRight: candidate.outerRight.map(point => ({ ...point })),
+    cutLeft: candidate.cutLeft.map(point => ({ ...point })),
+    cutRight: candidate.cutRight.map(point => ({ ...point })),
+    straightSparRods: candidate.straightSparRods.map(rod => ({ ...rod })),
+    servoChannels: candidate.servoChannels.map(channel => ({ ...channel })),
+    offsets: { ...candidate.defaultOffsets },
+    visible: true
+  })
+  renderAssemblyPartsList()
+}
+
+addLeftWingButton.addEventListener('click', () => addCurrentCandidateToAssembly('left'))
+addRightWingButton.addEventListener('click', () => addCurrentCandidateToAssembly('right'))
+addFuselagePartButton.addEventListener('click', () => addCurrentCandidateToAssembly('fuselage'))
+updateAssemblyCandidateControls()
+renderAssemblyPartsList()
 
 const assignSelectedDxfContour = side => {
   const state = dxfSides[side]

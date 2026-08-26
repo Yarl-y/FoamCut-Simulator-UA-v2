@@ -183,6 +183,7 @@ export const createGliderFuselageSegment = ({
 
   return {
     ...pair,
+    segmentStart: totalLength * leftStation.position,
     segmentLength: totalLength * (rightStation.position - leftStation.position),
     leftName: leftStation.name,
     rightName: rightStation.name

@@ -694,3 +694,66 @@ code {
 #svg3d:active {
   cursor: grabbing;
 }
+
+.assembly-workspace {
+  margin-top: 24px;
+  padding-top: 18px;
+  border-top: 2px solid var(--border);
+}
+
+.assembly-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 8px;
+  margin: 10px 0;
+}
+
+#assemblyCandidateStatus,
+#assemblyStatus {
+  margin: 8px 0;
+  font-size: 14px;
+}
+
+.assembly-parts-list {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  margin: 10px 0;
+}
+
+.assembly-part-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 7px 10px;
+  padding: 8px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+}
+
+.assembly-part-row label {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 13px;
+}
+
+.assembly-part-row label:first-child {
+  min-width: 220px;
+  font-weight: 600;
+}
+
+.assembly-part-row input[type='number'] {
+  width: 58px;
+}
+
+#assemblySvg {
+  display: block;
+  width: 100%;
+  height: auto;
+  margin-top: 10px;
+  border: 1px solid #999;
+  background: #fff;
+}
