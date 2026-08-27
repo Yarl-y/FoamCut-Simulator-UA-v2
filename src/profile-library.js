@@ -178,6 +178,9 @@ export const createGliderFuselageSegment = ({
   totalLength,
   maximumWidth,
   maximumHeight,
+  hollow = false,
+  wallThickness = 5,
+  bottomThickness = 5,
   pointCount = 200
 }) => {
   if (!Array.isArray(stations) || stations.length < 2) {
@@ -218,17 +221,55 @@ export const createGliderFuselageSegment = ({
   }
   const leftStation = normalizedStations[segmentIndex]
   const rightStation = normalizedStations[segmentIndex + 1]
-  const makeSection = station => createGliderSection(
-    maximumWidth * station.width,
-    maximumHeight * station.height,
-    maximumHeight * station.lift,
-    pointCount,
-    station
-  )
-  const pair = normalizeProfilePair(makeSection(leftStation), makeSection(rightStation))
+  const stationDimensions = station => ({
+    width: maximumWidth * station.width,
+    height: maximumHeight * station.height,
+    lift: maximumHeight * station.lift
+  })
+  const makeSection = station => {
+    const dimensions = stationDimensions(station)
+    return createGliderSection(
+      dimensions.width, dimensions.height, dimensions.lift, pointCount, station
+    )
+  }
+  const rawLeft = makeSection(leftStation)
+  const rawRight = makeSection(rightStation)
+  const pair = normalizeProfilePair(rawLeft, rawRight)
+  let innerLeftPoints = null
+  let innerRightPoints = null
+
+  if (hollow) {
+    const wall = Number(wallThickness)
+    const bottom = Number(bottomThickness)
+    if (!Number.isFinite(wall) || !Number.isFinite(bottom) || wall <= 0 || bottom <= 0) {
+      throw new Error('Товщина стінки та днища повинна бути більшою за нуль')
+    }
+    const makeInnerSection = (station, label) => {
+      const dimensions = stationDimensions(station)
+      const innerWidth = dimensions.width - wall * 2
+      const innerHeight = dimensions.height - wall - bottom
+      if (innerWidth < 2 || innerHeight < 2) {
+        throw new Error(`${label}: недостатньо місця для порожнини при заданій товщині`)
+      }
+      return createGliderSection(
+        innerWidth,
+        innerHeight,
+        dimensions.lift + bottom,
+        pointCount,
+        station
+      ).map(point => ({
+        x: point.x + wall + pair.translation.x,
+        y: point.y + pair.translation.y
+      }))
+    }
+    innerLeftPoints = makeInnerSection(leftStation, leftStation.name)
+    innerRightPoints = makeInnerSection(rightStation, rightStation.name)
+  }
 
   return {
     ...pair,
+    innerLeftPoints,
+    innerRightPoints,
     segmentStart: totalLength * leftStation.position,
     segmentLength: totalLength * (rightStation.position - leftStation.position),
     leftName: leftStation.name,
@@ -320,6 +361,55 @@ const interpolateConnector = (start, end, segmentCount = 6) => Array.from(
     }
   }
 )
+
+const rotatePoints = (points, startIndex) => [
+  ...points.slice(startIndex),
+  ...points.slice(0, startIndex)
+].map(point => ({ ...point }))
+
+export const createPairedHollowCutPath = (
+  outerLeft,
+  outerRight,
+  innerLeft,
+  innerRight
+) => {
+  if (
+    outerLeft.length !== outerRight.length
+    || innerLeft.length !== innerRight.length
+    || !outerLeft.length
+    || !innerLeft.length
+  ) {
+    throw new Error('Контури порожнистої секції повинні мати синхронні точки X/Y та A/Z')
+  }
+  let bottomIndex = 0
+  outerLeft.forEach((point, index) => {
+    if (point.y < outerLeft[bottomIndex].y) bottomIndex = index
+  })
+  const buildSide = (outer, inner) => {
+    const orderedOuter = rotatePoints(outer, bottomIndex)
+    let innerBottomIndex = 0
+    inner.forEach((point, index) => {
+      if (point.y < inner[innerBottomIndex].y) innerBottomIndex = index
+    })
+    const orderedInner = rotatePoints(inner, innerBottomIndex)
+    const outerStart = orderedOuter[0]
+    const innerStart = orderedInner[0]
+    const connector = interpolateConnector(outerStart, innerStart)
+    return [
+      { ...outerStart },
+      ...connector,
+      ...orderedInner.slice(1),
+      { ...innerStart },
+      ...connector.slice(0, -1).reverse().map(point => ({ ...point })),
+      { ...outerStart },
+      ...orderedOuter.slice(1)
+    ]
+  }
+  return {
+    leftPoints: buildSide(outerLeft, innerLeft),
+    rightPoints: buildSide(outerRight, innerRight)
+  }
+}
 
 const rotateContourToNearestPoint = (points, target) => {
   let nearestIndex = 0

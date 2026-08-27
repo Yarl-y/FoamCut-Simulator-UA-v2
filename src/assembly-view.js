@@ -93,11 +93,14 @@ export const renderAssemblyView = (svg, parts, camera = {}) => {
     left: { stroke: '#2563eb', fill: '#60a5fa' },
     right: { stroke: '#dc2626', fill: '#f87171' },
     fuselage: { stroke: '#b45309', fill: '#fbbf24' },
-    selected: { stroke: '#059669', fill: '#34d399' }
+    selected: { stroke: '#059669', fill: '#34d399' },
+    inner: { stroke: '#7c3aed', fill: '#c4b5fd' }
   }
 
   for (const { part, root, tip } of geometries) {
-    const color = part.previewSelected
+    const color = part.previewInner
+      ? colors.inner
+      : part.previewSelected
       ? colors.selected
       : colors[part.kind === 'fuselage' ? 'fuselage' : part.side]
     const step = Math.max(1, Math.floor(Math.min(root.length, tip.length) / 64))

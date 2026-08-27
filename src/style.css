@@ -503,6 +503,14 @@ code {
   color: var(--text-h);
 }
 
+.fuselage-hollow-toggle {
+  justify-content: center;
+}
+
+.fuselage-hollow-toggle input {
+  width: auto;
+}
+
 .fuselage-library > p {
   font-size: 14px;
 }

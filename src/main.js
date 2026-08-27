@@ -6,6 +6,7 @@ import { createDxfPolyline, createPreviewModel, recoverNcProfiles } from './nc-d
 import { createFoamCutProject, parseFoamCutProject } from './project-file.js'
 import {
   createGliderFuselageSegment,
+  createPairedHollowCutPath,
   createLibraryProfile,
   createSparHoleContour,
   createStraightSparHoleContour,
@@ -124,6 +125,13 @@ document.querySelector('#app').innerHTML = `
             </label>
             <label>Максимальна висота, мм
               <input id="fuselageHeight" type="number" min="1" step="1" value="160">
+            </label>
+            <label class="fuselage-hollow-toggle"><input id="fuselageHollow" type="checkbox"> Порожниста секція</label>
+            <label>Товщина стінки, мм
+              <input id="fuselageWallThickness" type="number" min="1" step="1" value="5">
+            </label>
+            <label>Товщина днища, мм
+              <input id="fuselageBottomThickness" type="number" min="1" step="1" value="5">
             </label>
           </div>
           <div class="fuselage-stations-toolbar">
@@ -348,6 +356,9 @@ const fuselageSegmentInput = document.querySelector('#fuselageSegment')
 const fuselageLengthInput = document.querySelector('#fuselageLength')
 const fuselageWidthInput = document.querySelector('#fuselageWidth')
 const fuselageHeightInput = document.querySelector('#fuselageHeight')
+const fuselageHollowInput = document.querySelector('#fuselageHollow')
+const fuselageWallThicknessInput = document.querySelector('#fuselageWallThickness')
+const fuselageBottomThicknessInput = document.querySelector('#fuselageBottomThickness')
 const fuselageStationsElement = document.querySelector('#fuselageStations')
 const addFuselageSectionButton = document.querySelector('#addFuselageSection')
 const resetFuselageSectionsButton = document.querySelector('#resetFuselageSections')
@@ -552,14 +563,22 @@ const renderLibraryPreview = () => {
       const totalLength = readPositiveLibraryNumber(fuselageLengthInput, 'Довжина фюзеляжу')
       const maximumWidth = readPositiveLibraryNumber(fuselageWidthInput, 'Ширина фюзеляжу')
       const maximumHeight = readPositiveLibraryNumber(fuselageHeightInput, 'Висота фюзеляжу')
+      const hollow = fuselageHollowInput.checked
+      const wallThickness = hollow
+        ? readPositiveLibraryNumber(fuselageWallThicknessInput, 'Товщина стінки')
+        : 5
+      const bottomThickness = hollow
+        ? readPositiveLibraryNumber(fuselageBottomThicknessInput, 'Товщина днища')
+        : 5
       fuselageStations = readFuselageStations()
       const selectedSegment = Number(fuselageSegmentInput.value) || 0
       parts = fuselageStations.slice(0, -1).map((station, index) => {
         const segment = createGliderFuselageSegment({
           segmentIndex: index, stations: fuselageStations, totalLength,
-          maximumWidth, maximumHeight, pointCount
+          maximumWidth, maximumHeight, pointCount,
+          hollow, wallThickness, bottomThickness
         })
-        return previewPart({
+        const outerPart = previewPart({
           kind: 'fuselage',
           name: `${segment.leftName} → ${segment.rightName}`,
           span: segment.segmentLength,
@@ -568,8 +587,23 @@ const renderLibraryPreview = () => {
           offsets: { x: segment.segmentStart, y: -segment.translation.y, z: 0 },
           selected: index === selectedSegment
         })
+        if (!hollow) return [outerPart]
+        return [
+          outerPart,
+          {
+            ...previewPart({
+              kind: 'fuselage', name: '', span: segment.segmentLength,
+              outerLeft: segment.innerLeftPoints, outerRight: segment.innerRightPoints,
+              offsets: { x: segment.segmentStart, y: -segment.translation.y, z: 0 }
+            }),
+            previewInner: true
+          }
+        ]
       })
-      libraryPreviewStatus.textContent = `Фюзеляж: ${parts.length} секц.; вибрано ${parts[selectedSegment].name}`
+        .flat()
+      const selectedName = `${fuselageStations[selectedSegment].name} → ${fuselageStations[selectedSegment + 1].name}`
+      libraryPreviewStatus.textContent = `Фюзеляж: ${fuselageStations.length - 1} секц.; вибрано ${selectedName}`
+        + (hollow ? `; стінка ${wallThickness} мм, днище ${bottomThickness} мм` : '')
     }
     renderAssemblyView(libraryPreviewSvg, parts, libraryPreviewCamera)
     previewWingButton.classList.toggle('active', libraryPreviewMode === 'wing')
@@ -648,9 +682,20 @@ wingPreviewInputs.forEach(input => {
   input.addEventListener('input', () => scheduleLibraryPreview('wing'))
   input.addEventListener('change', () => scheduleLibraryPreview('wing'))
 })
-;[fuselageLengthInput, fuselageWidthInput, fuselageHeightInput].forEach(input => {
+;[
+  fuselageLengthInput, fuselageWidthInput, fuselageHeightInput, fuselageHollowInput,
+  fuselageWallThicknessInput, fuselageBottomThicknessInput
+].forEach(input => {
   input.addEventListener('input', () => scheduleLibraryPreview('fuselage'))
+  input.addEventListener('change', () => scheduleLibraryPreview('fuselage'))
 })
+
+const syncHollowFuselageControls = () => {
+  fuselageWallThicknessInput.disabled = !fuselageHollowInput.checked
+  fuselageBottomThicknessInput.disabled = !fuselageHollowInput.checked
+}
+fuselageHollowInput.addEventListener('change', syncHollowFuselageControls)
+syncHollowFuselageControls()
 
 let libraryPreviewDrag = null
 libraryPreviewSvg.addEventListener('pointerdown', event => {
@@ -790,7 +835,8 @@ const getProjectSettings = () => ({
   limitA: Number(machineLimitInputs.a.value),
   limitZ: Number(machineLimitInputs.z.value),
   wireSpan: Number(wireSpanInput.value),
-  animationSpeed: Number(speed3d.value)
+  animationSpeed: Number(speed3d.value),
+  internalFirst: Boolean(preparedDxfProfiles.left?.internalFirst)
 })
 
 const applyProjectSettings = settings => {
@@ -847,8 +893,16 @@ loadProjectButton.addEventListener('click', async () => {
     activeServoChannels = []
     const project = parseFoamCutProject(await file.text())
     applyProjectSettings(project.settings)
-    preparedDxfProfiles.left = { points: project.leftPoints, source: 'project' }
-    preparedDxfProfiles.right = { points: project.rightPoints, source: 'project' }
+    preparedDxfProfiles.left = {
+      points: project.leftPoints,
+      source: 'project',
+      internalFirst: project.settings.internalFirst === true
+    }
+    preparedDxfProfiles.right = {
+      points: project.rightPoints,
+      source: 'project',
+      internalFirst: project.settings.internalFirst === true
+    }
     showProfileInDxfPanel('left', project.leftPoints, true, `Проєкт ${file.name} — X/Y`)
     showProfileInDxfPanel('right', project.rightPoints, true, `Проєкт ${file.name} — A/Z`)
     updateDxfAssignmentStatus()
@@ -886,11 +940,11 @@ const getOutsidePoint = (points, point, distance) => {
   }
 }
 
-const buildCuttingPath = points => {
+const buildCuttingPath = (points, passMode = cutPassModeInput.value) => {
   if (points.length < 2) return points.map(point => ({ ...point }))
 
   let orderedPoints = points
-  if (cutPassModeInput.value === 'double') {
+  if (passMode === 'double') {
     const half = Math.floor(points.length / 2)
     const averageY = surface => surface.reduce((sum, point) => sum + point.y, 0)
       / Math.max(surface.length, 1)
@@ -909,7 +963,7 @@ const buildCuttingPath = points => {
   const outsideStart = getOutsidePoint(orderedPoints, start, leadDistance)
   const approachStart = [outsideStart, ...interpolateMove(outsideStart, start)]
 
-  if (cutPassModeInput.value === 'double') {
+  if (passMode === 'double') {
     const outsideOpposite = getOutsidePoint(orderedPoints, opposite, leadDistance)
     const firstSurface = orderedPoints.slice(1, splitIndex + 1)
     const exitFirst = interpolateMove(opposite, outsideOpposite)
@@ -1066,8 +1120,11 @@ const renderPreparedDxfSimulation = () => {
   cuttingSettings.feedRate = Number.isFinite(requestedFeedRate) && requestedFeedRate > 0
     ? requestedFeedRate
     : 300
-  const leftPoints = buildCuttingPath(preparedDxfProfiles.left.points)
-  const rightPoints = buildCuttingPath(preparedDxfProfiles.right.points)
+  const internalFirst = preparedDxfProfiles.left.internalFirst === true
+    || preparedDxfProfiles.right.internalFirst === true
+  const effectivePassMode = internalFirst ? 'single' : cutPassModeInput.value
+  const leftPoints = buildCuttingPath(preparedDxfProfiles.left.points, effectivePassMode)
+  const rightPoints = buildCuttingPath(preparedDxfProfiles.right.points, effectivePassMode)
 
   if (leftPoints.length !== rightPoints.length) {
     preparedCuttingTrajectory = null
@@ -1082,11 +1139,13 @@ const renderPreparedDxfSimulation = () => {
     sourceLeftPoints: preparedDxfProfiles.left.points.map(point => ({ ...point })),
     sourceRightPoints: preparedDxfProfiles.right.points.map(point => ({ ...point })),
     feedRate: cuttingSettings.feedRate,
-    passMode: cutPassModeInput.value
+    passMode: effectivePassMode
   }
   updateGeneratedNcPreview()
 
-  const passLabel = cutPassModeInput.value === 'double'
+  const passLabel = internalFirst
+    ? 'порожнина спочатку, потім зовнішній контур'
+    : effectivePassMode === 'double'
     ? 'два проходи (верх/низ)'
     : 'один прохід'
   renderSimulation(
@@ -1286,6 +1345,13 @@ buildFuselageSegmentButton.addEventListener('click', () => {
     const totalLength = readPositiveLibraryNumber(fuselageLengthInput, 'Довжина фюзеляжу')
     const maximumWidth = readPositiveLibraryNumber(fuselageWidthInput, 'Ширина фюзеляжу')
     const maximumHeight = readPositiveLibraryNumber(fuselageHeightInput, 'Висота фюзеляжу')
+    const hollow = fuselageHollowInput.checked
+    const wallThickness = hollow
+      ? readPositiveLibraryNumber(fuselageWallThicknessInput, 'Товщина стінки')
+      : 5
+    const bottomThickness = hollow
+      ? readPositiveLibraryNumber(fuselageBottomThicknessInput, 'Товщина днища')
+      : 5
     fuselageStations = readFuselageStations()
     const segment = createGliderFuselageSegment({
       segmentIndex: Number(fuselageSegmentInput.value),
@@ -1293,13 +1359,33 @@ buildFuselageSegmentButton.addEventListener('click', () => {
       totalLength,
       maximumWidth,
       maximumHeight,
+      hollow,
+      wallThickness,
+      bottomThickness,
       pointCount
     })
 
-    preparedDxfProfiles.left = { points: segment.leftPoints, source: 'fuselage-library' }
-    preparedDxfProfiles.right = { points: segment.rightPoints, source: 'fuselage-library' }
-    showProfileInDxfPanel('left', segment.leftPoints, true, `Фюзеляж — ${segment.leftName}`)
-    showProfileInDxfPanel('right', segment.rightPoints, true, `Фюзеляж — ${segment.rightName}`)
+    const cutProfiles = hollow
+      ? createPairedHollowCutPath(
+          segment.leftPoints,
+          segment.rightPoints,
+          segment.innerLeftPoints,
+          segment.innerRightPoints
+        )
+      : { leftPoints: segment.leftPoints, rightPoints: segment.rightPoints }
+
+    preparedDxfProfiles.left = {
+      points: cutProfiles.leftPoints,
+      source: 'fuselage-library',
+      internalFirst: hollow
+    }
+    preparedDxfProfiles.right = {
+      points: cutProfiles.rightPoints,
+      source: 'fuselage-library',
+      internalFirst: hollow
+    }
+    showProfileInDxfPanel('left', cutProfiles.leftPoints, true, `Фюзеляж — ${segment.leftName}`)
+    showProfileInDxfPanel('right', cutProfiles.rightPoints, true, `Фюзеляж — ${segment.rightName}`)
     foamWidthInput.value = Math.round(segment.segmentLength * 1000) / 1000
     currentAssemblyCandidate = {
       kind: 'fuselage',
@@ -1307,8 +1393,8 @@ buildFuselageSegmentButton.addEventListener('click', () => {
       span: segment.segmentLength,
       outerLeft: segment.leftPoints.map(point => ({ ...point })),
       outerRight: segment.rightPoints.map(point => ({ ...point })),
-      cutLeft: segment.leftPoints.map(point => ({ ...point })),
-      cutRight: segment.rightPoints.map(point => ({ ...point })),
+      cutLeft: cutProfiles.leftPoints.map(point => ({ ...point })),
+      cutRight: cutProfiles.rightPoints.map(point => ({ ...point })),
       straightSparRods: [],
       servoChannels: [],
       defaultOffsets: { x: segment.segmentStart, y: 0, z: 0 }
@@ -1320,6 +1406,7 @@ buildFuselageSegmentButton.addEventListener('click', () => {
     fuselageLibraryStatus.className = 'profile-library-valid'
     fuselageLibraryStatus.textContent = `Секцію ${segment.leftName} → ${segment.rightName} побудовано; `
       + `довжина блока ${foamWidthInput.value} мм`
+      + (hollow ? `; порожнина: стінка ${wallThickness} мм, днище ${bottomThickness} мм; внутрішній контур ріжеться першим` : '')
   } catch (error) {
     fuselageLibraryStatus.className = 'profile-library-error'
     fuselageLibraryStatus.textContent = `Не вдалося побудувати секцію: ${error.message}`
@@ -1351,11 +1438,13 @@ const selectAssemblyPartForCutting = part => {
   activeServoChannels = part.servoChannels.map(channel => ({ ...channel }))
   preparedDxfProfiles.left = {
     points: part.cutLeft.map(point => ({ ...point })),
-    source: 'assembly'
+    source: 'assembly',
+    internalFirst: part.kind === 'fuselage' && part.cutLeft.length > part.outerLeft.length
   }
   preparedDxfProfiles.right = {
     points: part.cutRight.map(point => ({ ...point })),
-    source: 'assembly'
+    source: 'assembly',
+    internalFirst: part.kind === 'fuselage' && part.cutRight.length > part.outerRight.length
   }
   foamWidthInput.value = Math.round(part.span * 1000) / 1000
   showProfileInDxfPanel('left', preparedDxfProfiles.left.points, true, `${part.name} — X/Y`)
