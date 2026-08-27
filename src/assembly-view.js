@@ -168,14 +168,27 @@ export const renderAssemblyView = (svg, parts, camera = {}, measurement = null) 
     }
 
     if (part.kind === 'fuselage') {
+      if (part.innerLeft && part.innerRight) {
+        const innerGeometry = partGeometry({
+          ...part,
+          outerLeft: part.innerLeft,
+          outerRight: part.innerRight
+        })
+        for (const profile of [innerGeometry.root, innerGeometry.tip]) {
+          svgElement('polyline', {
+            points: [...profile, profile[0]].map(point => project(point).join(',')).join(' '),
+            fill: 'none', stroke: '#7c3aed', 'stroke-width': '2', 'stroke-dasharray': '6 3'
+          }, svg)
+        }
+      }
       for (const rod of part.straightSparRods || []) {
         const first = project({
-          x: part.offsets.x,
+          x: part.offsets.x + (rod.start || 0),
           y: rod.y + part.offsets.y,
           z: rod.x + part.offsets.z
         })
         const second = project({
-          x: part.span + part.offsets.x,
+          x: part.offsets.x + (rod.start || 0) + (rod.length || part.span),
           y: rod.y + part.offsets.y,
           z: rod.x + part.offsets.z
         })

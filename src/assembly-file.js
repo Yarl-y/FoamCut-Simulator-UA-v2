@@ -31,6 +31,7 @@ const sanitizePart = (part, index) => {
   }
   const cutLeft = readPoints(part.cutLeft, `Деталь ${index + 1}, X/Y`)
   const cutRight = readPoints(part.cutRight, `Деталь ${index + 1}, A/Z`)
+  const span = Math.max(0.001, finiteNumber(part.span, `Деталь ${index + 1}, довжина`))
   if (cutLeft.length !== cutRight.length) {
     throw new Error(`Деталь ${index + 1}: кількість точок X/Y та A/Z не збігається`)
   }
@@ -40,14 +41,18 @@ const sanitizePart = (part, index) => {
     kind,
     side,
     name: String(part.name || `Деталь ${index + 1}`),
-    span: Math.max(0.001, finiteNumber(part.span, `Деталь ${index + 1}, довжина`)),
+    span,
     outerLeft: readPoints(part.outerLeft, `Деталь ${index + 1}, зовнішній X/Y`),
     outerRight: readPoints(part.outerRight, `Деталь ${index + 1}, зовнішній A/Z`),
+    innerLeft: part.innerLeft ? readPoints(part.innerLeft, `Деталь ${index + 1}, внутрішній X/Y`) : null,
+    innerRight: part.innerRight ? readPoints(part.innerRight, `Деталь ${index + 1}, внутрішній A/Z`) : null,
     cutLeft,
     cutRight,
     straightSparRods: readFeatureList(
-      part.straightSparRods,
-      ['x', 'y', 'diameter'],
+      kind === 'fuselage'
+        ? (part.straightSparRods || []).map(rod => ({ ...rod, start: rod.start ?? 0, length: rod.length ?? span }))
+        : part.straightSparRods,
+      kind === 'fuselage' ? ['x', 'y', 'diameter', 'start', 'length'] : ['x', 'y', 'diameter'],
       `Деталь ${index + 1}, лонжерони`
     ),
     servoChannels: readFeatureList(
