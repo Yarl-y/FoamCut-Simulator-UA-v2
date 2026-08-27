@@ -9,7 +9,7 @@ import {
   createLibraryProfile,
   createSparHoleContour,
   createStraightSparHoleContour,
-  fuselageSegmentEntries,
+  defaultFuselageStations,
   insertPairedSparHoles,
   normalizeProfilePair,
   profileLibraryEntries,
@@ -124,6 +124,16 @@ document.querySelector('#app').innerHTML = `
               <input id="fuselageHeight" type="number" min="1" step="1" value="160">
             </label>
           </div>
+          <div class="fuselage-stations-toolbar">
+            <strong>Поперечні станції та стики</strong>
+            <button id="addFuselageSection" type="button">+ Додати секцію</button>
+            <button id="resetFuselageSections" type="button">Початкові 3 секції</button>
+          </div>
+          <div class="fuselage-stations-head" aria-hidden="true">
+            <span>Назва</span><span>Положення, %</span><span>Ширина, %</span>
+            <span>Висота, %</span><span>Підйом, %</span><span></span>
+          </div>
+          <div id="fuselageStations" class="fuselage-stations"></div>
           <button id="buildFuselageSegment" type="button">Побудувати секцію фюзеляжу</button>
           <p id="fuselageLibraryStatus">Виберіть секцію — для кожної створюється окремий NC-файл</p>
         </div>
@@ -321,6 +331,9 @@ const fuselageSegmentInput = document.querySelector('#fuselageSegment')
 const fuselageLengthInput = document.querySelector('#fuselageLength')
 const fuselageWidthInput = document.querySelector('#fuselageWidth')
 const fuselageHeightInput = document.querySelector('#fuselageHeight')
+const fuselageStationsElement = document.querySelector('#fuselageStations')
+const addFuselageSectionButton = document.querySelector('#addFuselageSection')
+const resetFuselageSectionsButton = document.querySelector('#resetFuselageSections')
 const buildFuselageSegmentButton = document.querySelector('#buildFuselageSegment')
 const fuselageLibraryStatus = document.querySelector('#fuselageLibraryStatus')
 const downloadNcDxfLeftButton = document.querySelector('#downloadNcDxfLeft')
@@ -375,6 +388,8 @@ let recoveredNcProfiles = null
 let activeStraightSparRods = []
 let activeServoChannels = []
 let currentAssemblyCandidate = null
+let fuselageStations = defaultFuselageStations.map(station => ({ ...station }))
+let nextFuselageStationId = 1
 const assemblyParts = []
 let nextAssemblyPartId = 1
 const assemblyCamera = { yaw: -35, pitch: -22, zoom: 1, panX: 0, panY: 0 }
@@ -418,12 +433,90 @@ for (const { id, name } of profileLibraryEntries) {
 rootLibraryProfileInput.value = 'naca2412'
 tipLibraryProfileInput.value = 'naca2412'
 
-for (const { id, name } of fuselageSegmentEntries) {
-  const option = document.createElement('option')
-  option.value = id
-  option.textContent = name
-  fuselageSegmentInput.appendChild(option)
+const readFuselageStations = () => [...fuselageStationsElement.querySelectorAll('.fuselage-station-row')].map(
+  row => ({
+    id: row.dataset.id,
+    name: row.querySelector('[data-field="name"]').value.trim() || 'Станція',
+    position: Number(row.querySelector('[data-field="position"]').value) / 100,
+    width: Number(row.querySelector('[data-field="width"]').value) / 100,
+    height: Number(row.querySelector('[data-field="height"]').value) / 100,
+    lift: Number(row.querySelector('[data-field="lift"]').value) / 100
+  })
+)
+
+const escapeAttribute = value => String(value)
+  .replaceAll('&', '&amp;')
+  .replaceAll('"', '&quot;')
+  .replaceAll('<', '&lt;')
+  .replaceAll('>', '&gt;')
+
+const renderFuselageStations = (selectedSegment = Number(fuselageSegmentInput.value) || 0) => {
+  fuselageStationsElement.innerHTML = ''
+  fuselageStations.forEach((station, index) => {
+    const row = document.createElement('div')
+    row.className = 'fuselage-station-row'
+    row.dataset.id = station.id
+    row.innerHTML = `
+      <input data-field="name" value="${escapeAttribute(station.name)}" aria-label="Назва станції ${index + 1}">
+      <input data-field="position" type="number" min="0" max="100" step="0.1" value="${station.position * 100}" aria-label="Положення станції ${index + 1}">
+      <input data-field="width" type="number" min="1" step="0.1" value="${station.width * 100}" aria-label="Ширина станції ${index + 1}">
+      <input data-field="height" type="number" min="1" step="0.1" value="${station.height * 100}" aria-label="Висота станції ${index + 1}">
+      <input data-field="lift" type="number" step="0.1" value="${station.lift * 100}" aria-label="Підйом станції ${index + 1}">
+      <button type="button" data-remove-station="${index}" ${index === 0 || index === fuselageStations.length - 1 ? 'disabled' : ''} title="Видалити станцію і об'єднати сусідні секції">×</button>
+    `
+    fuselageStationsElement.appendChild(row)
+  })
+  fuselageSegmentInput.innerHTML = ''
+  fuselageStations.slice(0, -1).forEach((station, index) => {
+    const option = document.createElement('option')
+    option.value = String(index)
+    option.textContent = `${station.name} → ${fuselageStations[index + 1].name}`
+    fuselageSegmentInput.appendChild(option)
+  })
+  fuselageSegmentInput.value = String(Math.min(selectedSegment, fuselageStations.length - 2))
 }
+
+fuselageStationsElement.addEventListener('input', () => {
+  fuselageStations = readFuselageStations()
+  const selectedSegment = Number(fuselageSegmentInput.value) || 0
+  const options = [...fuselageSegmentInput.options]
+  options.forEach((option, index) => {
+    option.textContent = `${fuselageStations[index].name} → ${fuselageStations[index + 1].name}`
+  })
+  fuselageSegmentInput.value = String(selectedSegment)
+})
+
+fuselageStationsElement.addEventListener('click', event => {
+  const index = Number(event.target.dataset.removeStation)
+  if (!Number.isInteger(index) || index <= 0 || index >= fuselageStations.length - 1) return
+  fuselageStations = readFuselageStations()
+  fuselageStations.splice(index, 1)
+  renderFuselageStations(Math.max(0, index - 1))
+})
+
+addFuselageSectionButton.addEventListener('click', () => {
+  fuselageStations = readFuselageStations()
+  const segmentIndex = Number(fuselageSegmentInput.value) || 0
+  const left = fuselageStations[segmentIndex]
+  const right = fuselageStations[segmentIndex + 1]
+  const average = field => (left[field] + right[field]) / 2
+  fuselageStations.splice(segmentIndex + 1, 0, {
+    id: `custom-${nextFuselageStationId++}`,
+    name: `Стик ${fuselageStations.length}`,
+    position: average('position'),
+    width: average('width'),
+    height: average('height'),
+    lift: average('lift')
+  })
+  renderFuselageStations(segmentIndex + 1)
+})
+
+resetFuselageSectionsButton.addEventListener('click', () => {
+  fuselageStations = defaultFuselageStations.map(station => ({ ...station }))
+  renderFuselageStations()
+})
+
+renderFuselageStations()
 
 toggleProfileLibraryButton.addEventListener('click', () => {
   profileLibraryPanel.hidden = !profileLibraryPanel.hidden
@@ -1039,8 +1132,10 @@ buildFuselageSegmentButton.addEventListener('click', () => {
     const totalLength = readPositiveLibraryNumber(fuselageLengthInput, 'Довжина фюзеляжу')
     const maximumWidth = readPositiveLibraryNumber(fuselageWidthInput, 'Ширина фюзеляжу')
     const maximumHeight = readPositiveLibraryNumber(fuselageHeightInput, 'Висота фюзеляжу')
+    fuselageStations = readFuselageStations()
     const segment = createGliderFuselageSegment({
-      segmentId: fuselageSegmentInput.value,
+      segmentIndex: Number(fuselageSegmentInput.value),
+      stations: fuselageStations,
       totalLength,
       maximumWidth,
       maximumHeight,

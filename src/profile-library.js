@@ -125,16 +125,16 @@ export const createLibraryProfile = (profileId, pointCount = 200) => {
   return [...upper, ...lower.slice(1)]
 }
 
-const FUSELAGE_STATIONS = [
+export const defaultFuselageStations = [
   { id: 'nose', name: 'Ніс', position: 0, width: 0.18, height: 0.2, lift: 0.3 },
   { id: 'cabin', name: 'Кабіна', position: 0.28, width: 1, height: 1, lift: 0 },
   { id: 'middle', name: 'Середина', position: 0.62, width: 0.78, height: 0.72, lift: 0.04 },
   { id: 'tail', name: 'Хвіст', position: 1, width: 0.26, height: 0.28, lift: 0.2 }
 ]
 
-export const fuselageSegmentEntries = FUSELAGE_STATIONS.slice(0, -1).map((station, index) => ({
-  id: `${station.id}-${FUSELAGE_STATIONS[index + 1].id}`,
-  name: `${station.name} → ${FUSELAGE_STATIONS[index + 1].name}`
+export const fuselageSegmentEntries = defaultFuselageStations.slice(0, -1).map((station, index) => ({
+  id: `${station.id}-${defaultFuselageStations[index + 1].id}`,
+  name: `${station.name} → ${defaultFuselageStations[index + 1].name}`
 }))
 
 const createGliderSection = (width, height, lift, pointCount) => {
@@ -164,15 +164,40 @@ const createGliderSection = (width, height, lift, pointCount) => {
 
 export const createGliderFuselageSegment = ({
   segmentId,
+  segmentIndex: requestedSegmentIndex,
+  stations = defaultFuselageStations,
   totalLength,
   maximumWidth,
   maximumHeight,
   pointCount = 200
 }) => {
-  const segmentIndex = fuselageSegmentEntries.findIndex(segment => segment.id === segmentId)
-  if (segmentIndex < 0) throw new Error('Невідома секція фюзеляжу')
-  const leftStation = FUSELAGE_STATIONS[segmentIndex]
-  const rightStation = FUSELAGE_STATIONS[segmentIndex + 1]
+  if (!Array.isArray(stations) || stations.length < 2) {
+    throw new Error('Фюзеляж повинен мати щонайменше дві поперечні станції')
+  }
+  const normalizedStations = stations.map((station, index) => {
+    const values = ['position', 'width', 'height', 'lift'].map(field => Number(station[field]))
+    if (values.some(value => !Number.isFinite(value))) {
+      throw new Error(`Станція ${index + 1} має некоректні параметри`)
+    }
+    if (values[0] < 0 || values[0] > 1 || values[1] <= 0 || values[2] <= 0) {
+      throw new Error(`Станція ${index + 1}: положення має бути 0–100%, а ширина і висота — більші за нуль`)
+    }
+    return { ...station, position: values[0], width: values[1], height: values[2], lift: values[3] }
+  })
+  for (let index = 1; index < normalizedStations.length; index++) {
+    if (normalizedStations[index].position <= normalizedStations[index - 1].position) {
+      throw new Error('Положення станцій повинні зростати від носа до хвоста')
+    }
+  }
+  const legacySegmentIndex = fuselageSegmentEntries.findIndex(segment => segment.id === segmentId)
+  const segmentIndex = Number.isInteger(requestedSegmentIndex)
+    ? requestedSegmentIndex
+    : legacySegmentIndex
+  if (segmentIndex < 0 || segmentIndex >= normalizedStations.length - 1) {
+    throw new Error('Невідома секція фюзеляжу')
+  }
+  const leftStation = normalizedStations[segmentIndex]
+  const rightStation = normalizedStations[segmentIndex + 1]
   const makeSection = station => createGliderSection(
     maximumWidth * station.width,
     maximumHeight * station.height,

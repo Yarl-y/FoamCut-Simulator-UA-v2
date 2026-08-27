@@ -456,6 +456,45 @@ code {
   font-size: 14px;
 }
 
+.fuselage-stations-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 14px 0 8px;
+}
+
+.fuselage-stations-toolbar strong {
+  margin-right: auto;
+}
+
+.fuselage-stations-head,
+.fuselage-station-row {
+  display: grid;
+  grid-template-columns: minmax(110px, 1.4fr) repeat(4, minmax(72px, 1fr)) 34px;
+  gap: 7px;
+  align-items: center;
+}
+
+.fuselage-stations-head {
+  padding: 0 4px 5px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.fuselage-station-row {
+  margin-bottom: 6px;
+}
+
+.fuselage-station-row input {
+  box-sizing: border-box;
+  width: 100%;
+}
+
+.fuselage-station-row button {
+  min-width: 0;
+  padding-inline: 8px;
+}
+
 #fuselageLibraryStatus {
   margin-top: 10px;
   font-size: 14px;
@@ -473,6 +512,14 @@ code {
 @media (max-width: 800px) {
   .profile-library-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .fuselage-stations-head {
+    display: none;
+  }
+
+  .fuselage-station-row {
+    grid-template-columns: repeat(2, minmax(0, 1fr)) 34px;
   }
 }
 
