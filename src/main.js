@@ -127,7 +127,7 @@ document.querySelector('#app').innerHTML = `
             <label>Максимальна висота, мм
               <input id="fuselageHeight" type="number" min="1" step="1" value="160">
             </label>
-            <label class="fuselage-hollow-toggle"><input id="fuselageHollow" type="checkbox"> Порожниста секція</label>
+            <label class="fuselage-hollow-toggle"><input id="fuselageHollow" type="checkbox"> Порожниста вибрана секція</label>
             <label>Товщина стінки, мм
               <input id="fuselageWallThickness" type="number" min="1" step="1" value="5">
             </label>
@@ -456,6 +456,11 @@ let activeStraightSparRods = []
 let activeServoChannels = []
 let currentAssemblyCandidate = null
 let fuselageStations = defaultFuselageStations.map(station => ({ ...station }))
+let fuselageSectionSettings = Array.from({ length: defaultFuselageStations.length - 1 }, () => ({
+  hollow: false,
+  wallThickness: 5,
+  bottomThickness: 5
+}))
 let nextFuselageStationId = 1
 let libraryPreviewMode = 'wing'
 const libraryPreviewCamera = { yaw: -35, pitch: -22, zoom: 1, panX: 0, panY: 0 }
@@ -600,13 +605,6 @@ const renderLibraryPreview = () => {
       const totalLength = readPositiveLibraryNumber(fuselageLengthInput, 'Довжина фюзеляжу')
       const maximumWidth = readPositiveLibraryNumber(fuselageWidthInput, 'Ширина фюзеляжу')
       const maximumHeight = readPositiveLibraryNumber(fuselageHeightInput, 'Висота фюзеляжу')
-      const hollow = fuselageHollowInput.checked
-      const wallThickness = hollow
-        ? readPositiveLibraryNumber(fuselageWallThicknessInput, 'Товщина стінки')
-        : 5
-      const bottomThickness = hollow
-        ? readPositiveLibraryNumber(fuselageBottomThicknessInput, 'Товщина днища')
-        : 5
       const tubeEnabled = fuselageTubeInput.checked
       const tubeDiameter = tubeEnabled ? readPositiveLibraryNumber(fuselageTubeDiameterInput, 'Діаметр трубки') : 0
       const tubeClearance = Math.max(0, Number(fuselageTubeClearanceInput.value) || 0)
@@ -617,6 +615,7 @@ const renderLibraryPreview = () => {
       fuselageStations = readFuselageStations()
       const selectedSegment = Number(fuselageSegmentInput.value) || 0
       parts = fuselageStations.slice(0, -1).map((station, index) => {
+        const { hollow, wallThickness, bottomThickness } = fuselageSectionSettings[index]
         const segment = createGliderFuselageSegment({
           segmentIndex: index, stations: fuselageStations, totalLength,
           maximumWidth, maximumHeight, pointCount,
@@ -658,8 +657,11 @@ const renderLibraryPreview = () => {
       })
         .flat()
       const selectedName = `${fuselageStations[selectedSegment].name} → ${fuselageStations[selectedSegment + 1].name}`
+      const selectedSettings = fuselageSectionSettings[selectedSegment]
       libraryPreviewStatus.textContent = `Фюзеляж: ${fuselageStations.length - 1} секц.; вибрано ${selectedName}`
-        + (hollow ? `; стінка ${wallThickness} мм, днище ${bottomThickness} мм` : '')
+        + (selectedSettings.hollow
+          ? `; порожниста — стінка ${selectedSettings.wallThickness} мм, днище ${selectedSettings.bottomThickness} мм`
+          : '; суцільна')
     }
     renderAssemblyView(libraryPreviewSvg, parts, libraryPreviewCamera, libraryMeasurement)
     previewWingButton.classList.toggle('active', libraryPreviewMode === 'wing')
@@ -692,8 +694,10 @@ fuselageStationsElement.addEventListener('click', event => {
   const index = Number(event.target.dataset.removeStation)
   if (!Number.isInteger(index) || index <= 0 || index >= fuselageStations.length - 1) return
   fuselageStations = readFuselageStations()
+  fuselageSectionSettings.splice(index, 1)
   fuselageStations.splice(index, 1)
   renderFuselageStations(Math.max(0, index - 1))
+  loadSelectedSectionSettings()
   scheduleLibraryPreview('fuselage')
 })
 
@@ -703,6 +707,7 @@ addFuselageSectionButton.addEventListener('click', () => {
   const left = fuselageStations[segmentIndex]
   const right = fuselageStations[segmentIndex + 1]
   const average = field => (left[field] + right[field]) / 2
+  const inheritedSectionSettings = { ...fuselageSectionSettings[segmentIndex] }
   fuselageStations.splice(segmentIndex + 1, 0, {
     id: `custom-${nextFuselageStationId++}`,
     name: `Стик ${fuselageStations.length}`,
@@ -714,13 +719,21 @@ addFuselageSectionButton.addEventListener('click', () => {
     lowerFullness: average('lowerFullness'),
     bottomFlatness: average('bottomFlatness')
   })
+  fuselageSectionSettings.splice(segmentIndex + 1, 0, inheritedSectionSettings)
   renderFuselageStations(segmentIndex + 1)
+  loadSelectedSectionSettings()
   scheduleLibraryPreview('fuselage')
 })
 
 resetFuselageSectionsButton.addEventListener('click', () => {
   fuselageStations = defaultFuselageStations.map(station => ({ ...station }))
+  fuselageSectionSettings = Array.from({ length: defaultFuselageStations.length - 1 }, () => ({
+    hollow: false,
+    wallThickness: 5,
+    bottomThickness: 5
+  }))
   renderFuselageStations()
+  loadSelectedSectionSettings()
   scheduleLibraryPreview('fuselage')
 })
 
@@ -728,7 +741,18 @@ renderFuselageStations()
 
 previewWingButton.addEventListener('click', () => scheduleLibraryPreview('wing'))
 previewFuselageButton.addEventListener('click', () => scheduleLibraryPreview('fuselage'))
-fuselageSegmentInput.addEventListener('change', () => scheduleLibraryPreview('fuselage'))
+const loadSelectedSectionSettings = () => {
+  const settings = fuselageSectionSettings[Number(fuselageSegmentInput.value) || 0]
+  if (!settings) return
+  fuselageHollowInput.checked = settings.hollow
+  fuselageWallThicknessInput.value = settings.wallThickness
+  fuselageBottomThicknessInput.value = settings.bottomThickness
+  syncHollowFuselageControls()
+}
+fuselageSegmentInput.addEventListener('change', () => {
+  loadSelectedSectionSettings()
+  scheduleLibraryPreview('fuselage')
+})
 
 const wingPreviewInputs = [
   rootLibraryProfileInput, rootLibraryChordInput, tipLibraryProfileInput, tipLibraryChordInput,
@@ -761,6 +785,19 @@ const syncHollowFuselageControls = () => {
 }
 fuselageHollowInput.addEventListener('change', syncHollowFuselageControls)
 syncHollowFuselageControls()
+
+const saveSelectedSectionSettings = () => {
+  const index = Number(fuselageSegmentInput.value) || 0
+  fuselageSectionSettings[index] = {
+    hollow: fuselageHollowInput.checked,
+    wallThickness: Math.max(1, Number(fuselageWallThicknessInput.value) || 5),
+    bottomThickness: Math.max(1, Number(fuselageBottomThicknessInput.value) || 5)
+  }
+}
+;[fuselageHollowInput, fuselageWallThicknessInput, fuselageBottomThicknessInput].forEach(input => {
+  input.addEventListener('input', saveSelectedSectionSettings)
+  input.addEventListener('change', saveSelectedSectionSettings)
+})
 
 const syncFuselageTubeControls = () => {
   ;[
@@ -1455,13 +1492,9 @@ buildFuselageSegmentButton.addEventListener('click', () => {
     const totalLength = readPositiveLibraryNumber(fuselageLengthInput, 'Довжина фюзеляжу')
     const maximumWidth = readPositiveLibraryNumber(fuselageWidthInput, 'Ширина фюзеляжу')
     const maximumHeight = readPositiveLibraryNumber(fuselageHeightInput, 'Висота фюзеляжу')
-    const hollow = fuselageHollowInput.checked
-    const wallThickness = hollow
-      ? readPositiveLibraryNumber(fuselageWallThicknessInput, 'Товщина стінки')
-      : 5
-    const bottomThickness = hollow
-      ? readPositiveLibraryNumber(fuselageBottomThicknessInput, 'Товщина днища')
-      : 5
+    saveSelectedSectionSettings()
+    const selectedSectionSettings = fuselageSectionSettings[Number(fuselageSegmentInput.value)]
+    const { hollow, wallThickness, bottomThickness } = selectedSectionSettings
     const tubeEnabled = fuselageTubeInput.checked
     const tubeDiameter = tubeEnabled
       ? readPositiveLibraryNumber(fuselageTubeDiameterInput, 'Діаметр трубки')
