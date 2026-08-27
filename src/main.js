@@ -32,6 +32,8 @@ document.querySelector('#app').innerHTML = `
     <section class="profile-library">
       <button id="toggleProfileLibrary" type="button" aria-expanded="false">Бібліотека профілів</button>
       <div id="profileLibraryPanel" class="profile-library-panel" hidden>
+        <div class="profile-library-workspace">
+        <div class="profile-library-controls">
         <h2>Конструктор крила</h2>
         <div class="profile-library-grid">
           <label>Кореневий профіль
@@ -136,6 +138,18 @@ document.querySelector('#app').innerHTML = `
           <div id="fuselageStations" class="fuselage-stations"></div>
           <button id="buildFuselageSegment" type="button">Побудувати секцію фюзеляжу</button>
           <p id="fuselageLibraryStatus">Виберіть секцію — для кожної створюється окремий NC-файл</p>
+        </div>
+        </div>
+        <aside class="library-preview-panel">
+          <div class="library-preview-toolbar">
+            <strong>Живий 3D-перегляд</strong>
+            <button id="previewWing" type="button">Крило</button>
+            <button id="previewFuselage" type="button">Фюзеляж</button>
+          </div>
+          <svg id="libraryPreviewSvg" viewBox="0 0 800 500" aria-label="Попередній 3D-перегляд деталі"></svg>
+          <p id="libraryPreviewStatus">Змінюйте параметри — модель оновлюється автоматично</p>
+          <small>Миша: обертання · колесо: масштаб</small>
+        </aside>
         </div>
       </div>
     </section>
@@ -336,6 +350,10 @@ const addFuselageSectionButton = document.querySelector('#addFuselageSection')
 const resetFuselageSectionsButton = document.querySelector('#resetFuselageSections')
 const buildFuselageSegmentButton = document.querySelector('#buildFuselageSegment')
 const fuselageLibraryStatus = document.querySelector('#fuselageLibraryStatus')
+const libraryPreviewSvg = document.querySelector('#libraryPreviewSvg')
+const libraryPreviewStatus = document.querySelector('#libraryPreviewStatus')
+const previewWingButton = document.querySelector('#previewWing')
+const previewFuselageButton = document.querySelector('#previewFuselage')
 const downloadNcDxfLeftButton = document.querySelector('#downloadNcDxfLeft')
 const downloadNcDxfRightButton = document.querySelector('#downloadNcDxfRight')
 const ncToDxfStatus = document.querySelector('#ncToDxfStatus')
@@ -390,6 +408,8 @@ let activeServoChannels = []
 let currentAssemblyCandidate = null
 let fuselageStations = defaultFuselageStations.map(station => ({ ...station }))
 let nextFuselageStationId = 1
+let libraryPreviewMode = 'wing'
+const libraryPreviewCamera = { yaw: -35, pitch: -22, zoom: 1, panX: 0, panY: 0 }
 const assemblyParts = []
 let nextAssemblyPartId = 1
 const assemblyCamera = { yaw: -35, pitch: -22, zoom: 1, panX: 0, panY: 0 }
@@ -476,6 +496,88 @@ const renderFuselageStations = (selectedSegment = Number(fuselageSegmentInput.va
   fuselageSegmentInput.value = String(Math.min(selectedSegment, fuselageStations.length - 2))
 }
 
+const previewPart = ({ kind, name, span, outerLeft, outerRight, offsets, selected = false }) => ({
+  id: 0,
+  kind,
+  side: kind === 'wing' ? 'right' : null,
+  name,
+  span,
+  outerLeft,
+  outerRight,
+  cutLeft: outerLeft,
+  cutRight: outerRight,
+  straightSparRods: [],
+  servoChannels: [],
+  offsets,
+  visible: true,
+  previewSelected: selected
+})
+
+const renderLibraryPreview = () => {
+  try {
+    const pointCount = 100
+    let parts
+    if (libraryPreviewMode === 'wing') {
+      const rootChord = readPositiveLibraryNumber(rootLibraryChordInput, 'Хорда кореня')
+      const tipChord = readPositiveLibraryNumber(tipLibraryChordInput, 'Хорда кінця')
+      const halfSpan = readPositiveLibraryNumber(halfSpanInput, 'Розмах півкрила')
+      const root = transformLibraryProfile(
+        createLibraryProfile(rootLibraryProfileInput.value, pointCount),
+        { chord: rootChord }
+      )
+      const tip = transformLibraryProfile(
+        createLibraryProfile(tipLibraryProfileInput.value, pointCount),
+        {
+          chord: tipChord,
+          sweep: Number(wingSweepInput.value) || 0,
+          twistDegrees: Number(tipTwistInput.value) || 0,
+          twistAxisPercent: Math.min(100, Math.max(0, Number(twistAxisInput.value) || 0))
+        }
+      )
+      parts = [previewPart({
+        kind: 'wing', name: 'Попередній вигляд крила', span: halfSpan,
+        outerLeft: root, outerRight: tip, offsets: { x: 0, y: 0, z: 0 }
+      })]
+      libraryPreviewStatus.textContent = `Крило: ${rootChord} → ${tipChord} мм; піврозмах ${halfSpan} мм`
+    } else {
+      const totalLength = readPositiveLibraryNumber(fuselageLengthInput, 'Довжина фюзеляжу')
+      const maximumWidth = readPositiveLibraryNumber(fuselageWidthInput, 'Ширина фюзеляжу')
+      const maximumHeight = readPositiveLibraryNumber(fuselageHeightInput, 'Висота фюзеляжу')
+      fuselageStations = readFuselageStations()
+      const selectedSegment = Number(fuselageSegmentInput.value) || 0
+      parts = fuselageStations.slice(0, -1).map((station, index) => {
+        const segment = createGliderFuselageSegment({
+          segmentIndex: index, stations: fuselageStations, totalLength,
+          maximumWidth, maximumHeight, pointCount
+        })
+        return previewPart({
+          kind: 'fuselage',
+          name: `${segment.leftName} → ${segment.rightName}`,
+          span: segment.segmentLength,
+          outerLeft: segment.leftPoints,
+          outerRight: segment.rightPoints,
+          offsets: { x: segment.segmentStart, y: -segment.translation.y, z: 0 },
+          selected: index === selectedSegment
+        })
+      })
+      libraryPreviewStatus.textContent = `Фюзеляж: ${parts.length} секц.; вибрано ${parts[selectedSegment].name}`
+    }
+    renderAssemblyView(libraryPreviewSvg, parts, libraryPreviewCamera)
+    previewWingButton.classList.toggle('active', libraryPreviewMode === 'wing')
+    previewFuselageButton.classList.toggle('active', libraryPreviewMode === 'fuselage')
+  } catch (error) {
+    libraryPreviewSvg.replaceChildren()
+    libraryPreviewStatus.textContent = `Перегляд: ${error.message}`
+  }
+}
+
+let libraryPreviewFrame = 0
+const scheduleLibraryPreview = mode => {
+  if (mode) libraryPreviewMode = mode
+  cancelAnimationFrame(libraryPreviewFrame)
+  libraryPreviewFrame = requestAnimationFrame(renderLibraryPreview)
+}
+
 fuselageStationsElement.addEventListener('input', () => {
   fuselageStations = readFuselageStations()
   const selectedSegment = Number(fuselageSegmentInput.value) || 0
@@ -484,6 +586,7 @@ fuselageStationsElement.addEventListener('input', () => {
     option.textContent = `${fuselageStations[index].name} → ${fuselageStations[index + 1].name}`
   })
   fuselageSegmentInput.value = String(selectedSegment)
+  scheduleLibraryPreview('fuselage')
 })
 
 fuselageStationsElement.addEventListener('click', event => {
@@ -492,6 +595,7 @@ fuselageStationsElement.addEventListener('click', event => {
   fuselageStations = readFuselageStations()
   fuselageStations.splice(index, 1)
   renderFuselageStations(Math.max(0, index - 1))
+  scheduleLibraryPreview('fuselage')
 })
 
 addFuselageSectionButton.addEventListener('click', () => {
@@ -509,18 +613,56 @@ addFuselageSectionButton.addEventListener('click', () => {
     lift: average('lift')
   })
   renderFuselageStations(segmentIndex + 1)
+  scheduleLibraryPreview('fuselage')
 })
 
 resetFuselageSectionsButton.addEventListener('click', () => {
   fuselageStations = defaultFuselageStations.map(station => ({ ...station }))
   renderFuselageStations()
+  scheduleLibraryPreview('fuselage')
 })
 
 renderFuselageStations()
 
+previewWingButton.addEventListener('click', () => scheduleLibraryPreview('wing'))
+previewFuselageButton.addEventListener('click', () => scheduleLibraryPreview('fuselage'))
+fuselageSegmentInput.addEventListener('change', () => scheduleLibraryPreview('fuselage'))
+
+const wingPreviewInputs = [
+  rootLibraryProfileInput, rootLibraryChordInput, tipLibraryProfileInput, tipLibraryChordInput,
+  halfSpanInput, wingSweepInput, tipTwistInput, twistAxisInput
+]
+wingPreviewInputs.forEach(input => {
+  input.addEventListener('input', () => scheduleLibraryPreview('wing'))
+  input.addEventListener('change', () => scheduleLibraryPreview('wing'))
+})
+;[fuselageLengthInput, fuselageWidthInput, fuselageHeightInput].forEach(input => {
+  input.addEventListener('input', () => scheduleLibraryPreview('fuselage'))
+})
+
+let libraryPreviewDrag = null
+libraryPreviewSvg.addEventListener('pointerdown', event => {
+  libraryPreviewDrag = { x: event.clientX, y: event.clientY, yaw: libraryPreviewCamera.yaw, pitch: libraryPreviewCamera.pitch }
+  libraryPreviewSvg.setPointerCapture(event.pointerId)
+})
+libraryPreviewSvg.addEventListener('pointermove', event => {
+  if (!libraryPreviewDrag) return
+  libraryPreviewCamera.yaw = libraryPreviewDrag.yaw + (event.clientX - libraryPreviewDrag.x) * 0.45
+  libraryPreviewCamera.pitch = Math.max(-89, Math.min(89, libraryPreviewDrag.pitch - (event.clientY - libraryPreviewDrag.y) * 0.45))
+  scheduleLibraryPreview()
+})
+libraryPreviewSvg.addEventListener('pointerup', () => { libraryPreviewDrag = null })
+libraryPreviewSvg.addEventListener('pointercancel', () => { libraryPreviewDrag = null })
+libraryPreviewSvg.addEventListener('wheel', event => {
+  event.preventDefault()
+  libraryPreviewCamera.zoom = Math.max(0.3, Math.min(4, libraryPreviewCamera.zoom * Math.exp(-event.deltaY * 0.001)))
+  scheduleLibraryPreview()
+}, { passive: false })
+
 toggleProfileLibraryButton.addEventListener('click', () => {
   profileLibraryPanel.hidden = !profileLibraryPanel.hidden
   toggleProfileLibraryButton.setAttribute('aria-expanded', String(!profileLibraryPanel.hidden))
+  if (!profileLibraryPanel.hidden) scheduleLibraryPreview()
 })
 
 sparHoleModeInput.addEventListener('change', () => {
