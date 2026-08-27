@@ -47,8 +47,9 @@ const partGeometry = part => {
   }
 }
 
-export const renderAssemblyView = (svg, parts, camera = {}) => {
+export const renderAssemblyView = (svg, parts, camera = {}, measurement = null) => {
   svg.replaceChildren()
+  svg.__foamcutSnapPoints = []
   const visibleParts = parts.filter(part => part.visible)
   if (!visibleParts.length) {
     svgElement('text', {
@@ -89,6 +90,7 @@ export const renderAssemblyView = (svg, parts, camera = {}) => {
       250 - (rotatedPoint.y - centerY) * scale + (Number(camera.panY) || 0)
     ]
   }
+  svg.__foamcutSnapPoints = allPoints.map(point => ({ world: point, screen: project(point) }))
   const colors = {
     left: { stroke: '#2563eb', fill: '#60a5fa' },
     right: { stroke: '#dc2626', fill: '#f87171' },
@@ -193,6 +195,32 @@ export const renderAssemblyView = (svg, parts, camera = {}) => {
       'font-size': '13',
       'font-weight': '700'
     }, svg).textContent = part.name
+  }
+
+  if (measurement?.points?.length) {
+    const screens = measurement.points.map(project)
+    screens.forEach(screen => svgElement('circle', {
+      cx: screen[0], cy: screen[1], r: 5,
+      fill: '#16a34a', stroke: '#ffffff', 'stroke-width': 2
+    }, svg))
+    if (screens.length === 2) {
+      const [first, second] = measurement.points
+      const dx = second.x - first.x
+      const dy = second.y - first.y
+      const dz = second.z - first.z
+      const distance = Math.hypot(dx, dy, dz)
+      svgElement('line', {
+        x1: screens[0][0], y1: screens[0][1], x2: screens[1][0], y2: screens[1][1],
+        stroke: '#16a34a', 'stroke-width': 2.5, 'stroke-dasharray': '8 4'
+      }, svg)
+      const label = svgElement('text', {
+        x: (screens[0][0] + screens[1][0]) / 2,
+        y: (screens[0][1] + screens[1][1]) / 2 - 10,
+        'text-anchor': 'middle', fill: '#166534', 'font-size': 14, 'font-weight': 700,
+        stroke: '#ffffff', 'stroke-width': 4, 'paint-order': 'stroke'
+      }, svg)
+      label.textContent = `${distance.toFixed(2)} мм · ΔX ${dx.toFixed(2)} · ΔY ${dy.toFixed(2)} · ΔZ ${dz.toFixed(2)}`
+    }
   }
 
   return { visibleCount: visibleParts.length }

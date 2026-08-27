@@ -170,6 +170,8 @@ document.querySelector('#app').innerHTML = `
             <strong>Живий 3D-перегляд</strong>
             <button id="previewWing" type="button">Крило</button>
             <button id="previewFuselage" type="button">Фюзеляж</button>
+            <button id="measureLibrary" type="button">Рулетка</button>
+            <button id="clearLibraryMeasure" type="button">Очистити</button>
           </div>
           <svg id="libraryPreviewSvg" viewBox="0 0 800 500" aria-label="Попередній 3D-перегляд деталі"></svg>
           <p id="libraryPreviewStatus">Змінюйте параметри — модель оновлюється автоматично</p>
@@ -321,6 +323,8 @@ view3d.innerHTML = `
       <button data-assembly-camera="front">Спереду</button>
       <button data-assembly-camera="side">Збоку</button>
       <button data-assembly-camera="top">Зверху</button>
+      <button id="measureAssembly" type="button">Рулетка</button>
+      <button id="clearAssemblyMeasure" type="button">Очистити</button>
     </div>
     <p class="orbit-help">Збірка: ліва кнопка — орбіта; Shift + ліва або права — переміщення; коліщатко — масштаб</p>
     <svg id="assemblySvg" viewBox="0 0 800 500" width="800" height="500"></svg>
@@ -387,6 +391,8 @@ const libraryPreviewSvg = document.querySelector('#libraryPreviewSvg')
 const libraryPreviewStatus = document.querySelector('#libraryPreviewStatus')
 const previewWingButton = document.querySelector('#previewWing')
 const previewFuselageButton = document.querySelector('#previewFuselage')
+const measureLibraryButton = document.querySelector('#measureLibrary')
+const clearLibraryMeasureButton = document.querySelector('#clearLibraryMeasure')
 const downloadNcDxfLeftButton = document.querySelector('#downloadNcDxfLeft')
 const downloadNcDxfRightButton = document.querySelector('#downloadNcDxfRight')
 const ncToDxfStatus = document.querySelector('#ncToDxfStatus')
@@ -426,6 +432,8 @@ const assemblyCandidateStatus = document.getElementById('assemblyCandidateStatus
 const assemblyPartsList = document.getElementById('assemblyPartsList')
 const assemblySvg = document.getElementById('assemblySvg')
 const assemblyStatus = document.getElementById('assemblyStatus')
+const measureAssemblyButton = document.getElementById('measureAssembly')
+const clearAssemblyMeasureButton = document.getElementById('clearAssemblyMeasure')
 const assemblyFileInput = document.getElementById('assemblyFile')
 const loadAssemblyButton = document.getElementById('loadAssembly')
 const saveAssemblyButton = document.getElementById('saveAssembly')
@@ -443,6 +451,8 @@ let fuselageStations = defaultFuselageStations.map(station => ({ ...station }))
 let nextFuselageStationId = 1
 let libraryPreviewMode = 'wing'
 const libraryPreviewCamera = { yaw: -35, pitch: -22, zoom: 1, panX: 0, panY: 0 }
+const libraryMeasurement = { active: false, points: [] }
+const assemblyMeasurement = { active: false, points: [] }
 const assemblyParts = []
 let nextAssemblyPartId = 1
 const assemblyCamera = { yaw: -35, pitch: -22, zoom: 1, panX: 0, panY: 0 }
@@ -632,7 +642,7 @@ const renderLibraryPreview = () => {
       libraryPreviewStatus.textContent = `Фюзеляж: ${fuselageStations.length - 1} секц.; вибрано ${selectedName}`
         + (hollow ? `; стінка ${wallThickness} мм, днище ${bottomThickness} мм` : '')
     }
-    renderAssemblyView(libraryPreviewSvg, parts, libraryPreviewCamera)
+    renderAssemblyView(libraryPreviewSvg, parts, libraryPreviewCamera, libraryMeasurement)
     previewWingButton.classList.toggle('active', libraryPreviewMode === 'wing')
     previewFuselageButton.classList.toggle('active', libraryPreviewMode === 'fuselage')
   } catch (error) {
@@ -743,6 +753,7 @@ syncFuselageTubeControls()
 
 let libraryPreviewDrag = null
 libraryPreviewSvg.addEventListener('pointerdown', event => {
+  if (libraryMeasurement.active) return
   libraryPreviewDrag = { x: event.clientX, y: event.clientY, yaw: libraryPreviewCamera.yaw, pitch: libraryPreviewCamera.pitch }
   libraryPreviewSvg.setPointerCapture(event.pointerId)
 })
@@ -759,6 +770,40 @@ libraryPreviewSvg.addEventListener('wheel', event => {
   libraryPreviewCamera.zoom = Math.max(0.3, Math.min(4, libraryPreviewCamera.zoom * Math.exp(-event.deltaY * 0.001)))
   scheduleLibraryPreview()
 }, { passive: false })
+
+const selectMeasurementPoint = (svgElement, measurement, event, rerender) => {
+  const rectangle = svgElement.getBoundingClientRect()
+  const screenX = (event.clientX - rectangle.left) * 800 / rectangle.width
+  const screenY = (event.clientY - rectangle.top) * 500 / rectangle.height
+  let nearest = null
+  let nearestDistance = Infinity
+  for (const candidate of svgElement.__foamcutSnapPoints || []) {
+    const distance = Math.hypot(candidate.screen[0] - screenX, candidate.screen[1] - screenY)
+    if (distance < nearestDistance) {
+      nearest = candidate
+      nearestDistance = distance
+    }
+  }
+  if (!nearest || nearestDistance > 22) return
+  if (measurement.points.length >= 2) measurement.points = []
+  measurement.points.push({ ...nearest.world })
+  rerender()
+}
+
+measureLibraryButton.addEventListener('click', () => {
+  libraryMeasurement.active = !libraryMeasurement.active
+  measureLibraryButton.classList.toggle('active', libraryMeasurement.active)
+  libraryPreviewSvg.classList.toggle('measuring', libraryMeasurement.active)
+})
+clearLibraryMeasureButton.addEventListener('click', () => {
+  libraryMeasurement.points = []
+  scheduleLibraryPreview()
+})
+libraryPreviewSvg.addEventListener('click', event => {
+  if (libraryMeasurement.active) {
+    selectMeasurementPoint(libraryPreviewSvg, libraryMeasurement, event, scheduleLibraryPreview)
+  }
+})
 
 toggleProfileLibraryButton.addEventListener('click', () => {
   profileLibraryPanel.hidden = !profileLibraryPanel.hidden
@@ -1501,7 +1546,7 @@ const updateAssemblyCandidateControls = () => {
 }
 
 const updateAssemblySvg = () => {
-  const result = renderAssemblyView(assemblySvg, assemblyParts, assemblyCamera)
+  const result = renderAssemblyView(assemblySvg, assemblyParts, assemblyCamera, assemblyMeasurement)
   saveAssemblyButton.disabled = assemblyParts.length === 0
   assemblyStatus.textContent = result.visibleCount
     ? `У збірці ${assemblyParts.length} деталей; показано ${result.visibleCount}. `
@@ -1652,8 +1697,23 @@ const resetAssemblyCamera = viewName => {
 document.querySelectorAll('[data-assembly-camera]').forEach(button => {
   button.addEventListener('click', () => resetAssemblyCamera(button.dataset.assemblyCamera))
 })
+measureAssemblyButton.addEventListener('click', () => {
+  assemblyMeasurement.active = !assemblyMeasurement.active
+  measureAssemblyButton.classList.toggle('active', assemblyMeasurement.active)
+  assemblySvg.classList.toggle('measuring', assemblyMeasurement.active)
+})
+clearAssemblyMeasureButton.addEventListener('click', () => {
+  assemblyMeasurement.points = []
+  updateAssemblySvg()
+})
+assemblySvg.addEventListener('click', event => {
+  if (assemblyMeasurement.active) {
+    selectMeasurementPoint(assemblySvg, assemblyMeasurement, event, updateAssemblySvg)
+  }
+})
 let assemblyCameraDrag = null
 assemblySvg.addEventListener('pointerdown', event => {
+  if (assemblyMeasurement.active) return
   const pan = event.button === 2 || (event.button === 0 && event.shiftKey)
   if (event.button !== 0 && event.button !== 2) return
   assemblyCameraDrag = { x: event.clientX, y: event.clientY, pan }

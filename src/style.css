@@ -381,6 +381,17 @@ code {
   cursor: grabbing;
 }
 
+#libraryPreviewSvg.measuring,
+#assemblySvg.measuring {
+  cursor: crosshair;
+}
+
+.library-preview-toolbar button.active,
+.assembly-orbit-controls button.active {
+  background: #16a34a;
+  color: white;
+}
+
 #libraryPreviewStatus {
   margin: 8px 0 2px;
   font-size: 13px;
