@@ -165,6 +165,26 @@ export const renderAssemblyView = (svg, parts, camera = {}) => {
       }
     }
 
+    if (part.kind === 'fuselage') {
+      for (const rod of part.straightSparRods || []) {
+        const first = project({
+          x: part.offsets.x,
+          y: rod.y + part.offsets.y,
+          z: rod.x + part.offsets.z
+        })
+        const second = project({
+          x: part.span + part.offsets.x,
+          y: rod.y + part.offsets.y,
+          z: rod.x + part.offsets.z
+        })
+        svgElement('line', {
+          x1: first[0], y1: first[1], x2: second[0], y2: second[1],
+          stroke: '#111827', 'stroke-width': Math.max(2, rod.diameter * scale),
+          'stroke-opacity': '0.8', 'stroke-linecap': 'round'
+        }, svg)
+      }
+    }
+
     const labelPoint = project(root[0])
     svgElement('text', {
       x: labelPoint[0] + 6,

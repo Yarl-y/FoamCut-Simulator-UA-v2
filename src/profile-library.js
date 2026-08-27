@@ -351,6 +351,11 @@ export const sparHoleFitsProfile = (profilePoints, holeContour) => holeContour.e
   point => pointInsidePolygon(point, profilePoints)
 )
 
+export const holeFitsFuselageMaterial = (outerPoints, innerPoints, holeContour) => (
+  sparHoleFitsProfile(outerPoints, holeContour)
+  && (!innerPoints || holeContour.every(point => !pointInsidePolygon(point, innerPoints)))
+)
+
 const interpolateConnector = (start, end, segmentCount = 6) => Array.from(
   { length: segmentCount },
   (_, index) => {

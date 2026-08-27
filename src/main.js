@@ -11,6 +11,7 @@ import {
   createSparHoleContour,
   createStraightSparHoleContour,
   defaultFuselageStations,
+  holeFitsFuselageMaterial,
   insertPairedSparHoles,
   normalizeProfilePair,
   profileLibraryEntries,
@@ -132,6 +133,19 @@ document.querySelector('#app').innerHTML = `
             </label>
             <label>Товщина днища, мм
               <input id="fuselageBottomThickness" type="number" min="1" step="1" value="5">
+            </label>
+            <label class="fuselage-tube-toggle"><input id="fuselageTube" type="checkbox"> Поздовжня карбонова трубка</label>
+            <label>Зовнішній Ø трубки, мм
+              <input id="fuselageTubeDiameter" type="number" min="1" step="0.1" value="8">
+            </label>
+            <label>Посадковий зазор, мм
+              <input id="fuselageTubeClearance" type="number" min="0" step="0.1" value="0.4">
+            </label>
+            <label>Висота осі від спільного нуля, мм
+              <input id="fuselageTubeHeight" type="number" step="1" value="70">
+            </label>
+            <label>Бокове зміщення від центра, мм
+              <input id="fuselageTubeSideOffset" type="number" step="1" value="0">
             </label>
           </div>
           <div class="fuselage-stations-toolbar">
@@ -359,6 +373,11 @@ const fuselageHeightInput = document.querySelector('#fuselageHeight')
 const fuselageHollowInput = document.querySelector('#fuselageHollow')
 const fuselageWallThicknessInput = document.querySelector('#fuselageWallThickness')
 const fuselageBottomThicknessInput = document.querySelector('#fuselageBottomThickness')
+const fuselageTubeInput = document.querySelector('#fuselageTube')
+const fuselageTubeDiameterInput = document.querySelector('#fuselageTubeDiameter')
+const fuselageTubeClearanceInput = document.querySelector('#fuselageTubeClearance')
+const fuselageTubeHeightInput = document.querySelector('#fuselageTubeHeight')
+const fuselageTubeSideOffsetInput = document.querySelector('#fuselageTubeSideOffset')
 const fuselageStationsElement = document.querySelector('#fuselageStations')
 const addFuselageSectionButton = document.querySelector('#addFuselageSection')
 const resetFuselageSectionsButton = document.querySelector('#resetFuselageSections')
@@ -516,7 +535,7 @@ const renderFuselageStations = (selectedSegment = Number(fuselageSegmentInput.va
   fuselageSegmentInput.value = String(Math.min(selectedSegment, fuselageStations.length - 2))
 }
 
-const previewPart = ({ kind, name, span, outerLeft, outerRight, offsets, selected = false }) => ({
+const previewPart = ({ kind, name, span, outerLeft, outerRight, offsets, selected = false, rods = [] }) => ({
   id: 0,
   kind,
   side: kind === 'wing' ? 'right' : null,
@@ -526,7 +545,7 @@ const previewPart = ({ kind, name, span, outerLeft, outerRight, offsets, selecte
   outerRight,
   cutLeft: outerLeft,
   cutRight: outerRight,
-  straightSparRods: [],
+  straightSparRods: rods,
   servoChannels: [],
   offsets,
   visible: true,
@@ -570,6 +589,11 @@ const renderLibraryPreview = () => {
       const bottomThickness = hollow
         ? readPositiveLibraryNumber(fuselageBottomThicknessInput, 'Товщина днища')
         : 5
+      const tubeEnabled = fuselageTubeInput.checked
+      const tubeDiameter = tubeEnabled ? readPositiveLibraryNumber(fuselageTubeDiameterInput, 'Діаметр трубки') : 0
+      const tubeClearance = Math.max(0, Number(fuselageTubeClearanceInput.value) || 0)
+      const tubeHeight = Number(fuselageTubeHeightInput.value) || 0
+      const tubeSideOffset = Number(fuselageTubeSideOffsetInput.value) || 0
       fuselageStations = readFuselageStations()
       const selectedSegment = Number(fuselageSegmentInput.value) || 0
       parts = fuselageStations.slice(0, -1).map((station, index) => {
@@ -585,7 +609,10 @@ const renderLibraryPreview = () => {
           outerLeft: segment.leftPoints,
           outerRight: segment.rightPoints,
           offsets: { x: segment.segmentStart, y: -segment.translation.y, z: 0 },
-          selected: index === selectedSegment
+          selected: index === selectedSegment,
+          rods: tubeEnabled
+            ? [{ x: tubeSideOffset, y: tubeHeight + segment.translation.y, diameter: tubeDiameter + tubeClearance }]
+            : []
         })
         if (!hollow) return [outerPart]
         return [
@@ -690,12 +717,29 @@ wingPreviewInputs.forEach(input => {
   input.addEventListener('change', () => scheduleLibraryPreview('fuselage'))
 })
 
+;[
+  fuselageTubeInput, fuselageTubeDiameterInput, fuselageTubeClearanceInput,
+  fuselageTubeHeightInput, fuselageTubeSideOffsetInput
+].forEach(input => {
+  input.addEventListener('input', () => scheduleLibraryPreview('fuselage'))
+  input.addEventListener('change', () => scheduleLibraryPreview('fuselage'))
+})
+
 const syncHollowFuselageControls = () => {
   fuselageWallThicknessInput.disabled = !fuselageHollowInput.checked
   fuselageBottomThicknessInput.disabled = !fuselageHollowInput.checked
 }
 fuselageHollowInput.addEventListener('change', syncHollowFuselageControls)
 syncHollowFuselageControls()
+
+const syncFuselageTubeControls = () => {
+  ;[
+    fuselageTubeDiameterInput, fuselageTubeClearanceInput,
+    fuselageTubeHeightInput, fuselageTubeSideOffsetInput
+  ].forEach(input => { input.disabled = !fuselageTubeInput.checked })
+}
+fuselageTubeInput.addEventListener('change', syncFuselageTubeControls)
+syncFuselageTubeControls()
 
 let libraryPreviewDrag = null
 libraryPreviewSvg.addEventListener('pointerdown', event => {
@@ -1352,6 +1396,13 @@ buildFuselageSegmentButton.addEventListener('click', () => {
     const bottomThickness = hollow
       ? readPositiveLibraryNumber(fuselageBottomThicknessInput, 'Товщина днища')
       : 5
+    const tubeEnabled = fuselageTubeInput.checked
+    const tubeDiameter = tubeEnabled
+      ? readPositiveLibraryNumber(fuselageTubeDiameterInput, 'Діаметр трубки')
+      : 0
+    const tubeClearance = Math.max(0, Number(fuselageTubeClearanceInput.value) || 0)
+    const tubeHeight = Number(fuselageTubeHeightInput.value) || 0
+    const tubeSideOffset = Number(fuselageTubeSideOffsetInput.value) || 0
     fuselageStations = readFuselageStations()
     const segment = createGliderFuselageSegment({
       segmentIndex: Number(fuselageSegmentInput.value),
@@ -1365,7 +1416,7 @@ buildFuselageSegmentButton.addEventListener('click', () => {
       pointCount
     })
 
-    const cutProfiles = hollow
+    let cutProfiles = hollow
       ? createPairedHollowCutPath(
           segment.leftPoints,
           segment.rightPoints,
@@ -1373,6 +1424,28 @@ buildFuselageSegmentButton.addEventListener('click', () => {
           segment.innerRightPoints
         )
       : { leftPoints: segment.leftPoints, rightPoints: segment.rightPoints }
+
+    if (tubeEnabled) {
+      const holeDiameter = tubeDiameter + tubeClearance
+      const centerX = points => (Math.min(...points.map(point => point.x)) + Math.max(...points.map(point => point.x))) / 2
+      const leftHole = createStraightSparHoleContour({
+        x: centerX(segment.leftPoints) + tubeSideOffset,
+        y: tubeHeight + segment.translation.y,
+        diameter: holeDiameter
+      })
+      const rightHole = createStraightSparHoleContour({
+        x: centerX(segment.rightPoints) + tubeSideOffset,
+        y: tubeHeight + segment.translation.y,
+        diameter: holeDiameter
+      })
+      if (!holeFitsFuselageMaterial(segment.leftPoints, segment.innerLeftPoints, leftHole)) {
+        throw new Error(`${segment.leftName}: отвір трубки не вміщується в матеріалі перерізу`)
+      }
+      if (!holeFitsFuselageMaterial(segment.rightPoints, segment.innerRightPoints, rightHole)) {
+        throw new Error(`${segment.rightName}: отвір трубки не вміщується в матеріалі перерізу`)
+      }
+      cutProfiles = insertPairedSparHoles(cutProfiles.leftPoints, cutProfiles.rightPoints, [{ left: leftHole, right: rightHole }])
+    }
 
     preparedDxfProfiles.left = {
       points: cutProfiles.leftPoints,
@@ -1395,7 +1468,9 @@ buildFuselageSegmentButton.addEventListener('click', () => {
       outerRight: segment.rightPoints.map(point => ({ ...point })),
       cutLeft: cutProfiles.leftPoints.map(point => ({ ...point })),
       cutRight: cutProfiles.rightPoints.map(point => ({ ...point })),
-      straightSparRods: [],
+      straightSparRods: tubeEnabled
+        ? [{ x: tubeSideOffset, y: tubeHeight + segment.translation.y, diameter: tubeDiameter }]
+        : [],
       servoChannels: [],
       defaultOffsets: { x: segment.segmentStart, y: 0, z: 0 }
     }
@@ -1407,6 +1482,7 @@ buildFuselageSegmentButton.addEventListener('click', () => {
     fuselageLibraryStatus.textContent = `Секцію ${segment.leftName} → ${segment.rightName} побудовано; `
       + `довжина блока ${foamWidthInput.value} мм`
       + (hollow ? `; порожнина: стінка ${wallThickness} мм, днище ${bottomThickness} мм; внутрішній контур ріжеться першим` : '')
+      + (tubeEnabled ? `; трубка Ø${tubeDiameter} мм, отвір Ø${tubeDiameter + tubeClearance} мм` : '')
   } catch (error) {
     fuselageLibraryStatus.className = 'profile-library-error'
     fuselageLibraryStatus.textContent = `Не вдалося побудувати секцію: ${error.message}`
