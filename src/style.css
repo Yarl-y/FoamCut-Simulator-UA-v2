@@ -521,9 +521,18 @@ code {
 .fuselage-stations-head,
 .fuselage-station-row {
   display: grid;
-  grid-template-columns: minmax(110px, 1.4fr) repeat(4, minmax(72px, 1fr)) 34px;
+  grid-template-columns: minmax(110px, 1.4fr) repeat(7, minmax(72px, 1fr)) 34px;
   gap: 7px;
   align-items: center;
+}
+
+.fuselage-stations-table {
+  overflow-x: auto;
+}
+
+.fuselage-stations-head,
+.fuselage-station-row {
+  min-width: 880px;
 }
 
 .fuselage-stations-head {

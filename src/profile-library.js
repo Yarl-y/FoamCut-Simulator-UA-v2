@@ -126,10 +126,10 @@ export const createLibraryProfile = (profileId, pointCount = 200) => {
 }
 
 export const defaultFuselageStations = [
-  { id: 'nose', name: 'Ніс', position: 0, width: 0.18, height: 0.2, lift: 0.3 },
-  { id: 'cabin', name: 'Кабіна', position: 0.28, width: 1, height: 1, lift: 0 },
-  { id: 'middle', name: 'Середина', position: 0.62, width: 0.78, height: 0.72, lift: 0.04 },
-  { id: 'tail', name: 'Хвіст', position: 1, width: 0.26, height: 0.28, lift: 0.2 }
+  { id: 'nose', name: 'Ніс', position: 0, width: 0.18, height: 0.2, lift: 0.3, upperFullness: 1, lowerFullness: 1, bottomFlatness: 0 },
+  { id: 'cabin', name: 'Кабіна', position: 0.28, width: 1, height: 1, lift: 0, upperFullness: 1, lowerFullness: 1, bottomFlatness: 0 },
+  { id: 'middle', name: 'Середина', position: 0.62, width: 0.78, height: 0.72, lift: 0.04, upperFullness: 1, lowerFullness: 1, bottomFlatness: 0 },
+  { id: 'tail', name: 'Хвіст', position: 1, width: 0.26, height: 0.28, lift: 0.2, upperFullness: 1, lowerFullness: 1, bottomFlatness: 0 }
 ]
 
 export const fuselageSegmentEntries = defaultFuselageStations.slice(0, -1).map((station, index) => ({
@@ -137,13 +137,22 @@ export const fuselageSegmentEntries = defaultFuselageStations.slice(0, -1).map((
   name: `${station.name} → ${defaultFuselageStations[index + 1].name}`
 }))
 
-const createGliderSection = (width, height, lift, pointCount) => {
+const createGliderSection = (
+  width,
+  height,
+  lift,
+  pointCount,
+  { upperFullness = 1, lowerFullness = 1, bottomFlatness = 0 } = {}
+) => {
   const rawPoints = Array.from({ length: pointCount }, (_, index) => {
     const angle = Math.PI * 2 * index / pointCount
     const cosine = Math.cos(angle)
     const sine = Math.sin(angle)
-    const exponent = 2.35
-    const shapedX = Math.sign(cosine) * Math.abs(cosine) ** (2 / exponent)
+    const lowerHalf = sine < 0
+    const exponent = 2.35 + (lowerHalf ? bottomFlatness * 6 : 0)
+    const fullness = lowerHalf ? lowerFullness : upperFullness
+    const fullnessFactor = 1 - (1 - fullness) * Math.abs(sine) ** 0.65
+    const shapedX = Math.sign(cosine) * Math.abs(cosine) ** (2 / exponent) * fullnessFactor
     const shapedY = Math.sign(sine) * Math.abs(sine) ** (2 / exponent)
     const lowerScale = shapedY < 0 ? 0.78 : 1
     return {
@@ -175,14 +184,25 @@ export const createGliderFuselageSegment = ({
     throw new Error('Фюзеляж повинен мати щонайменше дві поперечні станції')
   }
   const normalizedStations = stations.map((station, index) => {
-    const values = ['position', 'width', 'height', 'lift'].map(field => Number(station[field]))
+    const values = [
+      Number(station.position), Number(station.width), Number(station.height), Number(station.lift),
+      Number(station.upperFullness ?? 1), Number(station.lowerFullness ?? 1),
+      Number(station.bottomFlatness ?? 0)
+    ]
     if (values.some(value => !Number.isFinite(value))) {
       throw new Error(`Станція ${index + 1} має некоректні параметри`)
     }
-    if (values[0] < 0 || values[0] > 1 || values[1] <= 0 || values[2] <= 0) {
+    if (
+      values[0] < 0 || values[0] > 1 || values[1] <= 0 || values[2] <= 0
+      || values[4] <= 0 || values[5] <= 0 || values[6] < 0 || values[6] > 1
+    ) {
       throw new Error(`Станція ${index + 1}: положення має бути 0–100%, а ширина і висота — більші за нуль`)
     }
-    return { ...station, position: values[0], width: values[1], height: values[2], lift: values[3] }
+    return {
+      ...station,
+      position: values[0], width: values[1], height: values[2], lift: values[3],
+      upperFullness: values[4], lowerFullness: values[5], bottomFlatness: values[6]
+    }
   })
   for (let index = 1; index < normalizedStations.length; index++) {
     if (normalizedStations[index].position <= normalizedStations[index - 1].position) {
@@ -202,7 +222,8 @@ export const createGliderFuselageSegment = ({
     maximumWidth * station.width,
     maximumHeight * station.height,
     maximumHeight * station.lift,
-    pointCount
+    pointCount,
+    station
   )
   const pair = normalizeProfilePair(makeSection(leftStation), makeSection(rightStation))
 

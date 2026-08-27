@@ -131,11 +131,14 @@ document.querySelector('#app').innerHTML = `
             <button id="addFuselageSection" type="button">+ Додати секцію</button>
             <button id="resetFuselageSections" type="button">Початкові 3 секції</button>
           </div>
-          <div class="fuselage-stations-head" aria-hidden="true">
-            <span>Назва</span><span>Положення, %</span><span>Ширина, %</span>
-            <span>Висота, %</span><span>Підйом, %</span><span></span>
+          <div class="fuselage-stations-table">
+            <div class="fuselage-stations-head" aria-hidden="true">
+              <span>Назва</span><span>Положення, %</span><span>Ширина, %</span>
+              <span>Висота, %</span><span>Підйом, %</span><span>Верх, %</span>
+              <span>Низ, %</span><span>Плоскість низу, %</span><span></span>
+            </div>
+            <div id="fuselageStations" class="fuselage-stations"></div>
           </div>
-          <div id="fuselageStations" class="fuselage-stations"></div>
           <button id="buildFuselageSegment" type="button">Побудувати секцію фюзеляжу</button>
           <p id="fuselageLibraryStatus">Виберіть секцію — для кожної створюється окремий NC-файл</p>
         </div>
@@ -460,7 +463,10 @@ const readFuselageStations = () => [...fuselageStationsElement.querySelectorAll(
     position: Number(row.querySelector('[data-field="position"]').value) / 100,
     width: Number(row.querySelector('[data-field="width"]').value) / 100,
     height: Number(row.querySelector('[data-field="height"]').value) / 100,
-    lift: Number(row.querySelector('[data-field="lift"]').value) / 100
+    lift: Number(row.querySelector('[data-field="lift"]').value) / 100,
+    upperFullness: Number(row.querySelector('[data-field="upperFullness"]').value) / 100,
+    lowerFullness: Number(row.querySelector('[data-field="lowerFullness"]').value) / 100,
+    bottomFlatness: Number(row.querySelector('[data-field="bottomFlatness"]').value) / 100
   })
 )
 
@@ -482,6 +488,9 @@ const renderFuselageStations = (selectedSegment = Number(fuselageSegmentInput.va
       <input data-field="width" type="number" min="1" step="0.1" value="${station.width * 100}" aria-label="Ширина станції ${index + 1}">
       <input data-field="height" type="number" min="1" step="0.1" value="${station.height * 100}" aria-label="Висота станції ${index + 1}">
       <input data-field="lift" type="number" step="0.1" value="${station.lift * 100}" aria-label="Підйом станції ${index + 1}">
+      <input data-field="upperFullness" type="number" min="20" max="150" step="1" value="${(station.upperFullness ?? 1) * 100}" aria-label="Верхня повнота станції ${index + 1}">
+      <input data-field="lowerFullness" type="number" min="20" max="150" step="1" value="${(station.lowerFullness ?? 1) * 100}" aria-label="Нижня повнота станції ${index + 1}">
+      <input data-field="bottomFlatness" type="number" min="0" max="100" step="1" value="${(station.bottomFlatness ?? 0) * 100}" aria-label="Плоскість низу станції ${index + 1}">
       <button type="button" data-remove-station="${index}" ${index === 0 || index === fuselageStations.length - 1 ? 'disabled' : ''} title="Видалити станцію і об'єднати сусідні секції">×</button>
     `
     fuselageStationsElement.appendChild(row)
@@ -610,7 +619,10 @@ addFuselageSectionButton.addEventListener('click', () => {
     position: average('position'),
     width: average('width'),
     height: average('height'),
-    lift: average('lift')
+    lift: average('lift'),
+    upperFullness: average('upperFullness'),
+    lowerFullness: average('lowerFullness'),
+    bottomFlatness: average('bottomFlatness')
   })
   renderFuselageStations(segmentIndex + 1)
   scheduleLibraryPreview('fuselage')
