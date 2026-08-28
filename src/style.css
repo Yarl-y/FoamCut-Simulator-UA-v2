@@ -738,6 +738,32 @@ code {
   margin-bottom: 10px;
 }
 
+.block-placement-controls {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+  margin: 12px 0;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+.block-placement-controls label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.block-placement-controls > label:first-child {
+  justify-content: center;
+}
+
+#blockPlacementStatus {
+  grid-column: 1 / -1;
+  margin: 0;
+  font-weight: 700;
+}
+
 .machine-limit-controls {
   display: flex;
   flex-wrap: wrap;

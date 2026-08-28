@@ -262,6 +262,23 @@ document.querySelector('#app').innerHTML = `
             <input id="wireKerf" type="number" min="0" step="0.1" value="1.0" title="Збережено для майбутньої компенсації контуру">
           </label>
         </div>
+        <div class="block-placement-controls">
+          <label><input id="blockCompensation" type="checkbox"> Компенсація положення блока</label>
+          <label>Режим установки
+            <select id="blockPlacementMode">
+              <option value="center">Фіксовані стійки — по центру</option>
+              <option value="manual">Фіксовані стійки — вручну</option>
+              <option value="auto">Рухомі стійки — найкоротша безпечна струна</option>
+            </select>
+          </label>
+          <label>Від лівої каретки, мм
+            <input id="blockLeftGap" type="number" min="0" step="1" value="460">
+          </label>
+          <label>Безпечний проміжок, мм
+            <input id="blockSafeGap" type="number" min="0" step="1" value="50">
+          </label>
+          <p id="blockPlacementStatus">Компенсацію вимкнено — профілі передаються кареткам без перерахунку</p>
+        </div>
         <div class="nc-generator-actions">
           <button id="generateNc" disabled>Створити NC для Mach3</button>
           <button id="downloadNc" disabled>Завантажити NC-файл</button>
@@ -430,6 +447,11 @@ const machineLimitInputs = {
 }
 const wireSpanInput = document.querySelector('#wireSpan')
 const wireKerfInput = document.querySelector('#wireKerf')
+const blockCompensationInput = document.querySelector('#blockCompensation')
+const blockPlacementModeInput = document.querySelector('#blockPlacementMode')
+const blockLeftGapInput = document.querySelector('#blockLeftGap')
+const blockSafeGapInput = document.querySelector('#blockSafeGap')
+const blockPlacementStatus = document.querySelector('#blockPlacementStatus')
 const svg = document.querySelector('#trajectory')
 const status = document.querySelector('#status')
 const foamLengthInput = document.getElementById('foamLength')
@@ -911,7 +933,8 @@ sparHoleModeInput.addEventListener('change', () => {
 
 const updateFoamBlockDimensions = () => {
   if (renderActiveFoamBlock) renderActiveFoamBlock()
-  if (preparedCuttingTrajectory) updateGeneratedNcPreview()
+  if (preparedDxfProfiles.left && preparedDxfProfiles.right) renderPreparedDxfSimulation()
+  else if (preparedCuttingTrajectory) updateGeneratedNcPreview()
 }
 
 foamLengthInput.addEventListener('input', updateFoamBlockDimensions)
@@ -1005,6 +1028,10 @@ const getProjectSettings = () => ({
   limitZ: Number(machineLimitInputs.z.value),
   wireSpan: Number(wireSpanInput.value),
   wireKerf: Number(wireKerfInput.value),
+  blockCompensation: blockCompensationInput.checked,
+  blockPlacementMode: blockPlacementModeInput.value,
+  blockLeftGap: Number(blockLeftGapInput.value),
+  blockSafeGap: Number(blockSafeGapInput.value),
   animationSpeed: Number(speed3d.value),
   internalFirst: Boolean(preparedDxfProfiles.left?.internalFirst)
 })
@@ -1033,6 +1060,12 @@ const applyProjectSettings = settings => {
     if (Number.isFinite(value)) input.value = value
   }
   if (['single', 'double'].includes(settings.passMode)) cutPassModeInput.value = settings.passMode
+  blockCompensationInput.checked = settings.blockCompensation === true
+  if (['center', 'manual', 'auto'].includes(settings.blockPlacementMode)) {
+    blockPlacementModeInput.value = settings.blockPlacementMode
+  }
+  if (Number.isFinite(Number(settings.blockLeftGap))) blockLeftGapInput.value = Number(settings.blockLeftGap)
+  if (Number.isFinite(Number(settings.blockSafeGap))) blockSafeGapInput.value = Number(settings.blockSafeGap)
 }
 
 saveProjectButton.addEventListener('click', () => {
@@ -1162,6 +1195,49 @@ const buildCuttingPath = (points, passMode = cutPassModeInput.value) => {
   ]
 }
 
+const calculateBlockSetup = () => {
+  const blockWidth = Number(foamWidthInput.value)
+  if (!Number.isFinite(blockWidth) || blockWidth <= 0) throw new Error('Довжина блока має бути більшою за нуль')
+  const configuredSpan = Number(wireSpanInput.value)
+  const safeGap = Math.max(0, Number(blockSafeGapInput.value) || 0)
+  let wireSpan = Number.isFinite(configuredSpan) && configuredSpan > 0 ? configuredSpan : 1060
+  let leftGap
+  if (blockPlacementModeInput.value === 'auto') {
+    wireSpan = blockWidth + safeGap * 2
+    leftGap = safeGap
+  } else if (blockPlacementModeInput.value === 'manual') {
+    leftGap = Math.max(0, Number(blockLeftGapInput.value) || 0)
+  } else {
+    leftGap = (wireSpan - blockWidth) / 2
+  }
+  const rightGap = wireSpan - blockWidth - leftGap
+  if (wireSpan < blockWidth || leftGap < 0 || rightGap < 0) {
+    throw new Error('Блок не вміщується між каретками при заданому положенні')
+  }
+  return { wireSpan, blockWidth, leftGap, rightGap, mode: blockPlacementModeInput.value }
+}
+
+const projectProfilesToCarriages = (leftPoints, rightPoints, setup) => {
+  const leftFactor = setup.leftGap / setup.blockWidth
+  const rightFactor = setup.rightGap / setup.blockWidth
+  return {
+    leftPoints: leftPoints.map((left, index) => {
+      const right = rightPoints[index]
+      return {
+        x: left.x - (right.x - left.x) * leftFactor,
+        y: left.y - (right.y - left.y) * leftFactor
+      }
+    }),
+    rightPoints: rightPoints.map((right, index) => {
+      const left = leftPoints[index]
+      return {
+        x: right.x + (right.x - left.x) * rightFactor,
+        y: right.y + (right.y - left.y) * rightFactor
+      }
+    })
+  }
+}
+
 const formatNcNumber = value => {
   const normalized = Math.abs(value) < 0.0005 ? 0 : value
   return normalized.toFixed(3)
@@ -1179,6 +1255,12 @@ const createMach3Nc = trajectory => {
     '(FoamCut Simulator - 4 axis X/Y + A/Z)',
     '(Metric units, absolute coordinates)'
   ]
+  if (trajectory.blockSetup) {
+    lines.push(`(Block setup: wire ${formatNcNumber(trajectory.blockSetup.wireSpan)} mm, `
+      + `left gap ${formatNcNumber(trajectory.blockSetup.leftGap)} mm, `
+      + `block ${formatNcNumber(trajectory.blockSetup.blockWidth)} mm, `
+      + `right gap ${formatNcNumber(trajectory.blockSetup.rightGap)} mm)`)
+  }
 
   if (trajectory.sourceLeftPoints && trajectory.sourceRightPoints) {
     lines.push('(FOAMCUT_PROFILE_DATA_BEGIN)')
@@ -1239,9 +1321,11 @@ const validateMachineEnvelope = trajectory => {
     if (travel > limit + 0.0005) {
       errors.push(`${labels[axis]}: потрібно ${formatNcNumber(travel)} мм, доступно ${limit} мм`)
     }
+    if (minimum < -0.0005) errors.push(`${labels[axis]}: мінімум ${formatNcNumber(minimum)} мм нижче нуля`)
+    if (maximum > limit + 0.0005) errors.push(`${labels[axis]}: максимум ${formatNcNumber(maximum)} мм перевищує ${limit} мм`)
   }
 
-  const configuredWireSpan = Number(wireSpanInput.value)
+  const configuredWireSpan = Number(trajectory.blockSetup?.wireSpan ?? wireSpanInput.value)
   const wireSpan = Number.isFinite(configuredWireSpan) && configuredWireSpan > 0
     ? configuredWireSpan
     : 1060
@@ -1294,13 +1378,35 @@ const renderPreparedDxfSimulation = () => {
   const internalFirst = preparedDxfProfiles.left.internalFirst === true
     || preparedDxfProfiles.right.internalFirst === true
   const effectivePassMode = internalFirst ? 'single' : cutPassModeInput.value
-  const leftPoints = buildCuttingPath(preparedDxfProfiles.left.points, effectivePassMode)
-  const rightPoints = buildCuttingPath(preparedDxfProfiles.right.points, effectivePassMode)
+  const faceLeftPoints = buildCuttingPath(preparedDxfProfiles.left.points, effectivePassMode)
+  const faceRightPoints = buildCuttingPath(preparedDxfProfiles.right.points, effectivePassMode)
 
-  if (leftPoints.length !== rightPoints.length) {
+  if (faceLeftPoints.length !== faceRightPoints.length) {
     preparedCuttingTrajectory = null
     updateGeneratedNcPreview()
     dxfAssignmentStatus.textContent += '; кількість точок сторін не збігається'
+    return
+  }
+  let blockSetup = null
+  let leftPoints = faceLeftPoints
+  let rightPoints = faceRightPoints
+  try {
+    if (blockCompensationInput.checked) {
+      blockSetup = calculateBlockSetup()
+      const carriagePaths = projectProfilesToCarriages(faceLeftPoints, faceRightPoints, blockSetup)
+      leftPoints = carriagePaths.leftPoints
+      rightPoints = carriagePaths.rightPoints
+      blockLeftGapInput.value = Math.round(blockSetup.leftGap * 1000) / 1000
+      blockPlacementStatus.textContent = `Струна ${formatNcNumber(blockSetup.wireSpan)} мм: `
+        + `лівий проміжок ${formatNcNumber(blockSetup.leftGap)} мм; блок ${formatNcNumber(blockSetup.blockWidth)} мм; `
+        + `правий проміжок ${formatNcNumber(blockSetup.rightGap)} мм`
+    } else {
+      blockPlacementStatus.textContent = 'Компенсацію вимкнено — профілі передаються кареткам без перерахунку'
+    }
+  } catch (error) {
+    preparedCuttingTrajectory = null
+    blockPlacementStatus.textContent = `Помилка установки: ${error.message}`
+    updateGeneratedNcPreview()
     return
   }
 
@@ -1310,7 +1416,8 @@ const renderPreparedDxfSimulation = () => {
     sourceLeftPoints: preparedDxfProfiles.left.points.map(point => ({ ...point })),
     sourceRightPoints: preparedDxfProfiles.right.points.map(point => ({ ...point })),
     feedRate: cuttingSettings.feedRate,
-    passMode: effectivePassMode
+    passMode: effectivePassMode,
+    blockSetup
   }
   updateGeneratedNcPreview()
 
@@ -1987,7 +2094,19 @@ cutFeedRateInput.addEventListener('input', renderPreparedDxfSimulation)
 Object.values(machineLimitInputs).forEach(input => {
   input.addEventListener('input', updateGeneratedNcPreview)
 })
-wireSpanInput.addEventListener('input', updateGeneratedNcPreview)
+wireSpanInput.addEventListener('input', renderPreparedDxfSimulation)
+const syncBlockPlacementControls = () => {
+  blockLeftGapInput.disabled = blockPlacementModeInput.value !== 'manual'
+  blockSafeGapInput.disabled = blockPlacementModeInput.value !== 'auto'
+}
+;[blockCompensationInput, blockPlacementModeInput, blockLeftGapInput, blockSafeGapInput].forEach(input => {
+  input.addEventListener('input', renderPreparedDxfSimulation)
+  input.addEventListener('change', () => {
+    syncBlockPlacementControls()
+    renderPreparedDxfSimulation()
+  })
+})
+syncBlockPlacementControls()
 generateNcButton.addEventListener('click', updateGeneratedNcPreview)
 downloadNcButton.addEventListener('click', () => {
   if (!generatedNcText) return
