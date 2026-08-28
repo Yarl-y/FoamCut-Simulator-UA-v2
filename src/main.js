@@ -178,6 +178,8 @@ document.querySelector('#app').innerHTML = `
             <button id="previewFuselage" type="button">Фюзеляж</button>
             <button id="measureLibrary" type="button">Рулетка</button>
             <button id="clearLibraryMeasure" type="button">Очистити</button>
+            <button id="smallerLibraryMeasure" type="button" title="Зменшити напис рулетки">Текст −</button>
+            <button id="largerLibraryMeasure" type="button" title="Збільшити напис рулетки">Текст +</button>
           </div>
           <svg id="libraryPreviewSvg" viewBox="0 0 800 500" aria-label="Попередній 3D-перегляд деталі"></svg>
           <p id="libraryPreviewStatus">Змінюйте параметри — модель оновлюється автоматично</p>
@@ -256,6 +258,9 @@ document.querySelector('#app').innerHTML = `
           <label>Робоча довжина струни, мм
             <input id="wireSpan" type="number" min="1" step="1" value="1060">
           </label>
+          <label>Фактичний пропал, мм
+            <input id="wireKerf" type="number" min="0" step="0.1" value="1.0" title="Збережено для майбутньої компенсації контуру">
+          </label>
         </div>
         <div class="nc-generator-actions">
           <button id="generateNc" disabled>Створити NC для Mach3</button>
@@ -331,6 +336,8 @@ view3d.innerHTML = `
       <button data-assembly-camera="top">Зверху</button>
       <button id="measureAssembly" type="button">Рулетка</button>
       <button id="clearAssemblyMeasure" type="button">Очистити</button>
+      <button id="smallerAssemblyMeasure" type="button">Текст −</button>
+      <button id="largerAssemblyMeasure" type="button">Текст +</button>
     </div>
     <p class="orbit-help">Збірка: ліва кнопка — орбіта; Shift + ліва або права — переміщення; коліщатко — масштаб</p>
     <svg id="assemblySvg" viewBox="0 0 800 500" width="800" height="500"></svg>
@@ -401,6 +408,8 @@ const previewWingButton = document.querySelector('#previewWing')
 const previewFuselageButton = document.querySelector('#previewFuselage')
 const measureLibraryButton = document.querySelector('#measureLibrary')
 const clearLibraryMeasureButton = document.querySelector('#clearLibraryMeasure')
+const smallerLibraryMeasureButton = document.querySelector('#smallerLibraryMeasure')
+const largerLibraryMeasureButton = document.querySelector('#largerLibraryMeasure')
 const downloadNcDxfLeftButton = document.querySelector('#downloadNcDxfLeft')
 const downloadNcDxfRightButton = document.querySelector('#downloadNcDxfRight')
 const ncToDxfStatus = document.querySelector('#ncToDxfStatus')
@@ -420,6 +429,7 @@ const machineLimitInputs = {
   z: document.querySelector('#limitZ')
 }
 const wireSpanInput = document.querySelector('#wireSpan')
+const wireKerfInput = document.querySelector('#wireKerf')
 const svg = document.querySelector('#trajectory')
 const status = document.querySelector('#status')
 const foamLengthInput = document.getElementById('foamLength')
@@ -442,6 +452,8 @@ const assemblySvg = document.getElementById('assemblySvg')
 const assemblyStatus = document.getElementById('assemblyStatus')
 const measureAssemblyButton = document.getElementById('measureAssembly')
 const clearAssemblyMeasureButton = document.getElementById('clearAssemblyMeasure')
+const smallerAssemblyMeasureButton = document.getElementById('smallerAssemblyMeasure')
+const largerAssemblyMeasureButton = document.getElementById('largerAssemblyMeasure')
 const assemblyFileInput = document.getElementById('assemblyFile')
 const loadAssemblyButton = document.getElementById('loadAssembly')
 const saveAssemblyButton = document.getElementById('saveAssembly')
@@ -464,8 +476,8 @@ let fuselageSectionSettings = Array.from({ length: defaultFuselageStations.lengt
 let nextFuselageStationId = 1
 let libraryPreviewMode = 'wing'
 const libraryPreviewCamera = { yaw: -35, pitch: -22, zoom: 1, panX: 0, panY: 0 }
-const libraryMeasurement = { active: false, points: [] }
-const assemblyMeasurement = { active: false, points: [] }
+const libraryMeasurement = { active: false, points: [], fontSize: 22 }
+const assemblyMeasurement = { active: false, points: [], fontSize: 22 }
 const assemblyParts = []
 let nextAssemblyPartId = 1
 const assemblyCamera = { yaw: -35, pitch: -22, zoom: 1, panX: 0, panY: 0 }
@@ -857,6 +869,16 @@ clearLibraryMeasureButton.addEventListener('click', () => {
   libraryMeasurement.points = []
   scheduleLibraryPreview()
 })
+const adjustMeasurementText = (measurement, delta, rerender) => {
+  measurement.fontSize = Math.max(14, Math.min(42, measurement.fontSize + delta))
+  rerender()
+}
+smallerLibraryMeasureButton.addEventListener('click', () => {
+  adjustMeasurementText(libraryMeasurement, -2, scheduleLibraryPreview)
+})
+largerLibraryMeasureButton.addEventListener('click', () => {
+  adjustMeasurementText(libraryMeasurement, 2, scheduleLibraryPreview)
+})
 libraryPreviewSvg.addEventListener('click', event => {
   if (libraryMeasurement.active) {
     selectMeasurementPoint(libraryPreviewSvg, libraryMeasurement, event, scheduleLibraryPreview)
@@ -982,6 +1004,7 @@ const getProjectSettings = () => ({
   limitA: Number(machineLimitInputs.a.value),
   limitZ: Number(machineLimitInputs.z.value),
   wireSpan: Number(wireSpanInput.value),
+  wireKerf: Number(wireKerfInput.value),
   animationSpeed: Number(speed3d.value),
   internalFirst: Boolean(preparedDxfProfiles.left?.internalFirst)
 })
@@ -1001,6 +1024,7 @@ const applyProjectSettings = settings => {
     limitA: machineLimitInputs.a,
     limitZ: machineLimitInputs.z,
     wireSpan: wireSpanInput,
+    wireKerf: wireKerfInput,
     animationSpeed: speed3d
   }
 
@@ -1776,6 +1800,12 @@ measureAssemblyButton.addEventListener('click', () => {
 clearAssemblyMeasureButton.addEventListener('click', () => {
   assemblyMeasurement.points = []
   updateAssemblySvg()
+})
+smallerAssemblyMeasureButton.addEventListener('click', () => {
+  adjustMeasurementText(assemblyMeasurement, -2, updateAssemblySvg)
+})
+largerAssemblyMeasureButton.addEventListener('click', () => {
+  adjustMeasurementText(assemblyMeasurement, 2, updateAssemblySvg)
 })
 assemblySvg.addEventListener('click', event => {
   if (assemblyMeasurement.active) {

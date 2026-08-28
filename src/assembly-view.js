@@ -226,13 +226,23 @@ export const renderAssemblyView = (svg, parts, camera = {}, measurement = null) 
         x1: screens[0][0], y1: screens[0][1], x2: screens[1][0], y2: screens[1][1],
         stroke: '#16a34a', 'stroke-width': 2.5, 'stroke-dasharray': '8 4'
       }, svg)
-      const label = svgElement('text', {
-        x: (screens[0][0] + screens[1][0]) / 2,
-        y: (screens[0][1] + screens[1][1]) / 2 - 10,
-        'text-anchor': 'middle', fill: '#166534', 'font-size': 14, 'font-weight': 700,
+      const fontSize = Math.max(14, Math.min(42, Number(measurement.fontSize) || 22))
+      const labelX = Math.max(110, Math.min(690, (screens[0][0] + screens[1][0]) / 2))
+      const labelY = Math.max(fontSize * 2, Math.min(470 - fontSize, (screens[0][1] + screens[1][1]) / 2))
+      const distanceLabel = svgElement('text', {
+        x: labelX,
+        y: labelY - fontSize * 0.35,
+        'text-anchor': 'middle', fill: '#166534', 'font-size': fontSize, 'font-weight': 800,
         stroke: '#ffffff', 'stroke-width': 4, 'paint-order': 'stroke'
       }, svg)
-      label.textContent = `${distance.toFixed(2)} мм · ΔX ${dx.toFixed(2)} · ΔY ${dy.toFixed(2)} · ΔZ ${dz.toFixed(2)}`
+      distanceLabel.textContent = `Відстань: ${distance.toFixed(2)} мм`
+      const deltaLabel = svgElement('text', {
+        x: labelX,
+        y: labelY + fontSize * 0.8,
+        'text-anchor': 'middle', fill: '#166534', 'font-size': fontSize * 0.72, 'font-weight': 700,
+        stroke: '#ffffff', 'stroke-width': 4, 'paint-order': 'stroke'
+      }, svg)
+      deltaLabel.textContent = `ΔX ${dx.toFixed(2)} · ΔY ${dy.toFixed(2)} · ΔZ ${dz.toFixed(2)} мм`
     }
   }
 
