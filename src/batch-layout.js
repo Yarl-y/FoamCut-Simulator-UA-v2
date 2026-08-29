@@ -33,10 +33,11 @@ export const createFuselageBatchLayout = (parts, settings = {}) => {
     throw new Error('Безпечний коридор завеликий для вибраної сітки')
   }
 
-  let orderedParts = [...parts]
+  let positionedParts = parts.map((part, slotIndex) => ({ part, slotIndex }))
   const slotAssignments = settings.slotAssignments instanceof Map ? settings.slotAssignments : new Map()
   if (slotAssignments.size) {
-    const slots = Array(parts.length).fill(null)
+    const slotCount = rows * columns
+    const slots = Array(slotCount).fill(null)
     const unplaced = []
     for (const part of parts) {
       const slot = slotAssignments.get(part.id)
@@ -45,17 +46,22 @@ export const createFuselageBatchLayout = (parts, settings = {}) => {
         continue
       }
       const index = Math.floor(Number(slot))
-      if (!Number.isInteger(index) || index < 0 || index >= parts.length) {
-        throw new Error(`${part.name}: закріплене місце ${index + 1} поза доступними 1–${parts.length}`)
+      if (!Number.isInteger(index) || index < 0 || index >= slotCount) {
+        throw new Error(`${part.name}: закріплене місце ${index + 1} поза доступними 1–${slotCount}`)
       }
       if (slots[index]) throw new Error(`Місце ${index + 1} закріплено одночасно за двома секціями`)
       slots[index] = part
     }
     let unplacedIndex = 0
-    orderedParts = slots.map(part => part || unplaced[unplacedIndex++])
+    for (let index = 0; index < slots.length && unplacedIndex < unplaced.length; index += 1) {
+      if (!slots[index]) slots[index] = unplaced[unplacedIndex++]
+    }
+    positionedParts = slots
+      .map((part, slotIndex) => part ? { part, slotIndex } : null)
+      .filter(Boolean)
   }
 
-  const items = orderedParts.map((part, index) => {
+  const items = positionedParts.map(({ part, slotIndex }) => {
     if (Number(part.span) > blockThickness) {
       throw new Error(`${part.name}: довжина секції ${Number(part.span).toFixed(1)} мм `
         + `більша за товщину блока ${blockThickness.toFixed(1)} мм`)
@@ -68,15 +74,15 @@ export const createFuselageBatchLayout = (parts, settings = {}) => {
       throw new Error(`${part.name}: потрібно ${width.toFixed(1)}×${height.toFixed(1)} мм, `
         + `доступно ${availableWidth.toFixed(1)}×${availableHeight.toFixed(1)} мм`)
     }
-    const column = index % columns
-    const row = Math.floor(index / columns)
+    const column = slotIndex % columns
+    const row = Math.floor(slotIndex / columns)
     const centerX = column * cellWidth + cellWidth / 2
     const centerY = blockHeight - (row * cellHeight + cellHeight / 2)
     const dx = centerX - (sourceBounds.minX + sourceBounds.maxX) / 2
     const dy = centerY - (sourceBounds.minY + sourceBounds.maxY) / 2
     return {
       part,
-      index,
+      index: slotIndex,
       row,
       column,
       dx,
@@ -197,22 +203,34 @@ export const renderBatchLayoutPreview = (svg, layout, side) => {
 
   const stroke = side === 'left' ? '#2563eb' : '#dc2626'
   for (const item of layout.items) {
+    const group = addSvg(svg, 'g', {
+      'data-batch-part-id': item.part.id,
+      'data-batch-slot': item.index,
+      class: 'batch-layout-item'
+    })
+    addSvg(group, 'rect', {
+      x: item.bounds.minX,
+      y: layout.blockHeight - item.bounds.maxY,
+      width: Math.max(1, item.bounds.maxX - item.bounds.minX),
+      height: Math.max(1, item.bounds.maxY - item.bounds.minY),
+      fill: 'transparent', stroke: 'none'
+    })
     const points = side === 'left' ? item.outerLeft : item.outerRight
     const screenPoints = [...points, points[0]].map(point => `${point.x},${layout.blockHeight - point.y}`).join(' ')
-    addSvg(svg, 'polyline', {
+    addSvg(group, 'polyline', {
       points: screenPoints, fill: 'none', stroke, 'stroke-width': 2,
       'vector-effect': 'non-scaling-stroke'
     })
     const innerPoints = side === 'left' ? item.innerLeft : item.innerRight
     if (innerPoints?.length) {
-      addSvg(svg, 'polyline', {
+      addSvg(group, 'polyline', {
         points: [...innerPoints, innerPoints[0]]
           .map(point => `${point.x},${layout.blockHeight - point.y}`).join(' '),
         fill: 'none', stroke: '#7c3aed', 'stroke-width': 1.6, 'stroke-dasharray': '5 3',
         'vector-effect': 'non-scaling-stroke'
       })
     }
-    addSvg(svg, 'text', {
+    addSvg(group, 'text', {
       x: item.bounds.minX + 4,
       y: layout.blockHeight - item.bounds.maxY + 15,
       fill: '#111827', 'font-size': 12, 'font-weight': 700

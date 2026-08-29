@@ -402,6 +402,7 @@ view3d.innerHTML = `
       <button id="expandBatchView" type="button">На весь екран</button>
     </div>
     <p id="batchLayoutStatus">Додайте секції до збірки та натисніть «Розкласти секції»</p>
+    <p class="batch-drag-help">Перетягніть секцію мишкою у потрібну комірку. Зайняті секції автоматично поміняються місцями.</p>
     <div class="batch-layout-previews">
       <div><h3>Ліва сторона X/Y</h3><svg id="batchLeftSvg"></svg></div>
       <div><h3>Права сторона A/Z</h3><svg id="batchRightSvg"></svg></div>
@@ -2131,6 +2132,92 @@ const showSelectedBatchPackage = () => {
   downloadBatchMapButton.disabled = false
   downloadBatchNcButton.disabled = !validation.valid
 }
+
+let batchLayoutDrag = null
+
+const batchPointerPosition = (svg, event, layout) => {
+  const rectangle = svg.getBoundingClientRect()
+  return {
+    x: (event.clientX - rectangle.left) * layout.blockWidth / rectangle.width,
+    screenY: (event.clientY - rectangle.top) * layout.blockHeight / rectangle.height
+  }
+}
+
+const clearBatchDropHighlight = () => {
+  document.querySelectorAll('.batch-drop-target').forEach(element => element.remove())
+}
+
+const showBatchDropHighlight = (layout, slot) => {
+  clearBatchDropHighlight()
+  const row = Math.floor(slot / layout.columns)
+  const column = slot % layout.columns
+  ;[batchLeftSvg, batchRightSvg].forEach(svg => {
+    const rectangle = document.createElementNS('http://www.w3.org/2000/svg', 'rect')
+    rectangle.classList.add('batch-drop-target')
+    rectangle.setAttribute('x', column * layout.cellWidth + 2)
+    rectangle.setAttribute('y', row * layout.cellHeight + 2)
+    rectangle.setAttribute('width', Math.max(0, layout.cellWidth - 4))
+    rectangle.setAttribute('height', Math.max(0, layout.cellHeight - 4))
+    rectangle.setAttribute('pointer-events', 'none')
+    svg.appendChild(rectangle)
+  })
+}
+
+const batchSlotAtPointer = (svg, event, layout) => {
+  const point = batchPointerPosition(svg, event, layout)
+  const column = Math.max(0, Math.min(layout.columns - 1, Math.floor(point.x / layout.cellWidth)))
+  const row = Math.max(0, Math.min(layout.rows - 1, Math.floor(point.screenY / layout.cellHeight)))
+  return row * layout.columns + column
+}
+
+const attachBatchLayoutDragging = svg => {
+  svg.addEventListener('pointerdown', event => {
+    const packageData = currentBatchPackages.find(item => item.layout.block.id === selectedBatchBlock().id)
+    const itemElement = event.target.closest?.('[data-batch-part-id]')
+    if (!packageData || !itemElement) return
+    const item = packageData.layout.items.find(candidate => String(candidate.part.id) === itemElement.dataset.batchPartId)
+    if (!item) return
+    batchLayoutDrag = { svg, packageData, item, targetSlot: item.index }
+    svg.classList.add('batch-layout-dragging')
+    svg.setPointerCapture(event.pointerId)
+    showBatchDropHighlight(packageData.layout, item.index)
+    event.preventDefault()
+  })
+  svg.addEventListener('pointermove', event => {
+    if (!batchLayoutDrag || batchLayoutDrag.svg !== svg) return
+    batchLayoutDrag.targetSlot = batchSlotAtPointer(svg, event, batchLayoutDrag.packageData.layout)
+    showBatchDropHighlight(batchLayoutDrag.packageData.layout, batchLayoutDrag.targetSlot)
+  })
+  const finishDrag = event => {
+    if (!batchLayoutDrag || batchLayoutDrag.svg !== svg) return
+    const { packageData, item, targetSlot } = batchLayoutDrag
+    const occupant = packageData.layout.items.find(candidate => candidate.index === targetSlot && candidate.part.id !== item.part.id)
+    batchAssignments.set(item.part.id, packageData.layout.block.id)
+    batchSlotAssignments.set(item.part.id, targetSlot)
+    if (occupant) {
+      batchAssignments.set(occupant.part.id, packageData.layout.block.id)
+      batchSlotAssignments.set(occupant.part.id, item.index)
+    }
+    batchPlanFileStatus.textContent = occupant
+      ? `${item.part.name} і ${occupant.part.name}: місцями ${item.index + 1} та ${targetSlot + 1} поміняно`
+      : `${item.part.name}: закріплено у місці ${targetSlot + 1}`
+    batchLayoutDrag = null
+    svg.classList.remove('batch-layout-dragging')
+    clearBatchDropHighlight()
+    if (svg.hasPointerCapture(event.pointerId)) svg.releasePointerCapture(event.pointerId)
+    buildBatchLayoutPreview()
+  }
+  svg.addEventListener('pointerup', finishDrag)
+  svg.addEventListener('pointercancel', event => {
+    batchLayoutDrag = null
+    svg.classList.remove('batch-layout-dragging')
+    clearBatchDropHighlight()
+    if (svg.hasPointerCapture(event.pointerId)) svg.releasePointerCapture(event.pointerId)
+  })
+}
+
+attachBatchLayoutDragging(batchLeftSvg)
+attachBatchLayoutDragging(batchRightSvg)
 
 const buildBatchLayoutPreview = () => {
   try {
