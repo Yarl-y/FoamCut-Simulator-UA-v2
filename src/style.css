@@ -948,3 +948,63 @@ code {
 #assemblySvg:active {
   cursor: grabbing;
 }
+
+.batch-layout-workspace {
+  margin-top: 24px;
+  padding-top: 18px;
+  border-top: 2px solid var(--border);
+}
+
+.batch-layout-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: end;
+  justify-content: center;
+  gap: 8px 12px;
+  margin: 12px 0;
+}
+
+.batch-layout-controls label {
+  display: inline-flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 13px;
+}
+
+.batch-layout-controls input {
+  width: 92px;
+}
+
+.batch-layout-previews {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.batch-layout-previews h3 {
+  margin: 8px 0;
+}
+
+.batch-layout-previews svg {
+  display: block;
+  width: 100%;
+  aspect-ratio: 1;
+  border: 1px solid #999;
+  background: #fff;
+}
+
+.batch-layout-valid {
+  color: #15803d;
+  font-weight: 600;
+}
+
+.batch-layout-error {
+  color: #dc2626;
+  font-weight: 700;
+}
+
+@media (max-width: 800px) {
+  .batch-layout-previews {
+    grid-template-columns: 1fr;
+  }
+}

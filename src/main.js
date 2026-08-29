@@ -1,6 +1,7 @@
 import './style.css'
 import { createAssemblyFile, parseAssemblyFile } from './assembly-file.js'
 import { renderAssemblyView } from './assembly-view.js'
+import { createFuselageBatchLayout, renderBatchLayoutPreview } from './batch-layout.js'
 import { parseDxf, renderDxfPreview, resampleDxfContour } from './dxf.js'
 import { createDxfPolyline, createPreviewModel, recoverNcProfiles } from './nc-dxf.js'
 import { createFoamCutProject, parseFoamCutProject } from './project-file.js'
@@ -360,6 +361,23 @@ view3d.innerHTML = `
     <svg id="assemblySvg" viewBox="0 0 800 500" width="800" height="500"></svg>
     <p id="assemblyStatus">Збірка поки порожня</p>
   </section>
+  <section class="batch-layout-workspace">
+    <h2>Пакетне розміщення секцій фюзеляжу</h2>
+    <p>Розкладка видимих секцій у фізичних міліметрах перед створенням спільного NC.</p>
+    <div class="batch-layout-controls">
+      <label>Ширина блока, мм <input id="batchBlockWidth" type="number" min="1" step="1" value="600"></label>
+      <label>Висота блока, мм <input id="batchBlockHeight" type="number" min="1" step="1" value="600"></label>
+      <label>Товщина вздовж струни, мм <input id="batchBlockThickness" type="number" min="1" step="1" value="100"></label>
+      <label>Стовпців <input id="batchColumns" type="number" min="1" max="9" step="1" value="3"></label>
+      <label>Безпечний коридор, мм <input id="batchCorridor" type="number" min="0" step="1" value="20"></label>
+      <button id="buildBatchLayout" type="button">Розкласти секції</button>
+    </div>
+    <p id="batchLayoutStatus">Додайте секції до збірки та натисніть «Розкласти секції»</p>
+    <div class="batch-layout-previews">
+      <div><h3>Ліва сторона X/Y</h3><svg id="batchLeftSvg"></svg></div>
+      <div><h3>Права сторона A/Z</h3><svg id="batchRightSvg"></svg></div>
+    </div>
+  </section>
 `
 
 const fileInput = document.querySelector('#ncFile')
@@ -480,6 +498,15 @@ const assemblyFileInput = document.getElementById('assemblyFile')
 const loadAssemblyButton = document.getElementById('loadAssembly')
 const saveAssemblyButton = document.getElementById('saveAssembly')
 const assemblyFileStatus = document.getElementById('assemblyFileStatus')
+const batchBlockWidthInput = document.getElementById('batchBlockWidth')
+const batchBlockHeightInput = document.getElementById('batchBlockHeight')
+const batchBlockThicknessInput = document.getElementById('batchBlockThickness')
+const batchColumnsInput = document.getElementById('batchColumns')
+const batchCorridorInput = document.getElementById('batchCorridor')
+const buildBatchLayoutButton = document.getElementById('buildBatchLayout')
+const batchLayoutStatus = document.getElementById('batchLayoutStatus')
+const batchLeftSvg = document.getElementById('batchLeftSvg')
+const batchRightSvg = document.getElementById('batchRightSvg')
 let renderActiveFoamBlock = null
 const preparedDxfProfiles = { left: null, right: null }
 const cuttingSettings = { feedRate: 300 }
@@ -1754,6 +1781,30 @@ const updateAssemblySvg = () => {
     : `У збірці ${assemblyParts.length} деталей; усі деталі приховані`
 }
 
+const buildBatchLayoutPreview = () => {
+  try {
+    const fuselageParts = assemblyParts.filter(part => part.visible && part.kind === 'fuselage')
+    const layout = createFuselageBatchLayout(fuselageParts, {
+      blockWidth: batchBlockWidthInput.value,
+      blockHeight: batchBlockHeightInput.value,
+      blockThickness: batchBlockThicknessInput.value,
+      columns: batchColumnsInput.value,
+      corridor: batchCorridorInput.value
+    })
+    renderBatchLayoutPreview(batchLeftSvg, layout, 'left')
+    renderBatchLayoutPreview(batchRightSvg, layout, 'right')
+    batchLayoutStatus.className = 'batch-layout-valid'
+    batchLayoutStatus.textContent = `${layout.items.length} секцій розміщено у сітці ${layout.columns}×${layout.rows}; `
+      + `блок ${layout.blockWidth}×${layout.blockHeight}×${layout.blockThickness} мм; `
+      + `коридор ${layout.corridor} мм. Масштаб 1:1 у міліметрах.`
+  } catch (error) {
+    batchLeftSvg.replaceChildren()
+    batchRightSvg.replaceChildren()
+    batchLayoutStatus.className = 'batch-layout-error'
+    batchLayoutStatus.textContent = `Розкладку не побудовано: ${error.message}`
+  }
+}
+
 const selectAssemblyPartForCutting = part => {
   activeStraightSparRods = part.straightSparRods.map(rod => ({ ...rod }))
   activeServoChannels = part.servoChannels.map(channel => ({ ...channel }))
@@ -1851,6 +1902,7 @@ const addCurrentCandidateToAssembly = side => {
 addLeftWingButton.addEventListener('click', () => addCurrentCandidateToAssembly('left'))
 addRightWingButton.addEventListener('click', () => addCurrentCandidateToAssembly('right'))
 addFuselagePartButton.addEventListener('click', () => addCurrentCandidateToAssembly('fuselage'))
+buildBatchLayoutButton.addEventListener('click', buildBatchLayoutPreview)
 
 saveAssemblyButton.addEventListener('click', () => {
   if (!assemblyParts.length) return
