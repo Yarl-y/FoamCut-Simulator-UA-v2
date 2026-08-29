@@ -31,14 +31,14 @@ document.querySelector('#app').innerHTML = `
     <h1>FoamCut Simulator</h1>
     <p>Симулятор піноріза — 4 осі</p>
 
-    <div class="project-controls">
+    <div class="project-controls" data-workspace="files">
       <input type="file" id="projectFile" accept=".json,.foamcut">
       <button id="loadProject">Відкрити проєкт</button>
       <button id="saveProject" disabled>Зберегти проєкт</button>
       <span id="projectStatus">Проєкт ще не збережено</span>
     </div>
 
-    <section class="profile-library">
+    <section class="profile-library" data-workspace="library">
       <button id="toggleProfileLibrary" type="button" aria-expanded="false">Бібліотека профілів</button>
       <div id="profileLibraryPanel" class="profile-library-panel" hidden>
         <div class="profile-library-workspace">
@@ -190,23 +190,23 @@ document.querySelector('#app').innerHTML = `
           </div>
           <svg id="libraryPreviewSvg" viewBox="0 0 800 500" aria-label="Попередній 3D-перегляд деталі"></svg>
           <p id="libraryPreviewStatus">Змінюйте параметри — модель оновлюється автоматично</p>
-          <small>Миша: обертання · колесо: масштаб</small>
+          <small>Миша: ліва — орбіта · Shift + ліва або права — переміщення · колесо — масштаб</small>
         </aside>
         </div>
       </div>
     </section>
 
-    <div>
+    <div class="nc-file-controls" data-workspace="files">
       <input type="file" id="ncFile" accept=".nc,.tap,.gcode,.txt">
       <button id="load">Завантажити NC</button>
     </div>
-    <div class="nc-to-dxf-controls">
+    <div class="nc-to-dxf-controls" data-workspace="files">
       <button id="downloadNcDxfLeft" disabled>Завантажити DXF X/Y</button>
       <button id="downloadNcDxfRight" disabled>Завантажити DXF A/Z</button>
       <span id="ncToDxfStatus">Відкрийте NC для відновлення профілів</span>
     </div>
 
-    <section id="dxfProfiles" class="dxf-profiles">
+    <section id="dxfProfiles" class="dxf-profiles" data-workspace="files">
       <h2>Профілі DXF</h2>
       <label class="dxf-point-count">Синхронізованих точок траєкторії
         <input id="dxfPointCount" type="number" min="2" step="1" value="200">
@@ -296,24 +296,24 @@ document.querySelector('#app').innerHTML = `
       </section>
     </section>
 
-    <h2>Траєкторія різання</h2>
-
-    <svg id="trajectory"
+    <section class="trajectory-workspace" data-workspace="simulation">
+      <h2>Траєкторія різання</h2>
+      <svg id="trajectory"
          viewBox="0 0 800 500"
          width="800"
          height="500"
          style="border:1px solid #888">
-    </svg>
-
-    <p id="status">Виберіть NC-файл</p>
+      </svg>
+      <p id="status">Виберіть NC-файл</p>
+    </section>
   </div>
 `
 
 const view3d = document.getElementById('view3d')
 
 view3d.innerHTML = `
-  <h2>Просторовий вигляд струни</h2>
-  <div class="three-d-controls">
+  <h2 data-workspace="simulation">Просторовий вигляд струни</h2>
+  <div class="three-d-controls" data-workspace="simulation">
     <div class="dimension-controls">
       <label>Довжина піноблока, мм <input id="foamLength" type="number" min="1" step="1" value="500"></label>
       <label>Ширина піноблока, мм <input id="foamWidth" type="number" min="1" step="1" value="200"></label>
@@ -337,8 +337,8 @@ view3d.innerHTML = `
     </div>
     <p class="orbit-help">Миша: ліва — орбіта; Shift + ліва або права — переміщення; коліщатко — масштаб</p>
   </div>
-  <svg id="svg3d" width="800" height="500" style="border:1px solid #999"></svg>
-  <section class="assembly-workspace">
+  <svg id="svg3d" data-workspace="simulation" width="800" height="500" style="border:1px solid #999"></svg>
+  <section class="assembly-workspace" data-workspace="assembly">
     <h2>Збірка моделі</h2>
     <div class="assembly-actions">
       <button id="addLeftWing" disabled>Додати ліве півкрило</button>
@@ -367,7 +367,7 @@ view3d.innerHTML = `
     <svg id="assemblySvg" viewBox="0 0 800 500" width="800" height="500"></svg>
     <p id="assemblyStatus">Збірка поки порожня</p>
   </section>
-  <section class="batch-layout-workspace">
+  <section class="batch-layout-workspace" data-workspace="blocks">
     <h2>Пакетне розміщення секцій фюзеляжу</h2>
     <p>Розкладка видимих секцій у фізичних міліметрах перед створенням спільного NC.</p>
     <div class="batch-layout-controls">
@@ -392,6 +392,72 @@ view3d.innerHTML = `
       placeholder="Після безпечної розкладки тут з’явиться спільний NC/G-code"></textarea>
   </section>
 `
+
+const initializeWorkspaceTabs = () => {
+  const container = document.querySelector('.container')
+  const tabs = [
+    { id: 'library', label: 'Бібліотека деталей' },
+    { id: 'files', label: 'Файли та NC' },
+    { id: 'simulation', label: 'Симуляція 2D/3D' },
+    { id: 'assembly', label: 'Збірка' },
+    { id: 'blocks', label: 'Блоки й розкладка' }
+  ]
+  const navigation = document.createElement('nav')
+  navigation.className = 'workspace-tabs'
+  navigation.setAttribute('role', 'tablist')
+  navigation.setAttribute('aria-label', 'Робочі області FoamCut Simulator')
+  const panels = document.createElement('div')
+  panels.className = 'workspace-panels'
+  const panelById = new Map()
+
+  tabs.forEach(tab => {
+    const button = document.createElement('button')
+    button.type = 'button'
+    button.className = 'workspace-tab'
+    button.dataset.workspaceTab = tab.id
+    button.setAttribute('role', 'tab')
+    button.textContent = tab.label
+    navigation.appendChild(button)
+    const panel = document.createElement('section')
+    panel.className = 'workspace-panel'
+    panel.dataset.workspacePanel = tab.id
+    panel.setAttribute('role', 'tabpanel')
+    panel.hidden = true
+    panelById.set(tab.id, panel)
+    panels.appendChild(panel)
+  })
+
+  document.querySelectorAll('[data-workspace]').forEach(element => {
+    panelById.get(element.dataset.workspace)?.appendChild(element)
+  })
+  container.append(navigation, panels)
+  const libraryPanel = document.getElementById('profileLibraryPanel')
+  const libraryToggle = document.getElementById('toggleProfileLibrary')
+  libraryPanel.hidden = false
+  libraryToggle.setAttribute('aria-expanded', 'true')
+  document.getElementById('view3d').remove()
+
+  const activate = id => {
+    const selectedId = panelById.has(id) ? id : 'library'
+    navigation.querySelectorAll('[data-workspace-tab]').forEach(button => {
+      const selected = button.dataset.workspaceTab === selectedId
+      button.classList.toggle('active', selected)
+      button.setAttribute('aria-selected', String(selected))
+    })
+    panelById.forEach((panel, panelId) => { panel.hidden = panelId !== selectedId })
+    try { localStorage.setItem('foamcut-workspace-tab', selectedId) } catch {}
+    window.dispatchEvent(new Event('resize'))
+  }
+  navigation.addEventListener('click', event => {
+    const button = event.target.closest('[data-workspace-tab]')
+    if (button) activate(button.dataset.workspaceTab)
+  })
+  let initialTab = 'library'
+  try { initialTab = localStorage.getItem('foamcut-workspace-tab') || initialTab } catch {}
+  activate(initialTab)
+}
+
+initializeWorkspaceTabs()
 
 const fileInput = document.querySelector('#ncFile')
 const loadButton = document.querySelector('#load')
@@ -891,13 +957,28 @@ syncFuselageTubeControls()
 let libraryPreviewDrag = null
 libraryPreviewSvg.addEventListener('pointerdown', event => {
   if (libraryMeasurement.active) return
-  libraryPreviewDrag = { x: event.clientX, y: event.clientY, yaw: libraryPreviewCamera.yaw, pitch: libraryPreviewCamera.pitch }
+  if (event.button !== 0 && event.button !== 2) return
+  libraryPreviewDrag = {
+    x: event.clientX,
+    y: event.clientY,
+    yaw: libraryPreviewCamera.yaw,
+    pitch: libraryPreviewCamera.pitch,
+    panX: libraryPreviewCamera.panX,
+    panY: libraryPreviewCamera.panY,
+    pan: event.button === 2 || (event.button === 0 && event.shiftKey)
+  }
   libraryPreviewSvg.setPointerCapture(event.pointerId)
+  event.preventDefault()
 })
 libraryPreviewSvg.addEventListener('pointermove', event => {
   if (!libraryPreviewDrag) return
-  libraryPreviewCamera.yaw = libraryPreviewDrag.yaw + (event.clientX - libraryPreviewDrag.x) * 0.45
-  libraryPreviewCamera.pitch = Math.max(-89, Math.min(89, libraryPreviewDrag.pitch - (event.clientY - libraryPreviewDrag.y) * 0.45))
+  if (libraryPreviewDrag.pan) {
+    libraryPreviewCamera.panX = libraryPreviewDrag.panX + event.clientX - libraryPreviewDrag.x
+    libraryPreviewCamera.panY = libraryPreviewDrag.panY + event.clientY - libraryPreviewDrag.y
+  } else {
+    libraryPreviewCamera.yaw = libraryPreviewDrag.yaw + (event.clientX - libraryPreviewDrag.x) * 0.45
+    libraryPreviewCamera.pitch = Math.max(-89, Math.min(89, libraryPreviewDrag.pitch - (event.clientY - libraryPreviewDrag.y) * 0.45))
+  }
   scheduleLibraryPreview()
 })
 libraryPreviewSvg.addEventListener('pointerup', () => { libraryPreviewDrag = null })
@@ -907,6 +988,7 @@ libraryPreviewSvg.addEventListener('wheel', event => {
   libraryPreviewCamera.zoom = Math.max(0.3, Math.min(4, libraryPreviewCamera.zoom * Math.exp(-event.deltaY * 0.001)))
   scheduleLibraryPreview()
 }, { passive: false })
+libraryPreviewSvg.addEventListener('contextmenu', event => event.preventDefault())
 
 const selectMeasurementPoint = (svgElement, measurement, event, rerender) => {
   const rectangle = svgElement.getBoundingClientRect()

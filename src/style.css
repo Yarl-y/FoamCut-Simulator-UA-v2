@@ -157,7 +157,7 @@ code {
 }
 
 #app {
-  width: 1126px;
+  width: 1500px;
   max-width: 100%;
   margin: 0 auto;
   text-align: center;
@@ -302,6 +302,47 @@ code {
   text-align: center;
 }
 
+.workspace-tabs {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  display: flex;
+  gap: 6px;
+  padding: 10px 12px;
+  overflow-x: auto;
+  border-block: 1px solid var(--border);
+  background: color-mix(in srgb, var(--bg) 94%, transparent);
+  backdrop-filter: blur(8px);
+}
+
+.workspace-tab {
+  flex: 1 0 auto;
+  min-width: 150px;
+  border: 1px solid var(--border);
+}
+
+.workspace-tab.active {
+  color: white;
+  background: #2563eb;
+  border-color: #1d4ed8;
+}
+
+.workspace-panels {
+  padding: 18px clamp(10px, 2vw, 28px) 32px;
+}
+
+.workspace-panel[hidden] {
+  display: none;
+}
+
+.workspace-panel {
+  min-width: 0;
+}
+
+.trajectory-workspace {
+  margin-bottom: 24px;
+}
+
 .project-controls {
   display: flex;
   flex-wrap: wrap;
@@ -337,7 +378,7 @@ code {
 
 .profile-library-workspace {
   display: grid;
-  grid-template-columns: minmax(0, 1.25fr) minmax(360px, 0.75fr);
+  grid-template-columns: minmax(480px, 0.9fr) minmax(560px, 1.1fr);
   gap: 18px;
   align-items: start;
 }
