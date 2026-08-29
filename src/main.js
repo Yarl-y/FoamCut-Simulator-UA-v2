@@ -1,6 +1,7 @@
 import './style.css'
 import { createAssemblyFile, parseAssemblyFile } from './assembly-file.js'
 import { renderAssemblyView } from './assembly-view.js'
+import { createBlockPlanFile, parseBlockPlanFile } from './block-plan.js'
 import {
   createBatchCutRoute,
   createBatchMach3Nc,
@@ -375,6 +376,12 @@ view3d.innerHTML = `
       <button id="addBatchBlock" type="button">+ Додати блок</button>
       <button id="removeBatchBlock" type="button">Видалити блок</button>
     </div>
+    <div class="batch-plan-file-controls">
+      <input id="batchPlanFile" type="file" accept=".json,.foamcut-blocks">
+      <button id="loadBatchPlan" type="button">Відкрити план блоків</button>
+      <button id="saveBatchPlan" type="button">Зберегти план блоків</button>
+      <span id="batchPlanFileStatus">План блоків ще не збережено</span>
+    </div>
     <div class="batch-layout-controls">
       <label>Ширина блока, мм <input id="batchBlockWidth" type="number" min="1" step="1" value="600"></label>
       <label>Висота блока, мм <input id="batchBlockHeight" type="number" min="1" step="1" value="600"></label>
@@ -391,6 +398,7 @@ view3d.innerHTML = `
     <div class="batch-nc-actions">
       <button id="simulateBatch" type="button" disabled>Перевірити весь прохід у 2D/3D</button>
       <button id="downloadBatchNc" type="button" disabled>Завантажити NC поточного блока</button>
+      <button id="downloadAllBatchNc" type="button" disabled>Завантажити всі NC</button>
       <span>Швидкість береться з поля «Швидкість різання» біля профілів DXF.</span>
     </div>
     <textarea id="batchNcPreview" rows="10" readonly
@@ -590,12 +598,17 @@ const batchCorridorInput = document.getElementById('batchCorridor')
 const batchBlockSelect = document.getElementById('batchBlockSelect')
 const addBatchBlockButton = document.getElementById('addBatchBlock')
 const removeBatchBlockButton = document.getElementById('removeBatchBlock')
+const batchPlanFileInput = document.getElementById('batchPlanFile')
+const loadBatchPlanButton = document.getElementById('loadBatchPlan')
+const saveBatchPlanButton = document.getElementById('saveBatchPlan')
+const batchPlanFileStatus = document.getElementById('batchPlanFileStatus')
 const buildBatchLayoutButton = document.getElementById('buildBatchLayout')
 const batchLayoutStatus = document.getElementById('batchLayoutStatus')
 const batchLeftSvg = document.getElementById('batchLeftSvg')
 const batchRightSvg = document.getElementById('batchRightSvg')
 const simulateBatchButton = document.getElementById('simulateBatch')
 const downloadBatchNcButton = document.getElementById('downloadBatchNc')
+const downloadAllBatchNcButton = document.getElementById('downloadAllBatchNc')
 const batchNcPreview = document.getElementById('batchNcPreview')
 let renderActiveFoamBlock = null
 const preparedDxfProfiles = { left: null, right: null }
@@ -1927,6 +1940,7 @@ const clearBatchResult = (message = 'Параметри блоків зміне�
   batchNcPreview.value = ''
   simulateBatchButton.disabled = true
   downloadBatchNcButton.disabled = true
+  downloadAllBatchNcButton.disabled = true
   batchLayoutStatus.className = ''
   batchLayoutStatus.textContent = message
   renderBatchBlockSelect()
@@ -1996,6 +2010,7 @@ const buildBatchLayoutPreview = () => {
     renderBatchBlockSelect()
     showSelectedBatchPackage()
     const invalid = currentBatchPackages.filter(item => !item.validation.valid)
+    downloadAllBatchNcButton.disabled = currentBatchPackages.length === 0 || invalid.length > 0
     batchLayoutStatus.className = invalid.length ? 'batch-layout-error' : 'batch-layout-valid'
     batchLayoutStatus.textContent = `${fuselageParts.length} секцій розподілено між ${currentBatchPackages.length} із ${batchBlocks.length} блоків: `
       + currentBatchPackages.map(item => `${item.layout.block.name} — ${item.layout.items.length}`).join('; ')
@@ -2118,10 +2133,14 @@ batchBlockSelect.addEventListener('change', () => {
   input.addEventListener('change', () => {
     const value = Math.max(1, Number(input.value) || 1)
     selectedBatchBlock()[field] = field === 'columns' ? Math.floor(value) : value
+    batchPlanFileStatus.textContent = 'План блоків змінено — збережіть його'
     clearBatchResult()
   })
 })
-batchCorridorInput.addEventListener('change', () => clearBatchResult())
+batchCorridorInput.addEventListener('change', () => {
+  batchPlanFileStatus.textContent = 'План блоків змінено — збережіть його'
+  clearBatchResult()
+})
 addBatchBlockButton.addEventListener('click', () => {
   const source = selectedBatchBlock()
   const blockId = nextBatchBlockId++
@@ -2134,6 +2153,7 @@ addBatchBlockButton.addEventListener('click', () => {
     columns: source.columns
   }
   batchBlocks.push(block)
+  batchPlanFileStatus.textContent = 'План блоків змінено — збережіть його'
   batchBlockSelect.value = String(block.id)
   renderBatchBlockSelect()
   batchBlockSelect.value = String(block.id)
@@ -2146,7 +2166,38 @@ removeBatchBlockButton.addEventListener('click', () => {
   if (batchBlocks.length === 1) return
   const block = selectedBatchBlock()
   batchBlocks.splice(batchBlocks.indexOf(block), 1)
+  batchPlanFileStatus.textContent = 'План блоків змінено — збережіть його'
   clearBatchResult(`${block.name} видалено — виконайте автоматичний розподіл`)
+})
+saveBatchPlanButton.addEventListener('click', () => {
+  try {
+    const plan = createBlockPlanFile(batchBlocks, batchCorridorInput.value)
+    const date = new Date().toISOString().slice(0, 10)
+    downloadTextFile(`${JSON.stringify(plan, null, 2)}\n`, `foamcut-block-plan-${date}.foamcut-blocks.json`, 'application/json')
+    batchPlanFileStatus.textContent = `План збережено: ${plan.blocks.length} блоків`
+  } catch (error) {
+    batchPlanFileStatus.textContent = `Не вдалося зберегти план: ${error.message}`
+  }
+})
+loadBatchPlanButton.addEventListener('click', async () => {
+  const file = batchPlanFileInput.files[0]
+  if (!file) {
+    batchPlanFileStatus.textContent = 'Спочатку виберіть файл плану блоків'
+    return
+  }
+  try {
+    const plan = parseBlockPlanFile(await file.text())
+    batchBlocks.splice(0, batchBlocks.length, ...plan.blocks.map(block => ({
+      ...block, id: nextBatchBlockId++
+    })))
+    batchCorridorInput.value = plan.corridor
+    renderBatchBlockSelect()
+    clearBatchResult(`План ${file.name} відкрито — виконується розподіл`)
+    batchPlanFileStatus.textContent = `Відкрито ${file.name}: ${batchBlocks.length} блоків`
+    if (assemblyParts.some(part => part.visible && part.kind === 'fuselage')) buildBatchLayoutPreview()
+  } catch (error) {
+    batchPlanFileStatus.textContent = `Не вдалося відкрити план: ${error.message}`
+  }
 })
 buildBatchLayoutButton.addEventListener('click', buildBatchLayoutPreview)
 simulateBatchButton.addEventListener('click', () => {
@@ -2173,6 +2224,19 @@ downloadBatchNcButton.addEventListener('click', () => {
   if (!generatedBatchNcText) return
   const blockNumber = String(batchBlocks.indexOf(selectedBatchBlock()) + 1).padStart(2, '0')
   downloadTextFile(generatedBatchNcText, `foamcut-fuselage-block-${blockNumber}.nc`, 'text/plain')
+})
+downloadAllBatchNcButton.addEventListener('click', () => {
+  if (!currentBatchPackages.length || currentBatchPackages.some(item => !item.validation.valid)) return
+  currentBatchPackages.forEach((packageData, index) => {
+    const blockNumber = String(batchBlocks.indexOf(packageData.layout.block) + 1).padStart(2, '0')
+    setTimeout(() => downloadTextFile(
+      packageData.nc,
+      `foamcut-fuselage-block-${blockNumber}.nc`,
+      'text/plain'
+    ), index * 120)
+  })
+  batchLayoutStatus.className = 'batch-layout-valid'
+  batchLayoutStatus.textContent = `Завантаження ${currentBatchPackages.length} перевірених NC-файлів розпочато`
 })
 
 saveAssemblyButton.addEventListener('click', () => {

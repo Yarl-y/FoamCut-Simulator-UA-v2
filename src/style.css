@@ -1014,6 +1014,20 @@ code {
   margin: 12px 0 4px;
 }
 
+.batch-plan-file-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  margin: 8px 0 12px;
+}
+
+#batchPlanFileStatus {
+  flex-basis: 100%;
+  font-size: 13px;
+}
+
 .batch-block-toolbar label {
   display: inline-flex;
   align-items: center;
