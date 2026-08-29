@@ -1,7 +1,13 @@
 import './style.css'
 import { createAssemblyFile, parseAssemblyFile } from './assembly-file.js'
 import { renderAssemblyView } from './assembly-view.js'
-import { createFuselageBatchLayout, renderBatchLayoutPreview } from './batch-layout.js'
+import {
+  createBatchCutRoute,
+  createBatchMach3Nc,
+  createFuselageBatchLayout,
+  renderBatchLayoutPreview,
+  renderBatchRouteOverlay
+} from './batch-layout.js'
 import { parseDxf, renderDxfPreview, resampleDxfContour } from './dxf.js'
 import { createDxfPolyline, createPreviewModel, recoverNcProfiles } from './nc-dxf.js'
 import { createFoamCutProject, parseFoamCutProject } from './project-file.js'
@@ -377,6 +383,12 @@ view3d.innerHTML = `
       <div><h3>Ліва сторона X/Y</h3><svg id="batchLeftSvg"></svg></div>
       <div><h3>Права сторона A/Z</h3><svg id="batchRightSvg"></svg></div>
     </div>
+    <div class="batch-nc-actions">
+      <button id="downloadBatchNc" type="button" disabled>Завантажити спільний NC</button>
+      <span>Швидкість береться з поля «Швидкість різання» біля профілів DXF.</span>
+    </div>
+    <textarea id="batchNcPreview" rows="10" readonly
+      placeholder="Після безпечної розкладки тут з’явиться спільний NC/G-code"></textarea>
   </section>
 `
 
@@ -507,11 +519,14 @@ const buildBatchLayoutButton = document.getElementById('buildBatchLayout')
 const batchLayoutStatus = document.getElementById('batchLayoutStatus')
 const batchLeftSvg = document.getElementById('batchLeftSvg')
 const batchRightSvg = document.getElementById('batchRightSvg')
+const downloadBatchNcButton = document.getElementById('downloadBatchNc')
+const batchNcPreview = document.getElementById('batchNcPreview')
 let renderActiveFoamBlock = null
 const preparedDxfProfiles = { left: null, right: null }
 const cuttingSettings = { feedRate: 300 }
 let preparedCuttingTrajectory = null
 let generatedNcText = ''
+let generatedBatchNcText = ''
 let recoveredNcProfiles = null
 let activeStraightSparRods = []
 let activeServoChannels = []
@@ -1222,8 +1237,8 @@ const buildCuttingPath = (points, passMode = cutPassModeInput.value) => {
   ]
 }
 
-const calculateBlockSetup = () => {
-  const blockWidth = Number(foamWidthInput.value)
+const calculateBlockSetup = (blockWidthOverride = Number(foamWidthInput.value)) => {
+  const blockWidth = Number(blockWidthOverride)
   if (!Number.isFinite(blockWidth) || blockWidth <= 0) throw new Error('Довжина блока має бути більшою за нуль')
   const configuredSpan = Number(wireSpanInput.value)
   const safeGap = Math.max(0, Number(blockSafeGapInput.value) || 0)
@@ -1325,8 +1340,9 @@ const createMach3Nc = trajectory => {
 }
 
 const validateMachineEnvelope = trajectory => {
-  const offsetX = Math.max(0, Number(profileLengthOffsetInput.value) || 0)
-  const offsetY = Math.max(0, Number(profileHeightOffsetInput.value) || 0)
+  const useProfileOffsets = trajectory.applyProfileOffsets !== false
+  const offsetX = useProfileOffsets ? Math.max(0, Number(profileLengthOffsetInput.value) || 0) : 0
+  const offsetY = useProfileOffsets ? Math.max(0, Number(profileHeightOffsetInput.value) || 0) : 0
   const axes = {
     x: trajectory.leftPoints.map(point => point.x + offsetX),
     y: trajectory.leftPoints.map(point => point.y + offsetY),
@@ -1356,7 +1372,7 @@ const validateMachineEnvelope = trajectory => {
   const wireSpan = Number.isFinite(configuredWireSpan) && configuredWireSpan > 0
     ? configuredWireSpan
     : 1060
-  const foamWidth = Number(foamWidthInput.value) || 0
+  const foamWidth = Number(trajectory.blockSetup?.blockWidth ?? foamWidthInput.value) || 0
   if (foamWidth > wireSpan) {
     errors.push(`ширина блока ${formatNcNumber(foamWidth)} мм більша за робочу довжину струни ${wireSpan} мм`)
   }
@@ -1793,13 +1809,51 @@ const buildBatchLayoutPreview = () => {
     })
     renderBatchLayoutPreview(batchLeftSvg, layout, 'left')
     renderBatchLayoutPreview(batchRightSvg, layout, 'right')
+    const faceRoute = createBatchCutRoute(layout)
+    renderBatchRouteOverlay(batchLeftSvg, faceRoute, layout.blockHeight, 'left')
+    renderBatchRouteOverlay(batchRightSvg, faceRoute, layout.blockHeight, 'right')
+    let blockSetup = null
+    let events = faceRoute.events
+    if (blockCompensationInput.checked) {
+      blockSetup = calculateBlockSetup(layout.blockThickness)
+      const carriage = projectProfilesToCarriages(
+        events.map(event => event.left),
+        events.map(event => event.right),
+        blockSetup
+      )
+      events = events.map((event, index) => ({
+        ...event,
+        left: carriage.leftPoints[index],
+        right: carriage.rightPoints[index]
+      }))
+    }
+    const feedRate = Math.max(1, Number(cutFeedRateInput.value) || 300)
+    const trajectory = {
+      leftPoints: events.map(event => event.left),
+      rightPoints: events.map(event => event.right),
+      feedRate,
+      blockSetup,
+      applyProfileOffsets: false
+    }
+    const validation = validateMachineEnvelope(trajectory)
+    generatedBatchNcText = createBatchMach3Nc(events, feedRate, blockSetup)
+    batchNcPreview.value = generatedBatchNcText
+    downloadBatchNcButton.disabled = !validation.valid
+    const travelSummary = Object.entries(validation.ranges)
+      .map(([axis, range]) => `${axis.toUpperCase()} ${formatNcNumber(range.maximum)}/${range.limit} мм`)
+      .join('; ')
     batchLayoutStatus.className = 'batch-layout-valid'
     batchLayoutStatus.textContent = `${layout.items.length} секцій розміщено у сітці ${layout.columns}×${layout.rows}; `
       + `блок ${layout.blockWidth}×${layout.blockHeight}×${layout.blockThickness} мм; `
-      + `коридор ${layout.corridor} мм. Масштаб 1:1 у міліметрах.`
+      + `коридор ${layout.corridor} мм; порядок — змійкою; F${formatNcNumber(feedRate)} мм/хв. `
+      + (validation.valid ? `NC готовий; ${travelSummary}` : `NC заблоковано: ${validation.errors.join('; ')}`)
+    if (!validation.valid) batchLayoutStatus.className = 'batch-layout-error'
   } catch (error) {
     batchLeftSvg.replaceChildren()
     batchRightSvg.replaceChildren()
+    generatedBatchNcText = ''
+    batchNcPreview.value = ''
+    downloadBatchNcButton.disabled = true
     batchLayoutStatus.className = 'batch-layout-error'
     batchLayoutStatus.textContent = `Розкладку не побудовано: ${error.message}`
   }
@@ -1903,6 +1957,10 @@ addLeftWingButton.addEventListener('click', () => addCurrentCandidateToAssembly(
 addRightWingButton.addEventListener('click', () => addCurrentCandidateToAssembly('right'))
 addFuselagePartButton.addEventListener('click', () => addCurrentCandidateToAssembly('fuselage'))
 buildBatchLayoutButton.addEventListener('click', buildBatchLayoutPreview)
+downloadBatchNcButton.addEventListener('click', () => {
+  if (!generatedBatchNcText) return
+  downloadTextFile(generatedBatchNcText, 'foamcut-fuselage-batch.nc', 'text/plain')
+})
 
 saveAssemblyButton.addEventListener('click', () => {
   if (!assemblyParts.length) return

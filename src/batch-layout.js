@@ -129,3 +129,117 @@ export const renderBatchLayoutPreview = (svg, layout, side) => {
     }, `${item.index + 1}. ${item.part.name}`)
   }
 }
+
+const nearestIndex = (points, target) => points.reduce((best, point, index) => {
+  const distance = Math.hypot(point.x - target.x, point.y - target.y)
+  return distance < best.distance ? { index, distance } : best
+}, { index: 0, distance: Infinity }).index
+
+const rotateContour = (points, index) => [
+  ...points.slice(index),
+  ...points.slice(0, index)
+]
+
+export const createBatchCutRoute = layout => {
+  const orderedItems = [...layout.items].sort((first, second) => {
+    if (first.row !== second.row) return first.row - second.row
+    return first.row % 2 === 0
+      ? first.column - second.column
+      : second.column - first.column
+  })
+  const edgeInset = Math.max(1, layout.corridor / 2)
+  const home = { x: edgeInset, y: edgeInset }
+  const events = []
+  const addMove = (left, right = left, comment = '') => events.push({
+    left: { ...left }, right: { ...right }, comment
+  })
+  addMove(home, home, 'Безпечна початкова точка')
+  let currentRow = layout.rows - 1
+
+  orderedItems.forEach((item, orderIndex) => {
+    const laneY = layout.blockHeight - (item.row + 1) * layout.cellHeight + edgeInset
+    const rowEntryX = item.row % 2 === 0 ? edgeInset : layout.blockWidth - edgeInset
+    if (orderIndex === 0 || item.row !== currentRow) {
+      const transitionX = orderIndex === 0
+        ? edgeInset
+        : (currentRow % 2 === 0 ? layout.blockWidth - edgeInset : edgeInset)
+      if (events.at(-1).left.x !== transitionX || events.at(-1).right.x !== transitionX) {
+        addMove({ x: transitionX, y: events.at(-1).left.y }, { x: transitionX, y: events.at(-1).right.y })
+      }
+      addMove({ x: transitionX, y: laneY }, { x: transitionX, y: laneY }, `Перехід у ряд ${item.row + 1}`)
+      if (transitionX !== rowEntryX) addMove({ x: rowEntryX, y: laneY }, { x: rowEntryX, y: laneY })
+      currentRow = item.row
+    }
+
+    let leftCut = item.cutLeft.map(point => ({ ...point }))
+    let rightCut = item.cutRight.map(point => ({ ...point }))
+    const preliminaryPortalLeft = { x: leftCut[0].x, y: laneY }
+    const preliminaryPortalRight = { x: rightCut[0].x, y: laneY }
+    if (!item.innerLeft && !item.innerRight) {
+      const startIndex = nearestIndex(leftCut, preliminaryPortalLeft)
+      leftCut = rotateContour(leftCut, startIndex)
+      rightCut = rotateContour(rightCut, startIndex)
+    }
+    const portalLeft = { x: leftCut[0].x, y: laneY }
+    const portalRight = { x: rightCut[0].x, y: laneY }
+    addMove(portalLeft, portalRight, `Секція ${item.index + 1}: ${item.part.name}`)
+    addMove(leftCut[0], rightCut[0], 'Вхід у деталь')
+    for (let index = 1; index < leftCut.length; index += 1) {
+      addMove(leftCut[index], rightCut[index])
+    }
+    addMove(leftCut[0], rightCut[0], 'Замикання контуру')
+    addMove(portalLeft, portalRight, 'Безпечний вихід у коридор')
+  })
+
+  const finalLaneY = events.at(-1).left.y
+  const finalEdgeX = orderedItems.at(-1).row % 2 === 0
+    ? layout.blockWidth - edgeInset
+    : edgeInset
+  addMove({ x: finalEdgeX, y: finalLaneY }, { x: finalEdgeX, y: finalLaneY }, 'Вихід із останнього ряду')
+  addMove({ x: finalEdgeX, y: edgeInset }, { x: finalEdgeX, y: edgeInset })
+  addMove(home, home, 'Повернення на початок')
+  return { events, orderedItems, home }
+}
+
+const formatNumber = value => (Math.abs(value) < 0.0005 ? 0 : value).toFixed(3)
+
+export const createBatchMach3Nc = (events, feedRate, setup = null) => {
+  const lines = [
+    '%',
+    '(FoamCut Simulator - batch fuselage sections)',
+    '(Metric units, absolute coordinates)',
+    'G21',
+    'G90',
+    'G94',
+    `F${formatNumber(feedRate)}`
+  ]
+  if (setup) {
+    lines.splice(3, 0, `(Block setup: wire ${formatNumber(setup.wireSpan)} mm, `
+      + `left gap ${formatNumber(setup.leftGap)} mm, block ${formatNumber(setup.blockWidth)} mm, `
+      + `right gap ${formatNumber(setup.rightGap)} mm)`)
+  }
+  let previous = ''
+  for (const event of events) {
+    if (event.comment) lines.push(`(${event.comment.replace(/[()]/g, '')})`)
+    const movement = `G1 X${formatNumber(event.left.x)} Y${formatNumber(event.left.y)} `
+      + `A${formatNumber(event.right.x)} Z${formatNumber(event.right.y)}`
+    if (movement !== previous) lines.push(movement)
+    previous = movement
+  }
+  lines.push('M30', '%')
+  return `${lines.join('\n')}\n`
+}
+
+export const renderBatchRouteOverlay = (svg, route, blockHeight, side) => {
+  const points = route.events.map(event => side === 'left' ? event.left : event.right)
+  addSvg(svg, 'polyline', {
+    points: points.map(point => `${point.x},${blockHeight - point.y}`).join(' '),
+    fill: 'none', stroke: '#16a34a', 'stroke-width': 1.4, 'stroke-dasharray': '4 3',
+    'stroke-opacity': 0.72, 'vector-effect': 'non-scaling-stroke'
+  })
+  addSvg(svg, 'circle', {
+    cx: route.home.x, cy: blockHeight - route.home.y, r: 4,
+    fill: '#16a34a', stroke: '#ffffff', 'stroke-width': 1.5,
+    'vector-effect': 'non-scaling-stroke'
+  })
+}

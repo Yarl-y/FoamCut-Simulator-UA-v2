@@ -1003,6 +1003,25 @@ code {
   font-weight: 700;
 }
 
+.batch-nc-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 8px 12px;
+  margin: 12px 0 8px;
+  font-size: 13px;
+}
+
+#batchNcPreview {
+  width: 100%;
+  box-sizing: border-box;
+  resize: vertical;
+  font-family: var(--mono);
+  font-size: 13px;
+  line-height: 1.35;
+}
+
 @media (max-width: 800px) {
   .batch-layout-previews {
     grid-template-columns: 1fr;
