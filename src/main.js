@@ -384,6 +384,7 @@ view3d.innerHTML = `
       <div><h3>Права сторона A/Z</h3><svg id="batchRightSvg"></svg></div>
     </div>
     <div class="batch-nc-actions">
+      <button id="simulateBatch" type="button" disabled>Перевірити весь прохід у 2D/3D</button>
       <button id="downloadBatchNc" type="button" disabled>Завантажити спільний NC</button>
       <span>Швидкість береться з поля «Швидкість різання» біля профілів DXF.</span>
     </div>
@@ -519,6 +520,7 @@ const buildBatchLayoutButton = document.getElementById('buildBatchLayout')
 const batchLayoutStatus = document.getElementById('batchLayoutStatus')
 const batchLeftSvg = document.getElementById('batchLeftSvg')
 const batchRightSvg = document.getElementById('batchRightSvg')
+const simulateBatchButton = document.getElementById('simulateBatch')
 const downloadBatchNcButton = document.getElementById('downloadBatchNc')
 const batchNcPreview = document.getElementById('batchNcPreview')
 let renderActiveFoamBlock = null
@@ -527,6 +529,7 @@ const cuttingSettings = { feedRate: 300 }
 let preparedCuttingTrajectory = null
 let generatedNcText = ''
 let generatedBatchNcText = ''
+let currentBatchSimulation = null
 let recoveredNcProfiles = null
 let activeStraightSparRods = []
 let activeServoChannels = []
@@ -1837,7 +1840,14 @@ const buildBatchLayoutPreview = () => {
     }
     const validation = validateMachineEnvelope(trajectory)
     generatedBatchNcText = createBatchMach3Nc(events, feedRate, blockSetup)
+    currentBatchSimulation = {
+      leftPoints: faceRoute.events.map(event => ({ ...event.left })),
+      rightPoints: faceRoute.events.map(event => ({ ...event.right })),
+      layout,
+      feedRate
+    }
     batchNcPreview.value = generatedBatchNcText
+    simulateBatchButton.disabled = false
     downloadBatchNcButton.disabled = !validation.valid
     const travelSummary = Object.entries(validation.ranges)
       .map(([axis, range]) => `${axis.toUpperCase()} ${formatNcNumber(range.maximum)}/${range.limit} мм`)
@@ -1852,7 +1862,9 @@ const buildBatchLayoutPreview = () => {
     batchLeftSvg.replaceChildren()
     batchRightSvg.replaceChildren()
     generatedBatchNcText = ''
+    currentBatchSimulation = null
     batchNcPreview.value = ''
+    simulateBatchButton.disabled = true
     downloadBatchNcButton.disabled = true
     batchLayoutStatus.className = 'batch-layout-error'
     batchLayoutStatus.textContent = `Розкладку не побудовано: ${error.message}`
@@ -1957,6 +1969,26 @@ addLeftWingButton.addEventListener('click', () => addCurrentCandidateToAssembly(
 addRightWingButton.addEventListener('click', () => addCurrentCandidateToAssembly('right'))
 addFuselagePartButton.addEventListener('click', () => addCurrentCandidateToAssembly('fuselage'))
 buildBatchLayoutButton.addEventListener('click', buildBatchLayoutPreview)
+simulateBatchButton.addEventListener('click', () => {
+  if (!currentBatchSimulation) return
+  const { layout, leftPoints, rightPoints, feedRate } = currentBatchSimulation
+  foamLengthInput.value = layout.blockWidth
+  foamWidthInput.value = layout.blockThickness
+  foamHeightInput.value = layout.blockHeight
+  profileLengthOffsetInput.value = 0
+  profileHeightOffsetInput.value = 0
+  activeStraightSparRods = []
+  activeServoChannels = []
+  renderSimulation(
+    leftPoints,
+    rightPoints,
+    `Пакетне різання: ${layout.items.length} секцій; змійка ${layout.columns}×${layout.rows}; `
+      + `блок ${layout.blockWidth}×${layout.blockHeight}×${layout.blockThickness} мм; F${formatNcNumber(feedRate)} мм/хв`
+  )
+  batchLayoutStatus.className = 'batch-layout-valid'
+  batchLayoutStatus.textContent = 'Пакетну траєкторію передано у 2D/3D. Керуйте проходом кнопками Пауза, Стоп і На початок.'
+  svg.scrollIntoView({ behavior: 'smooth', block: 'start' })
+})
 downloadBatchNcButton.addEventListener('click', () => {
   if (!generatedBatchNcText) return
   downloadTextFile(generatedBatchNcText, 'foamcut-fuselage-batch.nc', 'text/plain')
