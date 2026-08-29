@@ -77,6 +77,52 @@ export const createFuselageBatchLayout = (parts, settings = {}) => {
   return { blockWidth, blockHeight, blockThickness, columns, rows, corridor, cellWidth, cellHeight, items }
 }
 
+export const createMultiBlockLayouts = (parts, blocks, corridor = 20) => {
+  if (!blocks.length) throw new Error('Додайте хоча б один піноблок')
+  let remaining = parts.map((part, sourceIndex) => ({ ...part, batchSourceIndex: sourceIndex }))
+  const layouts = []
+
+  for (const block of blocks) {
+    const selected = []
+    const deferred = []
+    for (const part of remaining) {
+      try {
+        createFuselageBatchLayout([...selected, part], {
+          blockWidth: block.width,
+          blockHeight: block.height,
+          blockThickness: block.thickness,
+          columns: block.columns,
+          corridor
+        })
+        selected.push(part)
+      } catch {
+        deferred.push(part)
+      }
+    }
+    remaining = deferred
+    if (selected.length) {
+      layouts.push({
+        ...createFuselageBatchLayout(selected, {
+          blockWidth: block.width,
+          blockHeight: block.height,
+          blockThickness: block.thickness,
+          columns: block.columns,
+          corridor
+        }),
+        block
+      })
+    } else {
+      layouts.push({ block, items: [], blockWidth: block.width, blockHeight: block.height,
+        blockThickness: block.thickness, columns: block.columns, rows: 0, corridor })
+    }
+  }
+
+  if (remaining.length) {
+    throw new Error(`Не вистачає блоків для ${remaining.length} секц.: ${remaining.map(part => part.name).join(', ')}`)
+  }
+  return layouts
+}
+
 const addSvg = (parent, tag, attributes, text = '') => {
   const element = document.createElementNS(SVG_NS, tag)
   Object.entries(attributes).forEach(([name, value]) => element.setAttribute(name, value))

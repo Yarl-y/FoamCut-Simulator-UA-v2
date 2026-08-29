@@ -1005,6 +1005,25 @@ code {
   margin: 12px 0;
 }
 
+.batch-block-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  margin: 12px 0 4px;
+}
+
+.batch-block-toolbar label {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+}
+
+#batchBlockSelect {
+  min-width: 190px;
+}
+
 .batch-layout-controls label {
   display: inline-flex;
   flex-direction: column;

@@ -4,7 +4,7 @@ import { renderAssemblyView } from './assembly-view.js'
 import {
   createBatchCutRoute,
   createBatchMach3Nc,
-  createFuselageBatchLayout,
+  createMultiBlockLayouts,
   renderBatchLayoutPreview,
   renderBatchRouteOverlay
 } from './batch-layout.js'
@@ -368,15 +368,20 @@ view3d.innerHTML = `
     <p id="assemblyStatus">Збірка поки порожня</p>
   </section>
   <section class="batch-layout-workspace" data-workspace="blocks">
-    <h2>Пакетне розміщення секцій фюзеляжу</h2>
-    <p>Розкладка видимих секцій у фізичних міліметрах перед створенням спільного NC.</p>
+    <h2>Менеджер блоків і розкладка деталей</h2>
+    <p>Розподіл видимих секцій між будь-якою кількістю піноблоків у фізичних міліметрах.</p>
+    <div class="batch-block-toolbar">
+      <label>Поточний блок <select id="batchBlockSelect"></select></label>
+      <button id="addBatchBlock" type="button">+ Додати блок</button>
+      <button id="removeBatchBlock" type="button">Видалити блок</button>
+    </div>
     <div class="batch-layout-controls">
       <label>Ширина блока, мм <input id="batchBlockWidth" type="number" min="1" step="1" value="600"></label>
       <label>Висота блока, мм <input id="batchBlockHeight" type="number" min="1" step="1" value="600"></label>
       <label>Товщина вздовж струни, мм <input id="batchBlockThickness" type="number" min="1" step="1" value="100"></label>
       <label>Стовпців <input id="batchColumns" type="number" min="1" max="9" step="1" value="3"></label>
       <label>Безпечний коридор, мм <input id="batchCorridor" type="number" min="0" step="1" value="20"></label>
-      <button id="buildBatchLayout" type="button">Розкласти секції</button>
+      <button id="buildBatchLayout" type="button">Автоматично розподілити секції</button>
     </div>
     <p id="batchLayoutStatus">Додайте секції до збірки та натисніть «Розкласти секції»</p>
     <div class="batch-layout-previews">
@@ -385,7 +390,7 @@ view3d.innerHTML = `
     </div>
     <div class="batch-nc-actions">
       <button id="simulateBatch" type="button" disabled>Перевірити весь прохід у 2D/3D</button>
-      <button id="downloadBatchNc" type="button" disabled>Завантажити спільний NC</button>
+      <button id="downloadBatchNc" type="button" disabled>Завантажити NC поточного блока</button>
       <span>Швидкість береться з поля «Швидкість різання» біля профілів DXF.</span>
     </div>
     <textarea id="batchNcPreview" rows="10" readonly
@@ -582,6 +587,9 @@ const batchBlockHeightInput = document.getElementById('batchBlockHeight')
 const batchBlockThicknessInput = document.getElementById('batchBlockThickness')
 const batchColumnsInput = document.getElementById('batchColumns')
 const batchCorridorInput = document.getElementById('batchCorridor')
+const batchBlockSelect = document.getElementById('batchBlockSelect')
+const addBatchBlockButton = document.getElementById('addBatchBlock')
+const removeBatchBlockButton = document.getElementById('removeBatchBlock')
 const buildBatchLayoutButton = document.getElementById('buildBatchLayout')
 const batchLayoutStatus = document.getElementById('batchLayoutStatus')
 const batchLeftSvg = document.getElementById('batchLeftSvg')
@@ -596,6 +604,9 @@ let preparedCuttingTrajectory = null
 let generatedNcText = ''
 let generatedBatchNcText = ''
 let currentBatchSimulation = null
+let nextBatchBlockId = 2
+const batchBlocks = [{ id: 1, name: 'Блок 1', width: 600, height: 600, thickness: 100, columns: 3 }]
+let currentBatchPackages = []
 let recoveredNcProfiles = null
 let activeStraightSparRods = []
 let activeServoChannels = []
@@ -1882,76 +1893,120 @@ const updateAssemblySvg = () => {
     : `У збірці ${assemblyParts.length} деталей; усі деталі приховані`
 }
 
-const buildBatchLayoutPreview = () => {
-  try {
-    const fuselageParts = assemblyParts.filter(part => part.visible && part.kind === 'fuselage')
-    const layout = createFuselageBatchLayout(fuselageParts, {
-      blockWidth: batchBlockWidthInput.value,
-      blockHeight: batchBlockHeightInput.value,
-      blockThickness: batchBlockThicknessInput.value,
-      columns: batchColumnsInput.value,
-      corridor: batchCorridorInput.value
-    })
-    renderBatchLayoutPreview(batchLeftSvg, layout, 'left')
-    renderBatchLayoutPreview(batchRightSvg, layout, 'right')
-    const faceRoute = createBatchCutRoute(layout)
-    renderBatchRouteOverlay(batchLeftSvg, faceRoute, layout.blockHeight, 'left')
-    renderBatchRouteOverlay(batchRightSvg, faceRoute, layout.blockHeight, 'right')
-    let blockSetup = null
-    let events = faceRoute.events
-    if (blockCompensationInput.checked) {
-      blockSetup = calculateBlockSetup(layout.blockThickness)
-      const carriage = projectProfilesToCarriages(
-        events.map(event => event.left),
-        events.map(event => event.right),
-        blockSetup
-      )
-      events = events.map((event, index) => ({
-        ...event,
-        left: carriage.leftPoints[index],
-        right: carriage.rightPoints[index]
-      }))
-    }
-    const feedRate = Math.max(1, Number(cutFeedRateInput.value) || 300)
-    const trajectory = {
-      leftPoints: events.map(event => event.left),
-      rightPoints: events.map(event => event.right),
-      feedRate,
-      blockSetup,
-      applyProfileOffsets: false
-    }
-    const validation = validateMachineEnvelope(trajectory)
-    generatedBatchNcText = createBatchMach3Nc(events, feedRate, blockSetup)
-    currentBatchSimulation = {
-      leftPoints: faceRoute.events.map(event => ({ ...event.left })),
-      rightPoints: faceRoute.events.map(event => ({ ...event.right })),
-      layout,
-      feedRate
-    }
-    batchNcPreview.value = generatedBatchNcText
-    simulateBatchButton.disabled = false
-    downloadBatchNcButton.disabled = !validation.valid
-    const travelSummary = Object.entries(validation.ranges)
-      .map(([axis, range]) => `${axis.toUpperCase()} ${formatNcNumber(range.maximum)}/${range.limit} мм`)
-      .join('; ')
-    batchLayoutStatus.className = 'batch-layout-valid'
-    batchLayoutStatus.textContent = `${layout.items.length} секцій розміщено у сітці ${layout.columns}×${layout.rows}; `
-      + `блок ${layout.blockWidth}×${layout.blockHeight}×${layout.blockThickness} мм; `
-      + `коридор ${layout.corridor} мм; порядок — змійкою; F${formatNcNumber(feedRate)} мм/хв. `
-      + (validation.valid ? `NC готовий; ${travelSummary}` : `NC заблоковано: ${validation.errors.join('; ')}`)
-    if (!validation.valid) batchLayoutStatus.className = 'batch-layout-error'
-  } catch (error) {
-    batchLeftSvg.replaceChildren()
-    batchRightSvg.replaceChildren()
+const selectedBatchBlock = () => batchBlocks.find(block => block.id === Number(batchBlockSelect.value)) || batchBlocks[0]
+
+const syncBatchBlockControls = () => {
+  const block = selectedBatchBlock()
+  batchBlockWidthInput.value = block.width
+  batchBlockHeightInput.value = block.height
+  batchBlockThicknessInput.value = block.thickness
+  batchColumnsInput.value = block.columns
+  removeBatchBlockButton.disabled = batchBlocks.length === 1
+}
+
+const renderBatchBlockSelect = () => {
+  const selectedId = Number(batchBlockSelect.value) || batchBlocks[0].id
+  batchBlockSelect.replaceChildren()
+  batchBlocks.forEach((block, index) => {
+    const option = document.createElement('option')
+    option.value = block.id
+    const packageData = currentBatchPackages.find(item => item.layout.block.id === block.id)
+    option.textContent = `${block.name} — ${packageData?.layout.items.length ?? 0} секц.`
+    batchBlockSelect.appendChild(option)
+  })
+  batchBlockSelect.value = String(batchBlocks.some(block => block.id === selectedId) ? selectedId : batchBlocks[0].id)
+  syncBatchBlockControls()
+}
+
+const clearBatchResult = (message = 'Параметри блоків змінено — виконайте розподіл повторно') => {
+  currentBatchPackages = []
+  generatedBatchNcText = ''
+  currentBatchSimulation = null
+  batchLeftSvg.replaceChildren()
+  batchRightSvg.replaceChildren()
+  batchNcPreview.value = ''
+  simulateBatchButton.disabled = true
+  downloadBatchNcButton.disabled = true
+  batchLayoutStatus.className = ''
+  batchLayoutStatus.textContent = message
+  renderBatchBlockSelect()
+}
+
+const createBatchPackage = layout => {
+  const faceRoute = createBatchCutRoute(layout)
+  let blockSetup = null
+  let events = faceRoute.events
+  if (blockCompensationInput.checked) {
+    blockSetup = calculateBlockSetup(layout.blockThickness)
+    const carriage = projectProfilesToCarriages(
+      events.map(event => event.left),
+      events.map(event => event.right),
+      blockSetup
+    )
+    events = events.map((event, index) => ({
+      ...event, left: carriage.leftPoints[index], right: carriage.rightPoints[index]
+    }))
+  }
+  const feedRate = Math.max(1, Number(cutFeedRateInput.value) || 300)
+  const trajectory = {
+    leftPoints: events.map(event => event.left),
+    rightPoints: events.map(event => event.right),
+    feedRate, blockSetup, applyProfileOffsets: false
+  }
+  return {
+    layout, faceRoute, feedRate, blockSetup,
+    validation: validateMachineEnvelope(trajectory),
+    nc: createBatchMach3Nc(events, feedRate, blockSetup)
+  }
+}
+
+const showSelectedBatchPackage = () => {
+  const packageData = currentBatchPackages.find(item => item.layout.block.id === selectedBatchBlock().id)
+  batchLeftSvg.replaceChildren()
+  batchRightSvg.replaceChildren()
+  if (!packageData) {
     generatedBatchNcText = ''
     currentBatchSimulation = null
     batchNcPreview.value = ''
     simulateBatchButton.disabled = true
     downloadBatchNcButton.disabled = true
+    return
+  }
+  const { layout, faceRoute, feedRate, validation, nc } = packageData
+  renderBatchLayoutPreview(batchLeftSvg, layout, 'left')
+  renderBatchLayoutPreview(batchRightSvg, layout, 'right')
+  renderBatchRouteOverlay(batchLeftSvg, faceRoute, layout.blockHeight, 'left')
+  renderBatchRouteOverlay(batchRightSvg, faceRoute, layout.blockHeight, 'right')
+  generatedBatchNcText = nc
+  currentBatchSimulation = {
+    leftPoints: faceRoute.events.map(event => ({ ...event.left })),
+    rightPoints: faceRoute.events.map(event => ({ ...event.right })),
+    layout, feedRate
+  }
+  batchNcPreview.value = nc
+  simulateBatchButton.disabled = false
+  downloadBatchNcButton.disabled = !validation.valid
+}
+
+const buildBatchLayoutPreview = () => {
+  try {
+    const fuselageParts = assemblyParts.filter(part => part.visible && part.kind === 'fuselage')
+    const layouts = createMultiBlockLayouts(fuselageParts, batchBlocks, Math.max(0, Number(batchCorridorInput.value) || 0))
+    currentBatchPackages = layouts.filter(layout => layout.items.length).map(createBatchPackage)
+    renderBatchBlockSelect()
+    showSelectedBatchPackage()
+    const invalid = currentBatchPackages.filter(item => !item.validation.valid)
+    batchLayoutStatus.className = invalid.length ? 'batch-layout-error' : 'batch-layout-valid'
+    batchLayoutStatus.textContent = `${fuselageParts.length} секцій розподілено між ${currentBatchPackages.length} із ${batchBlocks.length} блоків: `
+      + currentBatchPackages.map(item => `${item.layout.block.name} — ${item.layout.items.length}`).join('; ')
+      + (invalid.length ? `. NC заблоковано для: ${invalid.map(item => item.layout.block.name).join(', ')}` : '. Усі NC пройшли перевірку.')
+  } catch (error) {
+    clearBatchResult(`Розкладку не побудовано: ${error.message}`)
     batchLayoutStatus.className = 'batch-layout-error'
-    batchLayoutStatus.textContent = `Розкладку не побудовано: ${error.message}`
   }
 }
+
+renderBatchBlockSelect()
 
 const selectAssemblyPartForCutting = part => {
   activeStraightSparRods = part.straightSparRods.map(rod => ({ ...rod }))
@@ -2050,6 +2105,49 @@ const addCurrentCandidateToAssembly = side => {
 addLeftWingButton.addEventListener('click', () => addCurrentCandidateToAssembly('left'))
 addRightWingButton.addEventListener('click', () => addCurrentCandidateToAssembly('right'))
 addFuselagePartButton.addEventListener('click', () => addCurrentCandidateToAssembly('fuselage'))
+batchBlockSelect.addEventListener('change', () => {
+  syncBatchBlockControls()
+  showSelectedBatchPackage()
+})
+;[
+  [batchBlockWidthInput, 'width'],
+  [batchBlockHeightInput, 'height'],
+  [batchBlockThicknessInput, 'thickness'],
+  [batchColumnsInput, 'columns']
+].forEach(([input, field]) => {
+  input.addEventListener('change', () => {
+    const value = Math.max(1, Number(input.value) || 1)
+    selectedBatchBlock()[field] = field === 'columns' ? Math.floor(value) : value
+    clearBatchResult()
+  })
+})
+batchCorridorInput.addEventListener('change', () => clearBatchResult())
+addBatchBlockButton.addEventListener('click', () => {
+  const source = selectedBatchBlock()
+  const blockId = nextBatchBlockId++
+  const block = {
+    id: blockId,
+    name: `Блок ${blockId}`,
+    width: source.width,
+    height: source.height,
+    thickness: source.thickness,
+    columns: source.columns
+  }
+  batchBlocks.push(block)
+  batchBlockSelect.value = String(block.id)
+  renderBatchBlockSelect()
+  batchBlockSelect.value = String(block.id)
+  syncBatchBlockControls()
+  clearBatchResult(`Додано ${block.name} — виконайте автоматичний розподіл`)
+  batchBlockSelect.value = String(block.id)
+  syncBatchBlockControls()
+})
+removeBatchBlockButton.addEventListener('click', () => {
+  if (batchBlocks.length === 1) return
+  const block = selectedBatchBlock()
+  batchBlocks.splice(batchBlocks.indexOf(block), 1)
+  clearBatchResult(`${block.name} видалено — виконайте автоматичний розподіл`)
+})
 buildBatchLayoutButton.addEventListener('click', buildBatchLayoutPreview)
 simulateBatchButton.addEventListener('click', () => {
   if (!currentBatchSimulation) return
@@ -2064,7 +2162,7 @@ simulateBatchButton.addEventListener('click', () => {
   renderSimulation(
     leftPoints,
     rightPoints,
-    `Пакетне різання: ${layout.items.length} секцій; змійка ${layout.columns}×${layout.rows}; `
+    `${layout.block.name}: пакетне різання ${layout.items.length} секцій; змійка ${layout.columns}×${layout.rows}; `
       + `блок ${layout.blockWidth}×${layout.blockHeight}×${layout.blockThickness} мм; F${formatNcNumber(feedRate)} мм/хв`
   )
   batchLayoutStatus.className = 'batch-layout-valid'
@@ -2073,7 +2171,8 @@ simulateBatchButton.addEventListener('click', () => {
 })
 downloadBatchNcButton.addEventListener('click', () => {
   if (!generatedBatchNcText) return
-  downloadTextFile(generatedBatchNcText, 'foamcut-fuselage-batch.nc', 'text/plain')
+  const blockNumber = String(batchBlocks.indexOf(selectedBatchBlock()) + 1).padStart(2, '0')
+  downloadTextFile(generatedBatchNcText, `foamcut-fuselage-block-${blockNumber}.nc`, 'text/plain')
 })
 
 saveAssemblyButton.addEventListener('click', () => {
