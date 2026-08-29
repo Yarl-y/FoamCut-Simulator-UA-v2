@@ -4,7 +4,7 @@ const positiveNumber = (value, label) => {
   return number
 }
 
-export const createBlockPlanFile = (blocks, corridor) => ({
+export const createBlockPlanFile = (blocks, corridor, assignments = []) => ({
   format: 'foamcut-block-plan',
   version: 1,
   savedAt: new Date().toISOString(),
@@ -15,7 +15,11 @@ export const createBlockPlanFile = (blocks, corridor) => ({
     height: positiveNumber(block.height, `Блок ${index + 1}, висота`),
     thickness: positiveNumber(block.thickness, `Блок ${index + 1}, товщина`),
     columns: Math.max(1, Math.floor(positiveNumber(block.columns, `Блок ${index + 1}, стовпці`)))
-  }))
+  })),
+  assignments: assignments.map((assignment, index) => ({
+    partId: Math.max(1, Math.floor(positiveNumber(assignment.partId, `Закріплення ${index + 1}, деталь`))),
+    blockNumber: Math.max(1, Math.floor(positiveNumber(assignment.blockNumber, `Закріплення ${index + 1}, блок`)))
+  })).filter(assignment => assignment.blockNumber <= blocks.length)
 })
 
 export const parseBlockPlanFile = text => {
@@ -25,5 +29,5 @@ export const parseBlockPlanFile = text => {
     throw new Error('Це не план блоків FoamCut Simulator')
   }
   if (!Array.isArray(data.blocks) || !data.blocks.length) throw new Error('План не містить блоків')
-  return createBlockPlanFile(data.blocks, data.corridor)
+  return createBlockPlanFile(data.blocks, data.corridor, Array.isArray(data.assignments) ? data.assignments : [])
 }

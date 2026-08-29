@@ -383,6 +383,11 @@ view3d.innerHTML = `
       <button id="saveBatchPlan" type="button">Зберегти план блоків</button>
       <span id="batchPlanFileStatus">План блоків ще не збережено</span>
     </div>
+    <div class="batch-section-assignment-panel">
+      <h3>Ручний розподіл секцій</h3>
+      <p>Залиште «Автоматично» або закріпіть секцію за конкретним блоком.</p>
+      <div id="batchSectionAssignments" class="batch-section-assignments"></div>
+    </div>
     <div class="batch-layout-controls">
       <label>Ширина блока, мм <input id="batchBlockWidth" type="number" min="1" step="1" value="600"></label>
       <label>Висота блока, мм <input id="batchBlockHeight" type="number" min="1" step="1" value="600"></label>
@@ -605,6 +610,7 @@ const batchPlanFileInput = document.getElementById('batchPlanFile')
 const loadBatchPlanButton = document.getElementById('loadBatchPlan')
 const saveBatchPlanButton = document.getElementById('saveBatchPlan')
 const batchPlanFileStatus = document.getElementById('batchPlanFileStatus')
+const batchSectionAssignments = document.getElementById('batchSectionAssignments')
 const buildBatchLayoutButton = document.getElementById('buildBatchLayout')
 const batchLayoutStatus = document.getElementById('batchLayoutStatus')
 const batchLeftSvg = document.getElementById('batchLeftSvg')
@@ -624,6 +630,7 @@ let generatedBatchNcText = ''
 let currentBatchSimulation = null
 let nextBatchBlockId = 2
 const batchBlocks = [{ id: 1, name: 'Блок 1', width: 600, height: 600, thickness: 100, columns: 3 }]
+const batchAssignments = new Map()
 let currentBatchPackages = []
 let recoveredNcProfiles = null
 let activeStraightSparRods = []
@@ -1913,6 +1920,43 @@ const updateAssemblySvg = () => {
 
 const selectedBatchBlock = () => batchBlocks.find(block => block.id === Number(batchBlockSelect.value)) || batchBlocks[0]
 
+function renderBatchSectionAssignments () {
+  batchSectionAssignments.replaceChildren()
+  const parts = assemblyParts.filter(part => part.visible && part.kind === 'fuselage')
+  if (!parts.length) {
+    batchSectionAssignments.textContent = 'У збірці поки немає видимих секцій фюзеляжу'
+    return
+  }
+  parts.forEach((part, index) => {
+    const row = document.createElement('label')
+    row.className = 'batch-section-assignment-row'
+    const name = document.createElement('span')
+    name.textContent = `${index + 1}. ${part.name}`
+    const select = document.createElement('select')
+    const automatic = document.createElement('option')
+    automatic.value = ''
+    automatic.textContent = 'Автоматично'
+    select.appendChild(automatic)
+    batchBlocks.forEach(block => {
+      const option = document.createElement('option')
+      option.value = block.id
+      option.textContent = block.name
+      select.appendChild(option)
+    })
+    const assignedBlock = batchAssignments.get(part.id)
+    select.value = batchBlocks.some(block => block.id === assignedBlock) ? String(assignedBlock) : ''
+    select.addEventListener('change', () => {
+      const blockId = Number(select.value)
+      if (blockId) batchAssignments.set(part.id, blockId)
+      else batchAssignments.delete(part.id)
+      batchPlanFileStatus.textContent = 'Ручний розподіл змінено — збережіть план блоків'
+      clearBatchResult()
+    })
+    row.append(name, select)
+    batchSectionAssignments.appendChild(row)
+  })
+}
+
 const syncBatchBlockControls = () => {
   const block = selectedBatchBlock()
   batchBlockWidthInput.value = block.width
@@ -1934,6 +1978,7 @@ const renderBatchBlockSelect = () => {
   })
   batchBlockSelect.value = String(batchBlocks.some(block => block.id === selectedId) ? selectedId : batchBlocks[0].id)
   syncBatchBlockControls()
+  renderBatchSectionAssignments()
 }
 
 const clearBatchResult = (message = 'Параметри блоків змінено — виконайте розподіл повторно') => {
@@ -2014,7 +2059,12 @@ const showSelectedBatchPackage = () => {
 const buildBatchLayoutPreview = () => {
   try {
     const fuselageParts = assemblyParts.filter(part => part.visible && part.kind === 'fuselage')
-    const layouts = createMultiBlockLayouts(fuselageParts, batchBlocks, Math.max(0, Number(batchCorridorInput.value) || 0))
+    const layouts = createMultiBlockLayouts(
+      fuselageParts,
+      batchBlocks,
+      Math.max(0, Number(batchCorridorInput.value) || 0),
+      batchAssignments
+    )
     currentBatchPackages = layouts.filter(layout => layout.items.length).map(createBatchPackage)
     renderBatchBlockSelect()
     showSelectedBatchPackage()
@@ -2068,6 +2118,7 @@ const renderAssemblyPartsList = () => {
       part.visible = visibleInput.checked
       assemblyFileStatus.textContent = 'Збірку змінено — збережіть файл'
       updateAssemblySvg()
+      renderBatchSectionAssignments()
     })
     visibleLabel.append(visibleInput, document.createTextNode(part.name))
     row.appendChild(visibleLabel)
@@ -2098,6 +2149,7 @@ const renderAssemblyPartsList = () => {
     assemblyPartsList.appendChild(row)
   }
   updateAssemblySvg()
+  renderBatchSectionAssignments()
 }
 
 const addCurrentCandidateToAssembly = side => {
@@ -2175,13 +2227,20 @@ addBatchBlockButton.addEventListener('click', () => {
 removeBatchBlockButton.addEventListener('click', () => {
   if (batchBlocks.length === 1) return
   const block = selectedBatchBlock()
+  for (const [partId, blockId] of batchAssignments) {
+    if (blockId === block.id) batchAssignments.delete(partId)
+  }
   batchBlocks.splice(batchBlocks.indexOf(block), 1)
   batchPlanFileStatus.textContent = 'План блоків змінено — збережіть його'
   clearBatchResult(`${block.name} видалено — виконайте автоматичний розподіл`)
 })
 saveBatchPlanButton.addEventListener('click', () => {
   try {
-    const plan = createBlockPlanFile(batchBlocks, batchCorridorInput.value)
+    const assignmentRecords = [...batchAssignments].map(([partId, blockId]) => ({
+      partId,
+      blockNumber: batchBlocks.findIndex(block => block.id === blockId) + 1
+    })).filter(assignment => assignment.blockNumber > 0)
+    const plan = createBlockPlanFile(batchBlocks, batchCorridorInput.value, assignmentRecords)
     const date = new Date().toISOString().slice(0, 10)
     downloadTextFile(`${JSON.stringify(plan, null, 2)}\n`, `foamcut-block-plan-${date}.foamcut-blocks.json`, 'application/json')
     batchPlanFileStatus.textContent = `План збережено: ${plan.blocks.length} блоків`
@@ -2200,6 +2259,11 @@ loadBatchPlanButton.addEventListener('click', async () => {
     batchBlocks.splice(0, batchBlocks.length, ...plan.blocks.map(block => ({
       ...block, id: nextBatchBlockId++
     })))
+    batchAssignments.clear()
+    plan.assignments.forEach(assignment => {
+      const block = batchBlocks[assignment.blockNumber - 1]
+      if (block) batchAssignments.set(assignment.partId, block.id)
+    })
     batchCorridorInput.value = plan.corridor
     renderBatchBlockSelect()
     clearBatchResult(`План ${file.name} відкрито — виконується розподіл`)

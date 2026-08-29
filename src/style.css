@@ -1028,6 +1028,38 @@ code {
   font-size: 13px;
 }
 
+.batch-section-assignment-panel {
+  margin: 12px 0;
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+.batch-section-assignments {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px 10px;
+  margin-top: 10px;
+}
+
+.batch-section-assignment-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 150px;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  text-align: left;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-size: 13px;
+}
+
+@media (max-width: 800px) {
+  .batch-section-assignments {
+    grid-template-columns: 1fr;
+  }
+}
+
 .batch-block-toolbar label {
   display: inline-flex;
   align-items: center;

@@ -77,13 +77,24 @@ export const createFuselageBatchLayout = (parts, settings = {}) => {
   return { blockWidth, blockHeight, blockThickness, columns, rows, corridor, cellWidth, cellHeight, items }
 }
 
-export const createMultiBlockLayouts = (parts, blocks, corridor = 20) => {
+export const createMultiBlockLayouts = (parts, blocks, corridor = 20, assignments = new Map()) => {
   if (!blocks.length) throw new Error('Додайте хоча б один піноблок')
-  let remaining = parts.map((part, sourceIndex) => ({ ...part, batchSourceIndex: sourceIndex }))
+  const preparedParts = parts.map((part, sourceIndex) => ({ ...part, batchSourceIndex: sourceIndex }))
+  let remaining = preparedParts.filter(part => !assignments.get(part.id))
   const layouts = []
 
   for (const block of blocks) {
-    const selected = []
+    const selected = preparedParts.filter(part => assignments.get(part.id) === block.id)
+    if (selected.length) {
+      try {
+        createFuselageBatchLayout(selected, {
+          blockWidth: block.width, blockHeight: block.height, blockThickness: block.thickness,
+          columns: block.columns, corridor
+        })
+      } catch (error) {
+        throw new Error(`${block.name}: закріплені секції не поміщаються — ${error.message}`)
+      }
+    }
     const deferred = []
     for (const part of remaining) {
       try {
@@ -122,6 +133,10 @@ export const createMultiBlockLayouts = (parts, blocks, corridor = 20) => {
   }
   return layouts
 }
+
+const sectionNumber = item => (Number.isInteger(item.part.batchSourceIndex)
+  ? item.part.batchSourceIndex
+  : item.index) + 1
 
 const addSvg = (parent, tag, attributes, text = '') => {
   const element = document.createElementNS(SVG_NS, tag)
@@ -172,7 +187,7 @@ export const renderBatchLayoutPreview = (svg, layout, side) => {
       x: item.bounds.minX + 4,
       y: layout.blockHeight - item.bounds.maxY + 15,
       fill: '#111827', 'font-size': 12, 'font-weight': 700
-    }, `${item.index + 1}. ${item.part.name}`)
+    }, `${sectionNumber(item)}. ${item.part.name}`)
   }
 }
 
@@ -228,7 +243,7 @@ export const createBatchCutRoute = layout => {
     }
     const portalLeft = { x: leftCut[0].x, y: laneY }
     const portalRight = { x: rightCut[0].x, y: laneY }
-    addMove(portalLeft, portalRight, `Секція ${item.index + 1}: ${item.part.name}`)
+    addMove(portalLeft, portalRight, `Секція ${sectionNumber(item)}: ${item.part.name}`)
     addMove(leftCut[0], rightCut[0], 'Вхід у деталь')
     for (let index = 1; index < leftCut.length; index += 1) {
       addMove(leftCut[index], rightCut[index])
@@ -348,7 +363,7 @@ export const createBatchSetupMapSvg = (layout, route, options = {}) => {
       const bounds = boundsOf(points)
       const labelX = originX + bounds.minX * scale + 4
       const labelY = originY + (layout.blockHeight - bounds.maxY) * scale + 17
-      fragments.push(`<text x="${labelX}" y="${labelY}" font-family="Arial" font-size="13" font-weight="700">${item.index + 1}</text>`)
+      fragments.push(`<text x="${labelX}" y="${labelY}" font-family="Arial" font-size="13" font-weight="700">${sectionNumber(item)}</text>`)
     })
     const startX = originX + route.home.x * scale
     const startY = originY + (layout.blockHeight - route.home.y) * scale
@@ -368,7 +383,7 @@ export const createBatchSetupMapSvg = (layout, route, options = {}) => {
     const leftBounds = boundsOf(item.outerLeft)
     const rightBounds = boundsOf(item.outerRight)
     const type = item.innerLeft || item.innerRight ? 'порожниста' : 'суцільна'
-    fragments.push(`<text x="${x}" y="${y}" font-family="Arial" font-size="14">${item.index + 1}. ${xmlEscape(item.part.name)} · ${type} · X/Y ${leftBounds.minX.toFixed(1)};${leftBounds.minY.toFixed(1)} · A/Z ${rightBounds.minX.toFixed(1)};${rightBounds.minY.toFixed(1)} мм</text>`)
+    fragments.push(`<text x="${x}" y="${y}" font-family="Arial" font-size="14">${sectionNumber(item)}. ${xmlEscape(item.part.name)} · ${type} · X/Y ${leftBounds.minX.toFixed(1)};${leftBounds.minY.toFixed(1)} · A/Z ${rightBounds.minX.toFixed(1)};${rightBounds.minY.toFixed(1)} мм</text>`)
   })
   fragments.push(`<text x="${pageWidth / 2}" y="${pageHeight - 22}" text-anchor="middle" font-family="Arial" font-size="13" fill="#475569">Зелений пунктир — безпечний маршрут; фіолетовий пунктир — внутрішній контур, який ріжеться першим.</text>`)
   fragments.push('</svg>')
