@@ -5,6 +5,7 @@ import { createBlockPlanFile, parseBlockPlanFile } from './block-plan.js'
 import {
   createBatchCutRoute,
   createBatchMach3Nc,
+  createBatchSetupMapSvg,
   createMultiBlockLayouts,
   renderBatchLayoutPreview,
   renderBatchRouteOverlay
@@ -397,6 +398,8 @@ view3d.innerHTML = `
     </div>
     <div class="batch-nc-actions">
       <button id="simulateBatch" type="button" disabled>Перевірити весь прохід у 2D/3D</button>
+      <button id="downloadBatchMap" type="button" disabled>Зберегти карту поточного блока</button>
+      <button id="downloadAllBatchMaps" type="button" disabled>Зберегти всі карти</button>
       <button id="downloadBatchNc" type="button" disabled>Завантажити NC поточного блока</button>
       <button id="downloadAllBatchNc" type="button" disabled>Завантажити всі NC</button>
       <span>Швидкість береться з поля «Швидкість різання» біля профілів DXF.</span>
@@ -607,6 +610,8 @@ const batchLayoutStatus = document.getElementById('batchLayoutStatus')
 const batchLeftSvg = document.getElementById('batchLeftSvg')
 const batchRightSvg = document.getElementById('batchRightSvg')
 const simulateBatchButton = document.getElementById('simulateBatch')
+const downloadBatchMapButton = document.getElementById('downloadBatchMap')
+const downloadAllBatchMapsButton = document.getElementById('downloadAllBatchMaps')
 const downloadBatchNcButton = document.getElementById('downloadBatchNc')
 const downloadAllBatchNcButton = document.getElementById('downloadAllBatchNc')
 const batchNcPreview = document.getElementById('batchNcPreview')
@@ -1939,6 +1944,8 @@ const clearBatchResult = (message = 'Параметри блоків зміне�
   batchRightSvg.replaceChildren()
   batchNcPreview.value = ''
   simulateBatchButton.disabled = true
+  downloadBatchMapButton.disabled = true
+  downloadAllBatchMapsButton.disabled = true
   downloadBatchNcButton.disabled = true
   downloadAllBatchNcButton.disabled = true
   batchLayoutStatus.className = ''
@@ -1983,6 +1990,7 @@ const showSelectedBatchPackage = () => {
     currentBatchSimulation = null
     batchNcPreview.value = ''
     simulateBatchButton.disabled = true
+    downloadBatchMapButton.disabled = true
     downloadBatchNcButton.disabled = true
     return
   }
@@ -1999,6 +2007,7 @@ const showSelectedBatchPackage = () => {
   }
   batchNcPreview.value = nc
   simulateBatchButton.disabled = false
+  downloadBatchMapButton.disabled = false
   downloadBatchNcButton.disabled = !validation.valid
 }
 
@@ -2010,6 +2019,7 @@ const buildBatchLayoutPreview = () => {
     renderBatchBlockSelect()
     showSelectedBatchPackage()
     const invalid = currentBatchPackages.filter(item => !item.validation.valid)
+    downloadAllBatchMapsButton.disabled = currentBatchPackages.length === 0
     downloadAllBatchNcButton.disabled = currentBatchPackages.length === 0 || invalid.length > 0
     batchLayoutStatus.className = invalid.length ? 'batch-layout-error' : 'batch-layout-valid'
     batchLayoutStatus.textContent = `${fuselageParts.length} секцій розподілено між ${currentBatchPackages.length} із ${batchBlocks.length} блоків: `
@@ -2220,9 +2230,37 @@ simulateBatchButton.addEventListener('click', () => {
   batchLayoutStatus.textContent = 'Пакетну траєкторію передано у 2D/3D. Керуйте проходом кнопками Пауза, Стоп і На початок.'
   svg.scrollIntoView({ behavior: 'smooth', block: 'start' })
 })
+const batchFileNumber = block => String(batchBlocks.indexOf(block) + 1).padStart(2, '0')
+const selectedBatchPackage = () => currentBatchPackages.find(item => item.layout.block.id === selectedBatchBlock().id)
+const createMapForPackage = packageData => {
+  const blockNumber = batchBlocks.indexOf(packageData.layout.block) + 1
+  return createBatchSetupMapSvg(packageData.layout, packageData.faceRoute, {
+    blockNumber,
+    ncFileName: `foamcut-fuselage-block-${String(blockNumber).padStart(2, '0')}.nc`,
+    blockSetup: packageData.blockSetup
+  })
+}
+downloadBatchMapButton.addEventListener('click', () => {
+  const packageData = selectedBatchPackage()
+  if (!packageData) return
+  const blockNumber = batchFileNumber(packageData.layout.block)
+  downloadTextFile(createMapForPackage(packageData), `foamcut-block-map-${blockNumber}.svg`, 'image/svg+xml')
+})
+downloadAllBatchMapsButton.addEventListener('click', () => {
+  currentBatchPackages.forEach((packageData, index) => {
+    const blockNumber = batchFileNumber(packageData.layout.block)
+    setTimeout(() => downloadTextFile(
+      createMapForPackage(packageData),
+      `foamcut-block-map-${blockNumber}.svg`,
+      'image/svg+xml'
+    ), index * 120)
+  })
+  batchLayoutStatus.className = 'batch-layout-valid'
+  batchLayoutStatus.textContent = `Завантаження ${currentBatchPackages.length} карт встановлення розпочато`
+})
 downloadBatchNcButton.addEventListener('click', () => {
   if (!generatedBatchNcText) return
-  const blockNumber = String(batchBlocks.indexOf(selectedBatchBlock()) + 1).padStart(2, '0')
+  const blockNumber = batchFileNumber(selectedBatchBlock())
   downloadTextFile(generatedBatchNcText, `foamcut-fuselage-block-${blockNumber}.nc`, 'text/plain')
 })
 downloadAllBatchNcButton.addEventListener('click', () => {

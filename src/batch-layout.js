@@ -289,3 +289,88 @@ export const renderBatchRouteOverlay = (svg, route, blockHeight, side) => {
     'vector-effect': 'non-scaling-stroke'
   })
 }
+
+const xmlEscape = value => String(value)
+  .replaceAll('&', '&amp;')
+  .replaceAll('<', '&lt;')
+  .replaceAll('>', '&gt;')
+  .replaceAll('"', '&quot;')
+
+const mapPolyline = (points, originX, originY, scale, blockHeight) => points
+  .map(point => `${(originX + point.x * scale).toFixed(2)},${(originY + (blockHeight - point.y) * scale).toFixed(2)}`)
+  .join(' ')
+
+export const createBatchSetupMapSvg = (layout, route, options = {}) => {
+  const pageWidth = 1400
+  const pageHeight = 980
+  const panelWidth = 650
+  const panelHeight = 600
+  const panelTop = 165
+  const margin = 35
+  const scale = Math.min(panelWidth / layout.blockWidth, panelHeight / layout.blockHeight)
+  const drawingWidth = layout.blockWidth * scale
+  const drawingHeight = layout.blockHeight * scale
+  const blockNumber = Number(options.blockNumber) || 1
+  const ncFileName = options.ncFileName || `foamcut-fuselage-block-${String(blockNumber).padStart(2, '0')}.nc`
+  const setup = options.blockSetup
+  const setupText = setup
+    ? `Струна ${setup.wireSpan.toFixed(1)} мм · лівий проміжок ${setup.leftGap.toFixed(1)} мм · правий ${setup.rightGap.toFixed(1)} мм`
+    : 'Компенсація положення блока вимкнена'
+  const fragments = [
+    `<?xml version="1.0" encoding="UTF-8"?>`,
+    `<svg xmlns="http://www.w3.org/2000/svg" width="${pageWidth}" height="${pageHeight}" viewBox="0 0 ${pageWidth} ${pageHeight}">`,
+    `<rect width="100%" height="100%" fill="white"/>`,
+    `<text x="${pageWidth / 2}" y="42" text-anchor="middle" font-family="Arial" font-size="28" font-weight="700">Карта встановлення — ${xmlEscape(layout.block.name)}</text>`,
+    `<text x="${pageWidth / 2}" y="75" text-anchor="middle" font-family="Arial" font-size="18">Блок ${layout.blockWidth} × ${layout.blockHeight} × ${layout.blockThickness} мм · коридор ${layout.corridor} мм · ${layout.items.length} секц.</text>`,
+    `<text x="${pageWidth / 2}" y="104" text-anchor="middle" font-family="Arial" font-size="17">NC: ${xmlEscape(ncFileName)}</text>`,
+    `<text x="${pageWidth / 2}" y="132" text-anchor="middle" font-family="Arial" font-size="16">${xmlEscape(setupText)}</text>`
+  ]
+
+  const addPanel = (side, title, originX, color) => {
+    const originY = panelTop
+    fragments.push(`<text x="${originX + drawingWidth / 2}" y="${originY - 14}" text-anchor="middle" font-family="Arial" font-size="20" font-weight="700" fill="${color}">${title}</text>`)
+    fragments.push(`<rect x="${originX}" y="${originY}" width="${drawingWidth}" height="${drawingHeight}" fill="#fef3c7" stroke="#92400e" stroke-width="2"/>`)
+    for (let column = 1; column < layout.columns; column += 1) {
+      const x = originX + column * layout.cellWidth * scale
+      fragments.push(`<line x1="${x}" y1="${originY}" x2="${x}" y2="${originY + drawingHeight}" stroke="#a16207" stroke-dasharray="7 5"/>`)
+    }
+    for (let row = 1; row < layout.rows; row += 1) {
+      const y = originY + row * layout.cellHeight * scale
+      fragments.push(`<line x1="${originX}" y1="${y}" x2="${originX + drawingWidth}" y2="${y}" stroke="#a16207" stroke-dasharray="7 5"/>`)
+    }
+    const routePoints = route.events.map(event => side === 'left' ? event.left : event.right)
+    fragments.push(`<polyline points="${mapPolyline(routePoints, originX, originY, scale, layout.blockHeight)}" fill="none" stroke="#16a34a" stroke-width="2" stroke-dasharray="5 4"/>`)
+    layout.items.forEach(item => {
+      const points = side === 'left' ? item.outerLeft : item.outerRight
+      const inner = side === 'left' ? item.innerLeft : item.innerRight
+      fragments.push(`<polyline points="${mapPolyline([...points, points[0]], originX, originY, scale, layout.blockHeight)}" fill="none" stroke="${color}" stroke-width="2.2"/>`)
+      if (inner?.length) fragments.push(`<polyline points="${mapPolyline([...inner, inner[0]], originX, originY, scale, layout.blockHeight)}" fill="none" stroke="#7c3aed" stroke-width="1.8" stroke-dasharray="5 3"/>`)
+      const bounds = boundsOf(points)
+      const labelX = originX + bounds.minX * scale + 4
+      const labelY = originY + (layout.blockHeight - bounds.maxY) * scale + 17
+      fragments.push(`<text x="${labelX}" y="${labelY}" font-family="Arial" font-size="13" font-weight="700">${item.index + 1}</text>`)
+    })
+    const startX = originX + route.home.x * scale
+    const startY = originY + (layout.blockHeight - route.home.y) * scale
+    fragments.push(`<circle cx="${startX}" cy="${startY}" r="6" fill="#16a34a" stroke="white" stroke-width="2"/>`)
+    fragments.push(`<text x="${startX + 9}" y="${startY - 8}" font-family="Arial" font-size="13" font-weight="700" fill="#166534">СТАРТ ${route.home.x.toFixed(1)}; ${route.home.y.toFixed(1)} мм</text>`)
+  }
+
+  addPanel('left', 'Ліва грань X/Y', margin, '#2563eb')
+  addPanel('right', 'Права грань A/Z', pageWidth - margin - drawingWidth, '#dc2626')
+  const listTop = panelTop + drawingHeight + 32
+  fragments.push(`<text x="${margin}" y="${listTop}" font-family="Arial" font-size="17" font-weight="700">Секції та координати нижньої лівої межі:</text>`)
+  layout.items.forEach((item, index) => {
+    const column = index % 2
+    const row = Math.floor(index / 2)
+    const x = margin + column * 680
+    const y = listTop + 28 + row * 25
+    const leftBounds = boundsOf(item.outerLeft)
+    const rightBounds = boundsOf(item.outerRight)
+    const type = item.innerLeft || item.innerRight ? 'порожниста' : 'суцільна'
+    fragments.push(`<text x="${x}" y="${y}" font-family="Arial" font-size="14">${item.index + 1}. ${xmlEscape(item.part.name)} · ${type} · X/Y ${leftBounds.minX.toFixed(1)};${leftBounds.minY.toFixed(1)} · A/Z ${rightBounds.minX.toFixed(1)};${rightBounds.minY.toFixed(1)} мм</text>`)
+  })
+  fragments.push(`<text x="${pageWidth / 2}" y="${pageHeight - 22}" text-anchor="middle" font-family="Arial" font-size="13" fill="#475569">Зелений пунктир — безпечний маршрут; фіолетовий пунктир — внутрішній контур, який ріжеться першим.</text>`)
+  fragments.push('</svg>')
+  return `${fragments.join('\n')}\n`
+}
