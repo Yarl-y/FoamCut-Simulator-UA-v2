@@ -18,7 +18,8 @@ export const createBlockPlanFile = (blocks, corridor, assignments = []) => ({
   })),
   assignments: assignments.map((assignment, index) => ({
     partId: Math.max(1, Math.floor(positiveNumber(assignment.partId, `Закріплення ${index + 1}, деталь`))),
-    blockNumber: Math.max(1, Math.floor(positiveNumber(assignment.blockNumber, `Закріплення ${index + 1}, блок`)))
+    blockNumber: Math.max(1, Math.floor(positiveNumber(assignment.blockNumber, `Закріплення ${index + 1}, блок`))),
+    slot: assignment.slot == null ? null : Math.max(0, Math.floor(Number(assignment.slot)))
   })).filter(assignment => assignment.blockNumber <= blocks.length)
 })
 

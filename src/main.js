@@ -641,6 +641,7 @@ let currentBatchSimulation = null
 let nextBatchBlockId = 2
 const batchBlocks = [{ id: 1, name: 'Блок 1', width: 600, height: 600, thickness: 100, columns: 3 }]
 const batchAssignments = new Map()
+const batchSlotAssignments = new Map()
 let currentBatchPackages = []
 let recoveredNcProfiles = null
 let activeStraightSparRods = []
@@ -1997,10 +1998,37 @@ function renderBatchSectionAssignments () {
       const blockId = Number(select.value)
       if (blockId) batchAssignments.set(part.id, blockId)
       else batchAssignments.delete(part.id)
+      batchSlotAssignments.delete(part.id)
       batchPlanFileStatus.textContent = 'Ручний розподіл змінено — збережіть план блоків'
       clearBatchResult()
     })
-    row.append(name, select)
+    const locatedPackage = currentBatchPackages.find(packageData => (
+      packageData.layout.items.some(item => item.part.id === part.id)
+    ))
+    const locatedItem = locatedPackage?.layout.items.find(item => item.part.id === part.id)
+    const lockedSlot = batchSlotAssignments.get(part.id)
+    const lockButton = document.createElement('button')
+    lockButton.type = 'button'
+    lockButton.className = 'batch-slot-lock'
+    if (lockedSlot != null) {
+      lockButton.textContent = `Місце ${lockedSlot + 1} ✓`
+      lockButton.title = 'Відпустити закріплене місце'
+    } else {
+      lockButton.textContent = locatedItem ? `Закріпити місце ${locatedItem.index + 1}` : 'Закріпити місце'
+      lockButton.disabled = !locatedItem
+    }
+    lockButton.addEventListener('click', () => {
+      if (batchSlotAssignments.has(part.id)) {
+        batchSlotAssignments.delete(part.id)
+        batchPlanFileStatus.textContent = `${part.name}: місце відпущено`
+      } else if (locatedPackage && locatedItem) {
+        batchAssignments.set(part.id, locatedPackage.layout.block.id)
+        batchSlotAssignments.set(part.id, locatedItem.index)
+        batchPlanFileStatus.textContent = `${part.name}: закріплено у ${locatedPackage.layout.block.name}, місце ${locatedItem.index + 1}`
+      }
+      clearBatchResult()
+    })
+    row.append(name, select, lockButton)
     batchSectionAssignments.appendChild(row)
   })
 }
@@ -2111,7 +2139,8 @@ const buildBatchLayoutPreview = () => {
       fuselageParts,
       batchBlocks,
       Math.max(0, Number(batchCorridorInput.value) || 0),
-      batchAssignments
+      batchAssignments,
+      batchSlotAssignments
     )
     currentBatchPackages = layouts.filter(layout => layout.items.length).map(createBatchPackage)
     renderBatchBlockSelect()
@@ -2276,7 +2305,10 @@ removeBatchBlockButton.addEventListener('click', () => {
   if (batchBlocks.length === 1) return
   const block = selectedBatchBlock()
   for (const [partId, blockId] of batchAssignments) {
-    if (blockId === block.id) batchAssignments.delete(partId)
+    if (blockId === block.id) {
+      batchAssignments.delete(partId)
+      batchSlotAssignments.delete(partId)
+    }
   }
   batchBlocks.splice(batchBlocks.indexOf(block), 1)
   batchPlanFileStatus.textContent = 'План блоків змінено — збережіть його'
@@ -2286,7 +2318,8 @@ saveBatchPlanButton.addEventListener('click', () => {
   try {
     const assignmentRecords = [...batchAssignments].map(([partId, blockId]) => ({
       partId,
-      blockNumber: batchBlocks.findIndex(block => block.id === blockId) + 1
+      blockNumber: batchBlocks.findIndex(block => block.id === blockId) + 1,
+      slot: batchSlotAssignments.get(partId) ?? null
     })).filter(assignment => assignment.blockNumber > 0)
     const plan = createBlockPlanFile(batchBlocks, batchCorridorInput.value, assignmentRecords)
     const date = new Date().toISOString().slice(0, 10)
@@ -2308,9 +2341,13 @@ loadBatchPlanButton.addEventListener('click', async () => {
       ...block, id: nextBatchBlockId++
     })))
     batchAssignments.clear()
+    batchSlotAssignments.clear()
     plan.assignments.forEach(assignment => {
       const block = batchBlocks[assignment.blockNumber - 1]
-      if (block) batchAssignments.set(assignment.partId, block.id)
+      if (block) {
+        batchAssignments.set(assignment.partId, block.id)
+        if (assignment.slot != null) batchSlotAssignments.set(assignment.partId, assignment.slot)
+      }
     })
     batchCorridorInput.value = plan.corridor
     renderBatchBlockSelect()

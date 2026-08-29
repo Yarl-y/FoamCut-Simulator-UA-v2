@@ -33,7 +33,29 @@ export const createFuselageBatchLayout = (parts, settings = {}) => {
     throw new Error('Безпечний коридор завеликий для вибраної сітки')
   }
 
-  const items = parts.map((part, index) => {
+  let orderedParts = [...parts]
+  const slotAssignments = settings.slotAssignments instanceof Map ? settings.slotAssignments : new Map()
+  if (slotAssignments.size) {
+    const slots = Array(parts.length).fill(null)
+    const unplaced = []
+    for (const part of parts) {
+      const slot = slotAssignments.get(part.id)
+      if (slot == null) {
+        unplaced.push(part)
+        continue
+      }
+      const index = Math.floor(Number(slot))
+      if (!Number.isInteger(index) || index < 0 || index >= parts.length) {
+        throw new Error(`${part.name}: закріплене місце ${index + 1} поза доступними 1–${parts.length}`)
+      }
+      if (slots[index]) throw new Error(`Місце ${index + 1} закріплено одночасно за двома секціями`)
+      slots[index] = part
+    }
+    let unplacedIndex = 0
+    orderedParts = slots.map(part => part || unplaced[unplacedIndex++])
+  }
+
+  const items = orderedParts.map((part, index) => {
     if (Number(part.span) > blockThickness) {
       throw new Error(`${part.name}: довжина секції ${Number(part.span).toFixed(1)} мм `
         + `більша за товщину блока ${blockThickness.toFixed(1)} мм`)
@@ -77,7 +99,13 @@ export const createFuselageBatchLayout = (parts, settings = {}) => {
   return { blockWidth, blockHeight, blockThickness, columns, rows, corridor, cellWidth, cellHeight, items }
 }
 
-export const createMultiBlockLayouts = (parts, blocks, corridor = 20, assignments = new Map()) => {
+export const createMultiBlockLayouts = (
+  parts,
+  blocks,
+  corridor = 20,
+  assignments = new Map(),
+  slotAssignments = new Map()
+) => {
   if (!blocks.length) throw new Error('Додайте хоча б один піноблок')
   const preparedParts = parts.map((part, sourceIndex) => ({ ...part, batchSourceIndex: sourceIndex }))
   let remaining = preparedParts.filter(part => !assignments.get(part.id))
@@ -118,7 +146,8 @@ export const createMultiBlockLayouts = (parts, blocks, corridor = 20, assignment
           blockHeight: block.height,
           blockThickness: block.thickness,
           columns: block.columns,
-          corridor
+          corridor,
+          slotAssignments
         }),
         block
       })

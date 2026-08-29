@@ -1079,7 +1079,7 @@ code {
 
 .batch-section-assignment-row {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 150px;
+  grid-template-columns: minmax(0, 1fr) 140px 150px;
   align-items: center;
   gap: 8px;
   padding: 6px 8px;
@@ -1087,6 +1087,12 @@ code {
   border: 1px solid var(--border);
   border-radius: 6px;
   font-size: 13px;
+}
+
+.batch-slot-lock {
+  min-width: 0;
+  padding-inline: 8px;
+  font-size: 12px;
 }
 
 @media (max-width: 800px) {
