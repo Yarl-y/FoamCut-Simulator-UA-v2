@@ -189,6 +189,8 @@ document.querySelector('#app').innerHTML = `
             <button id="clearLibraryMeasure" type="button">Очистити</button>
             <button id="smallerLibraryMeasure" type="button" title="Зменшити напис рулетки">Текст −</button>
             <button id="largerLibraryMeasure" type="button" title="Збільшити напис рулетки">Текст +</button>
+            <button id="fitLibraryPreview" type="button">Показати все</button>
+            <button id="expandLibraryPreview" type="button">На весь екран</button>
           </div>
           <svg id="libraryPreviewSvg" viewBox="0 0 800 500" aria-label="Попередній 3D-перегляд деталі"></svg>
           <p id="libraryPreviewStatus">Змінюйте параметри — модель оновлюється автоматично</p>
@@ -335,6 +337,7 @@ view3d.innerHTML = `
       <button data-camera-view="left">Зліва</button>
       <button data-camera-view="right">Справа</button>
       <button data-camera-view="top">Зверху</button>
+      <button id="expandSimulationView" type="button">На весь екран</button>
       <label><input id="showCutSurface" type="checkbox" checked> Показувати вирізану поверхню</label>
     </div>
     <p class="orbit-help">Миша: ліва — орбіта; Shift + ліва або права — переміщення; коліщатко — масштаб</p>
@@ -364,6 +367,7 @@ view3d.innerHTML = `
       <button id="clearAssemblyMeasure" type="button">Очистити</button>
       <button id="smallerAssemblyMeasure" type="button">Текст −</button>
       <button id="largerAssemblyMeasure" type="button">Текст +</button>
+      <button id="expandAssemblyView" type="button">На весь екран</button>
     </div>
     <p class="orbit-help">Збірка: ліва кнопка — орбіта; Shift + ліва або права — переміщення; коліщатко — масштаб</p>
     <svg id="assemblySvg" viewBox="0 0 800 500" width="800" height="500"></svg>
@@ -395,6 +399,7 @@ view3d.innerHTML = `
       <label>Стовпців <input id="batchColumns" type="number" min="1" max="9" step="1" value="3"></label>
       <label>Безпечний коридор, мм <input id="batchCorridor" type="number" min="0" step="1" value="20"></label>
       <button id="buildBatchLayout" type="button">Автоматично розподілити секції</button>
+      <button id="expandBatchView" type="button">На весь екран</button>
     </div>
     <p id="batchLayoutStatus">Додайте секції до збірки та натисніть «Розкласти секції»</p>
     <div class="batch-layout-previews">
@@ -545,6 +550,8 @@ const measureLibraryButton = document.querySelector('#measureLibrary')
 const clearLibraryMeasureButton = document.querySelector('#clearLibraryMeasure')
 const smallerLibraryMeasureButton = document.querySelector('#smallerLibraryMeasure')
 const largerLibraryMeasureButton = document.querySelector('#largerLibraryMeasure')
+const fitLibraryPreviewButton = document.querySelector('#fitLibraryPreview')
+const expandLibraryPreviewButton = document.querySelector('#expandLibraryPreview')
 const downloadNcDxfLeftButton = document.querySelector('#downloadNcDxfLeft')
 const downloadNcDxfRightButton = document.querySelector('#downloadNcDxfRight')
 const ncToDxfStatus = document.querySelector('#ncToDxfStatus')
@@ -583,6 +590,7 @@ const stop3d = document.getElementById('stop3d')
 const reset3d = document.getElementById('reset3d')
 const speed3d = document.getElementById('speed3d')
 const showCutSurfaceInput = document.getElementById('showCutSurface')
+const expandSimulationViewButton = document.getElementById('expandSimulationView')
 const addLeftWingButton = document.getElementById('addLeftWing')
 const addRightWingButton = document.getElementById('addRightWing')
 const addFuselagePartButton = document.getElementById('addFuselagePart')
@@ -598,6 +606,7 @@ const assemblyFileInput = document.getElementById('assemblyFile')
 const loadAssemblyButton = document.getElementById('loadAssembly')
 const saveAssemblyButton = document.getElementById('saveAssembly')
 const assemblyFileStatus = document.getElementById('assemblyFileStatus')
+const expandAssemblyViewButton = document.getElementById('expandAssemblyView')
 const batchBlockWidthInput = document.getElementById('batchBlockWidth')
 const batchBlockHeightInput = document.getElementById('batchBlockHeight')
 const batchBlockThicknessInput = document.getElementById('batchBlockThickness')
@@ -612,6 +621,7 @@ const saveBatchPlanButton = document.getElementById('saveBatchPlan')
 const batchPlanFileStatus = document.getElementById('batchPlanFileStatus')
 const batchSectionAssignments = document.getElementById('batchSectionAssignments')
 const buildBatchLayoutButton = document.getElementById('buildBatchLayout')
+const expandBatchViewButton = document.getElementById('expandBatchView')
 const batchLayoutStatus = document.getElementById('batchLayoutStatus')
 const batchLeftSvg = document.getElementById('batchLeftSvg')
 const batchRightSvg = document.getElementById('batchRightSvg')
@@ -678,6 +688,40 @@ const dxfSides = {
     assignButton: document.querySelector('#assignDxfRight')
   }
 }
+
+const expandedViewers = [
+  [expandLibraryPreviewButton, document.querySelector('.library-preview-panel')],
+  [expandSimulationViewButton, svg3d.closest('.workspace-panel')],
+  [expandAssemblyViewButton, document.querySelector('.assembly-workspace')],
+  [expandBatchViewButton, document.querySelector('.batch-layout-workspace')]
+]
+
+const closeExpandedViewers = () => {
+  expandedViewers.forEach(([button, target]) => {
+    target.classList.remove('viewer-expanded')
+    button.textContent = 'На весь екран'
+    button.setAttribute('aria-pressed', 'false')
+  })
+  document.body.classList.remove('viewer-expanded-open')
+}
+
+expandedViewers.forEach(([button, target]) => {
+  button.setAttribute('aria-pressed', 'false')
+  button.addEventListener('click', () => {
+    const expand = !target.classList.contains('viewer-expanded')
+    closeExpandedViewers()
+    if (expand) {
+      target.classList.add('viewer-expanded')
+      button.textContent = 'Закрити весь екран'
+      button.setAttribute('aria-pressed', 'true')
+      document.body.classList.add('viewer-expanded-open')
+    }
+    window.dispatchEvent(new Event('resize'))
+  })
+})
+document.addEventListener('keydown', event => {
+  if (event.key === 'Escape') closeExpandedViewers()
+})
 
 for (const { id, name } of profileLibraryEntries) {
   for (const select of [rootLibraryProfileInput, tipLibraryProfileInput]) {
@@ -922,6 +966,10 @@ renderFuselageStations()
 
 previewWingButton.addEventListener('click', () => scheduleLibraryPreview('wing'))
 previewFuselageButton.addEventListener('click', () => scheduleLibraryPreview('fuselage'))
+fitLibraryPreviewButton.addEventListener('click', () => {
+  Object.assign(libraryPreviewCamera, { yaw: -35, pitch: -22, zoom: 1, panX: 0, panY: 0 })
+  scheduleLibraryPreview()
+})
 const loadSelectedSectionSettings = () => {
   const settings = fuselageSectionSettings[Number(fuselageSegmentInput.value) || 0]
   if (!settings) return

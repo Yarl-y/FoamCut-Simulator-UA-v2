@@ -54,6 +54,10 @@ body {
   margin: 0;
 }
 
+body.viewer-expanded-open {
+  overflow: hidden;
+}
+
 h1,
 h2 {
   font-family: var(--heading);
@@ -337,6 +341,37 @@ code {
 
 .workspace-panel {
   min-width: 0;
+}
+
+.viewer-expanded {
+  position: fixed !important;
+  inset: 10px !important;
+  z-index: 1000 !important;
+  box-sizing: border-box;
+  max-width: none !important;
+  max-height: none !important;
+  margin: 0 !important;
+  padding: 14px !important;
+  overflow: auto;
+  color: var(--text);
+  background: var(--bg) !important;
+  border: 2px solid #2563eb !important;
+  border-radius: 10px;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.35);
+}
+
+.viewer-expanded #libraryPreviewSvg,
+.viewer-expanded #assemblySvg,
+.viewer-expanded #svg3d {
+  width: 100%;
+  height: calc(100vh - 190px);
+  min-height: 480px;
+  aspect-ratio: auto;
+}
+
+.viewer-expanded .batch-layout-previews svg {
+  height: min(68vh, 720px);
+  aspect-ratio: auto;
 }
 
 .trajectory-workspace {
