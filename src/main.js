@@ -193,6 +193,15 @@ document.querySelector('#app').innerHTML = `
             </div>
             <div id="fuselageStations" class="fuselage-stations"></div>
           </div>
+          <div class="fuselage-transfer-panel">
+            <div class="fuselage-transfer-toolbar">
+              <strong>Секції для переносу у збірку</strong>
+              <button id="selectAllFuselageSections" type="button">Вибрати всі</button>
+              <button id="clearFuselageSections" type="button">Очистити</button>
+            </div>
+            <div id="fuselageTransferSections" class="fuselage-transfer-sections"></div>
+            <button id="addSelectedFuselageSections" type="button">Додати вибрані секції у збірку</button>
+          </div>
           <button id="buildFuselageSegment" type="button">Побудувати секцію фюзеляжу</button>
           <p id="fuselageLibraryStatus">Виберіть секцію — для кожної створюється окремий NC-файл</p>
         </div>
@@ -574,6 +583,10 @@ const fuselageTubeSideOffsetInput = document.querySelector('#fuselageTubeSideOff
 const fuselageTubeStartInput = document.querySelector('#fuselageTubeStart')
 const fuselageTubeLengthInput = document.querySelector('#fuselageTubeLength')
 const fuselageStationsElement = document.querySelector('#fuselageStations')
+const fuselageTransferSections = document.querySelector('#fuselageTransferSections')
+const selectAllFuselageSectionsButton = document.querySelector('#selectAllFuselageSections')
+const clearFuselageSectionsButton = document.querySelector('#clearFuselageSections')
+const addSelectedFuselageSectionsButton = document.querySelector('#addSelectedFuselageSections')
 const addFuselageSectionButton = document.querySelector('#addFuselageSection')
 const resetFuselageSectionsButton = document.querySelector('#resetFuselageSections')
 const buildFuselageSegmentButton = document.querySelector('#buildFuselageSegment')
@@ -693,6 +706,8 @@ let fuselageSectionSettings = Array.from({ length: defaultFuselageStations.lengt
 }))
 let nextFuselageStationId = 1
 let userFuselageTemplates = loadUserFuselageTemplates()
+const selectedFuselageTransferSegments = new Set()
+let fuselageTransferSelectionInitialized = false
 let libraryPreviewMode = 'wing'
 const libraryPreviewCamera = { yaw: -35, pitch: -22, zoom: 1, panX: 0, panY: 0 }
 const libraryMeasurement = { active: false, points: [], fontSize: 22 }
@@ -869,6 +884,8 @@ const applyFuselageTemplate = (template, selectedSegment = 0) => {
   fuselageTubeSideOffsetInput.value = tube.sideOffset ?? 0
   fuselageTubeStartInput.value = tube.start ?? 0
   fuselageTubeLengthInput.value = tube.length ?? Math.max(1, copy.length - 50)
+  selectedFuselageTransferSegments.clear()
+  fuselageTransferSelectionInitialized = false
   renderFuselageStations(selectedSegment)
   loadSelectedSectionSettings()
   syncFuselageTubeControls()
@@ -904,6 +921,31 @@ const renderFuselageStations = (selectedSegment = Number(fuselageSegmentInput.va
     fuselageSegmentInput.appendChild(option)
   })
   fuselageSegmentInput.value = String(Math.min(selectedSegment, fuselageStations.length - 2))
+  renderFuselageTransferSections()
+}
+
+function renderFuselageTransferSections () {
+  const segmentCount = Math.max(0, fuselageStations.length - 1)
+  for (const index of [...selectedFuselageTransferSegments]) {
+    if (index >= segmentCount) selectedFuselageTransferSegments.delete(index)
+  }
+  if (!fuselageTransferSelectionInitialized && segmentCount) {
+    selectedFuselageTransferSegments.add(Math.min(Number(fuselageSegmentInput.value) || 0, segmentCount - 1))
+    fuselageTransferSelectionInitialized = true
+  }
+  fuselageTransferSections.replaceChildren()
+  fuselageStations.slice(0, -1).forEach((station, index) => {
+    const label = document.createElement('label')
+    const input = document.createElement('input')
+    input.type = 'checkbox'
+    input.checked = selectedFuselageTransferSegments.has(index)
+    input.addEventListener('change', () => {
+      if (input.checked) selectedFuselageTransferSegments.add(index)
+      else selectedFuselageTransferSegments.delete(index)
+    })
+    label.append(input, document.createTextNode(`${index + 1}. ${station.name} → ${fuselageStations[index + 1].name}`))
+    fuselageTransferSections.appendChild(label)
+  })
 }
 
 const previewPart = ({ kind, name, span, outerLeft, outerRight, offsets, selected = false, rods = [] }) => ({
@@ -1035,6 +1077,7 @@ fuselageStationsElement.addEventListener('input', () => {
     option.textContent = `${fuselageStations[index].name} → ${fuselageStations[index + 1].name}`
   })
   fuselageSegmentInput.value = String(selectedSegment)
+  renderFuselageTransferSections()
   scheduleLibraryPreview('fuselage')
 })
 
@@ -1044,6 +1087,8 @@ fuselageStationsElement.addEventListener('click', event => {
   fuselageStations = readFuselageStations()
   fuselageSectionSettings.splice(index, 1)
   fuselageStations.splice(index, 1)
+  selectedFuselageTransferSegments.clear()
+  fuselageTransferSelectionInitialized = false
   renderFuselageStations(Math.max(0, index - 1))
   loadSelectedSectionSettings()
   scheduleLibraryPreview('fuselage')
@@ -1068,6 +1113,8 @@ addFuselageSectionButton.addEventListener('click', () => {
     bottomFlatness: average('bottomFlatness')
   })
   fuselageSectionSettings.splice(segmentIndex + 1, 0, inheritedSectionSettings)
+  selectedFuselageTransferSegments.clear()
+  fuselageTransferSelectionInitialized = false
   renderFuselageStations(segmentIndex + 1)
   loadSelectedSectionSettings()
   scheduleLibraryPreview('fuselage')
@@ -1080,6 +1127,8 @@ resetFuselageSectionsButton.addEventListener('click', () => {
     wallThickness: 5,
     bottomThickness: 5
   }))
+  selectedFuselageTransferSegments.clear()
+  fuselageTransferSelectionInitialized = false
   renderFuselageStations()
   loadSelectedSectionSettings()
   scheduleLibraryPreview('fuselage')
@@ -1087,6 +1136,19 @@ resetFuselageSectionsButton.addEventListener('click', () => {
 
 renderFuselageStations()
 renderFuselageTemplateOptions()
+
+selectAllFuselageSectionsButton.addEventListener('click', () => {
+  selectedFuselageTransferSegments.clear()
+  fuselageStations.slice(0, -1).forEach((station, index) => selectedFuselageTransferSegments.add(index))
+  fuselageTransferSelectionInitialized = true
+  renderFuselageTransferSections()
+})
+
+clearFuselageSectionsButton.addEventListener('click', () => {
+  selectedFuselageTransferSegments.clear()
+  fuselageTransferSelectionInitialized = true
+  renderFuselageTransferSections()
+})
 
 fuselageTemplateInput.addEventListener('change', () => {
   const template = selectedFuselageTemplate()
@@ -2681,6 +2743,47 @@ const addCurrentCandidateToAssembly = side => {
 addLeftWingButton.addEventListener('click', () => addCurrentCandidateToAssembly('left'))
 addRightWingButton.addEventListener('click', () => addCurrentCandidateToAssembly('right'))
 addFuselagePartButton.addEventListener('click', () => addCurrentCandidateToAssembly('fuselage'))
+addSelectedFuselageSectionsButton.addEventListener('click', () => {
+  const selectedIndexes = [...selectedFuselageTransferSegments]
+    .filter(index => index >= 0 && index < fuselageStations.length - 1)
+    .sort((first, second) => first - second)
+  if (!selectedIndexes.length) {
+    fuselageLibraryStatus.className = 'profile-library-error'
+    fuselageLibraryStatus.textContent = 'Виберіть хоча б одну секцію для переносу у збірку'
+    return
+  }
+  const originalSegment = Number(fuselageSegmentInput.value) || 0
+  const failed = []
+  let added = 0
+  selectedIndexes.forEach(index => {
+    fuselageSegmentInput.value = String(index)
+    loadSelectedSectionSettings()
+    currentAssemblyCandidate = null
+    updateAssemblyCandidateControls()
+    buildFuselageSegmentButton.click()
+    if (
+      currentAssemblyCandidate?.kind === 'fuselage'
+      && currentAssemblyCandidate.designSource?.segmentIndex === index
+    ) {
+      addCurrentCandidateToAssembly('fuselage')
+      added += 1
+    } else {
+      failed.push(`${fuselageStations[index].name} → ${fuselageStations[index + 1].name}`)
+    }
+  })
+  fuselageSegmentInput.value = String(Math.min(originalSegment, fuselageStations.length - 2))
+  loadSelectedSectionSettings()
+  buildFuselageSegmentButton.click()
+  if (added) {
+    assemblyFileStatus.textContent = `${added} вибраних секц. додано до збірки — збережіть файл`
+      + (failed.length ? `; ${failed.length} секц. не додано через перевірку геометрії` : '')
+    activateWorkspaceTab('assembly')
+    assemblyPartsList.scrollTop = assemblyPartsList.scrollHeight
+  }
+  fuselageLibraryStatus.className = failed.length ? 'profile-library-warning' : 'profile-library-valid'
+  fuselageLibraryStatus.textContent = `${added} із ${selectedIndexes.length} вибраних секц. додано до збірки`
+    + (failed.length ? `; не додано: ${failed.join(', ')}` : '')
+})
 batchBlockSelect.addEventListener('change', () => {
   syncBatchBlockControls()
   showSelectedBatchPackage()
