@@ -37,7 +37,7 @@ import {
 document.querySelector('#app').innerHTML = `
   <div class="container">
     <h1>FoamCut Simulator</h1>
-    <p>Симулятор піноріза — 4 осі</p>
+    <p class="app-subtitle">Симулятор піноріза — 4 осі <span class="app-build">Збірка 30.08.2026 · 9 секцій</span></p>
 
     <div class="project-controls" data-workspace="files">
       <input type="file" id="projectFile" accept=".json,.foamcut">
