@@ -453,7 +453,7 @@ view3d.innerHTML = `
       <label>Ширина блока, мм <input id="batchBlockWidth" type="number" min="1" step="1" value="600"></label>
       <label>Висота блока, мм <input id="batchBlockHeight" type="number" min="1" step="1" value="600"></label>
       <label>Товщина вздовж струни, мм <input id="batchBlockThickness" type="number" min="1" step="1" value="100"></label>
-      <label>Макс. секцій у ряду <input id="batchColumns" type="number" min="1" max="20" step="1" value="3"></label>
+      <label>Секцій у ряду <input id="batchColumns" type="text" value="Автоматично" readonly></label>
       <label>Безпечний коридор, мм <input id="batchCorridor" type="number" min="0" step="1" value="20"></label>
       <button id="buildBatchLayout" type="button">Автоматично розподілити секції</button>
       <button id="expandBatchView" type="button">На весь екран</button>
@@ -2541,7 +2541,7 @@ const syncBatchBlockControls = () => {
   batchBlockWidthInput.value = block.width
   batchBlockHeightInput.value = block.height
   batchBlockThicknessInput.value = block.thickness
-  batchColumnsInput.value = block.columns
+  batchColumnsInput.value = 'Автоматично'
   removeBatchBlockButton.disabled = batchBlocks.length === 1
 }
 
@@ -2926,12 +2926,11 @@ batchBlockSelect.addEventListener('change', () => {
 ;[
   [batchBlockWidthInput, 'width'],
   [batchBlockHeightInput, 'height'],
-  [batchBlockThicknessInput, 'thickness'],
-  [batchColumnsInput, 'columns']
+  [batchBlockThicknessInput, 'thickness']
 ].forEach(([input, field]) => {
   input.addEventListener('change', () => {
     const value = Math.max(1, Number(input.value) || 1)
-    selectedBatchBlock()[field] = field === 'columns' ? Math.floor(value) : value
+    selectedBatchBlock()[field] = value
     batchPlanFileStatus.textContent = 'План блоків змінено — збережіть його'
     clearBatchResult()
   })

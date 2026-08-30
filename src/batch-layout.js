@@ -35,7 +35,7 @@ export const createFuselageBatchLayout = (parts, settings = {}) => {
   const blockWidth = Number(settings.blockWidth) || 600
   const blockHeight = Number(settings.blockHeight) || 600
   const blockThickness = Number(settings.blockThickness) || 100
-  const requestedColumns = Math.max(1, Math.floor(Number(settings.columns) || parts.length))
+  const requestedColumns = parts.length
   const corridor = Math.max(0, Number(settings.corridor) || 0)
   if (!parts.length) throw new Error('У збірці немає видимих секцій фюзеляжу')
   if ([blockWidth, blockHeight, blockThickness].some(value => value <= 0)) {
