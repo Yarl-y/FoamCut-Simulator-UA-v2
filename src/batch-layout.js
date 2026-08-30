@@ -100,6 +100,137 @@ export const createFuselageBatchLayout = (parts, settings = {}) => {
     const usedHeight = shelves.reduce((sum, shelf) => sum + shelf.height, 0) + corridor * shelves.length
     return usedHeight <= blockHeight ? { shelves, usedHeight } : null
   }
+  const packFreeRectangles = orderedParts => {
+    let freeRectangles = [{ x: 0, y: 0, width: blockWidth, height: blockHeight }]
+    const placed = []
+    const intersects = (first, second) => !(
+      second.x >= first.x + first.width || second.x + second.width <= first.x
+      || second.y >= first.y + first.height || second.y + second.height <= first.y
+    )
+    const containedBy = (inner, outer) => (
+      inner.x >= outer.x && inner.y >= outer.y
+      && inner.x + inner.width <= outer.x + outer.width
+      && inner.y + inner.height <= outer.y + outer.height
+    )
+    for (const measured of orderedParts) {
+      const packedWidth = measured.width + corridor
+      const packedHeight = measured.height + corridor
+      const choices = freeRectangles
+        .map((rectangle, index) => ({
+          rectangle, index,
+          shortSide: Math.min(rectangle.width - packedWidth, rectangle.height - packedHeight),
+          area: rectangle.width * rectangle.height - packedWidth * packedHeight
+        }))
+        .filter(choice => choice.shortSide >= 0)
+        .sort((a, b) => a.shortSide - b.shortSide || a.area - b.area)
+      if (!choices.length) return null
+      const target = choices[0].rectangle
+      const occupied = { x: target.x, y: target.y, width: packedWidth, height: packedHeight }
+      placed.push({
+        ...measured,
+        packedX: occupied.x,
+        packedY: occupied.y,
+        centerX: occupied.x + corridor / 2 + measured.width / 2,
+        centerY: occupied.y + corridor / 2 + measured.height / 2
+      })
+      const split = []
+      freeRectangles.forEach(rectangle => {
+        if (!intersects(rectangle, occupied)) return split.push(rectangle)
+        if (occupied.x > rectangle.x) split.push({
+          x: rectangle.x, y: rectangle.y,
+          width: occupied.x - rectangle.x, height: rectangle.height
+        })
+        if (occupied.x + occupied.width < rectangle.x + rectangle.width) split.push({
+          x: occupied.x + occupied.width, y: rectangle.y,
+          width: rectangle.x + rectangle.width - occupied.x - occupied.width, height: rectangle.height
+        })
+        if (occupied.y > rectangle.y) split.push({
+          x: rectangle.x, y: rectangle.y,
+          width: rectangle.width, height: occupied.y - rectangle.y
+        })
+        if (occupied.y + occupied.height < rectangle.y + rectangle.height) split.push({
+          x: rectangle.x, y: occupied.y + occupied.height,
+          width: rectangle.width, height: rectangle.y + rectangle.height - occupied.y - occupied.height
+        })
+      })
+      freeRectangles = split.filter((rectangle, index) => (
+        rectangle.width > 0 && rectangle.height > 0
+        && !split.some((other, otherIndex) => otherIndex !== index && containedBy(rectangle, other))
+      ))
+    }
+    const laneLevels = [...new Set(placed.map(item => item.packedY))].sort((a, b) => b - a)
+    const shelves = laneLevels.map(level => ({
+      items: placed.filter(item => item.packedY === level).sort((a, b) => a.packedX - b.packedX),
+      height: Math.max(...placed.filter(item => item.packedY === level).map(item => item.height)),
+      usedWidth: Math.max(...placed.filter(item => item.packedY === level).map(item => item.packedX + item.width))
+    }))
+    const positionedParts = []
+    shelves.forEach((shelf, row) => shelf.items.forEach((item, column) => {
+      positionedParts.push({ ...item, row, column })
+    }))
+    return { shelves, positionedParts }
+  }
+  const packBacktracking = () => {
+    const sourceOrder = [...parts].sort((first, second) => {
+      const firstBounds = boundsOf([...first.outerLeft, ...first.outerRight])
+      const secondBounds = boundsOf([...second.outerLeft, ...second.outerRight])
+      const firstArea = (firstBounds.maxX - firstBounds.minX) * (firstBounds.maxY - firstBounds.minY)
+      const secondArea = (secondBounds.maxX - secondBounds.minX) * (secondBounds.maxY - secondBounds.minY)
+      return secondArea - firstArea
+    })
+    const placed = []
+    let visited = 0
+    const limit = parts.length <= 10 ? 250000 : 50000
+    const overlaps = candidate => placed.some(item => !(
+      candidate.x >= item.x + item.measured.width + corridor
+      || candidate.x + candidate.measured.width + corridor <= item.x
+      || candidate.y >= item.y + item.measured.height + corridor
+      || candidate.y + candidate.measured.height + corridor <= item.y
+    ))
+    const search = index => {
+      if (index === sourceOrder.length) return true
+      if (++visited > limit) return false
+      const source = sourceOrder[index]
+      const orientations = [measure(source, false), measure(source, true)]
+        .filter((item, itemIndex, all) => itemIndex === 0 || item.width !== all[0].width || item.height !== all[0].height)
+        .sort((a, b) => b.width - a.width)
+      const xPositions = [...new Set([corridor / 2, ...placed.map(item => item.x + item.measured.width + corridor)])]
+        .sort((a, b) => a - b)
+      const yPositions = [...new Set([corridor / 2, ...placed.map(item => item.y + item.measured.height + corridor)])]
+        .sort((a, b) => a - b)
+      for (const measured of orientations) {
+        for (const y of yPositions) {
+          for (const x of xPositions) {
+            if (x + measured.width + corridor / 2 > blockWidth || y + measured.height + corridor / 2 > blockHeight) continue
+            const candidate = { x, y, measured }
+            if (overlaps(candidate)) continue
+            placed.push(candidate)
+            if (search(index + 1)) return true
+            placed.pop()
+          }
+        }
+      }
+      return false
+    }
+    if (!search(0)) return null
+    const laneLevels = [...new Set(placed.map(item => item.y))].sort((a, b) => b - a)
+    const shelves = laneLevels.map(level => ({
+      items: placed.filter(item => item.y === level).map(item => item.measured),
+      height: Math.max(...placed.filter(item => item.y === level).map(item => item.measured.height)),
+      usedWidth: Math.max(...placed.filter(item => item.y === level).map(item => item.x + item.measured.width))
+    }))
+    const positionedParts = []
+    laneLevels.forEach((level, row) => {
+      placed.filter(item => item.y === level).sort((a, b) => a.x - b.x).forEach((item, column) => {
+        positionedParts.push({
+          ...item.measured, row, column,
+          centerX: item.x + item.measured.width / 2,
+          centerY: item.y + item.measured.height / 2
+        })
+      })
+    })
+    return { shelves, positionedParts, score: 0 }
+  }
 
   const orientationCount = parts.length <= 12 ? 2 ** parts.length : 2
   let bestPacking = null
@@ -121,22 +252,46 @@ export const createFuselageBatchLayout = (parts, settings = {}) => {
     }
   }
   if (!bestPacking) {
+    for (let mask = 0; mask < orientationCount; mask += 1) {
+      const measured = parts.map((part, index) => measure(part, Boolean(mask & (1 << index))))
+      const orderCandidates = slotAssignments.size
+        ? [orderMeasured(measured)]
+        : [
+            [...measured].sort((a, b) => b.width * b.height - a.width * a.height),
+            [...measured].sort((a, b) => Math.max(b.width, b.height) - Math.max(a.width, a.height)),
+            [...measured].sort((a, b) => b.height - a.height || b.width - a.width)
+          ]
+      for (const ordered of orderCandidates) {
+        const packed = packFreeRectangles(ordered)
+        if (!packed) continue
+        const top = Math.max(...packed.positionedParts.map(item => item.packedY + item.height + corridor))
+        const right = Math.max(...packed.positionedParts.map(item => item.packedX + item.width + corridor))
+        const score = top * blockWidth + right
+        if (!bestPacking || score < bestPacking.score) bestPacking = { ...packed, ordered, score }
+      }
+    }
+  }
+  if (!bestPacking && !slotAssignments.size) bestPacking = packBacktracking()
+  if (!bestPacking) {
     throw new Error(`не вистачає місця для ${parts.length} секцій навіть з автоповоротом 90°`)
   }
   const { shelves } = bestPacking
 
-  let topY = blockHeight - corridor / 2
-  const positionedParts = []
-  shelves.forEach((shelf, row) => {
-    let leftX = corridor / 2
-    shelf.items.forEach((measured, column) => {
-      const centerX = leftX + measured.width / 2
-      const centerY = topY - shelf.height / 2
-      positionedParts.push({ ...measured, row, column, centerX, centerY })
-      leftX += measured.width + corridor
+  let positionedParts = bestPacking.positionedParts
+  if (!positionedParts) {
+    let topY = blockHeight - corridor / 2
+    positionedParts = []
+    shelves.forEach((shelf, row) => {
+      let leftX = corridor / 2
+      shelf.items.forEach((measured, column) => {
+        const centerX = leftX + measured.width / 2
+        const centerY = topY - shelf.height / 2
+        positionedParts.push({ ...measured, row, column, centerX, centerY })
+        leftX += measured.width + corridor
+      })
+      topY -= shelf.height + corridor
     })
-    topY -= shelf.height + corridor
-  })
+  }
 
   const items = positionedParts.map(({ part, sourceBounds, width, height, rotated, row, column, centerX, centerY }, slotIndex) => {
     const dx = centerX - (sourceBounds.minX + sourceBounds.maxX) / 2
