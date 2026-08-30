@@ -14,6 +14,12 @@ import { parseDxf, renderDxfPreview, resampleDxfContour } from './dxf.js'
 import { createDxfPolyline, createPreviewModel, recoverNcProfiles } from './nc-dxf.js'
 import { createFoamCutProject, parseFoamCutProject } from './project-file.js'
 import {
+  builtinFuselageTemplates,
+  cloneFuselageTemplate,
+  loadUserFuselageTemplates,
+  saveUserFuselageTemplates
+} from './fuselage-library.js'
+import {
   createGliderFuselageSegment,
   createPairedHollowCutPath,
   createLibraryProfile,
@@ -121,8 +127,19 @@ document.querySelector('#app').innerHTML = `
         <button id="buildLibraryWing" type="button">Побудувати 3D-крило</button>
         <p id="profileLibraryStatus">Виберіть параметри кореневого та кінцевого профілів</p>
         <div class="fuselage-library">
-          <h3>Планерний фюзеляж</h3>
-          <p>Параметричний шаблон загального планерного компонування</p>
+          <h3>Бібліотека фюзеляжів</h3>
+          <div class="fuselage-template-toolbar">
+            <label>Готовий або власний шаблон
+              <select id="fuselageTemplate"></select>
+            </label>
+            <button id="applyFuselageTemplate" type="button">Завантажити шаблон</button>
+            <label>Назва власного шаблону
+              <input id="fuselageTemplateName" type="text" placeholder="Мій фюзеляж">
+            </label>
+            <button id="saveFuselageTemplate" type="button">Зберегти у бібліотеці</button>
+            <button id="deleteFuselageTemplate" type="button" disabled>Видалити власний</button>
+          </div>
+          <p id="fuselageTemplateDescription">Виберіть готову форму або збережіть власну конфігурацію.</p>
           <div class="profile-library-grid fuselage-library-grid">
             <label>Секція для різання
               <select id="fuselageSegment"></select>
@@ -525,6 +542,12 @@ const servoChannelInputs = [1, 2].map(number => ({
   tipDiameter: document.querySelector(`#servo${number}TipDiameter`)
 }))
 const fuselageSegmentInput = document.querySelector('#fuselageSegment')
+const fuselageTemplateInput = document.querySelector('#fuselageTemplate')
+const applyFuselageTemplateButton = document.querySelector('#applyFuselageTemplate')
+const fuselageTemplateNameInput = document.querySelector('#fuselageTemplateName')
+const saveFuselageTemplateButton = document.querySelector('#saveFuselageTemplate')
+const deleteFuselageTemplateButton = document.querySelector('#deleteFuselageTemplate')
+const fuselageTemplateDescription = document.querySelector('#fuselageTemplateDescription')
 const fuselageLengthInput = document.querySelector('#fuselageLength')
 const fuselageWidthInput = document.querySelector('#fuselageWidth')
 const fuselageHeightInput = document.querySelector('#fuselageHeight')
@@ -655,6 +678,7 @@ let fuselageSectionSettings = Array.from({ length: defaultFuselageStations.lengt
   bottomThickness: 5
 }))
 let nextFuselageStationId = 1
+let userFuselageTemplates = loadUserFuselageTemplates()
 let libraryPreviewMode = 'wing'
 const libraryPreviewCamera = { yaw: -35, pitch: -22, zoom: 1, panX: 0, panY: 0 }
 const libraryMeasurement = { active: false, points: [], fontSize: 22 }
@@ -755,6 +779,88 @@ const escapeAttribute = value => String(value)
   .replaceAll('"', '&quot;')
   .replaceAll('<', '&lt;')
   .replaceAll('>', '&gt;')
+
+const allFuselageTemplates = () => [...builtinFuselageTemplates, ...userFuselageTemplates]
+
+const selectedFuselageTemplate = () => allFuselageTemplates()
+  .find(template => template.id === fuselageTemplateInput.value)
+
+const renderFuselageTemplateOptions = (selectedId = fuselageTemplateInput.value || 'glider') => {
+  fuselageTemplateInput.replaceChildren()
+  const addGroup = (label, templates) => {
+    const group = document.createElement('optgroup')
+    group.label = label
+    templates.forEach(template => {
+      const option = document.createElement('option')
+      option.value = template.id
+      option.textContent = template.name
+      group.appendChild(option)
+    })
+    fuselageTemplateInput.appendChild(group)
+  }
+  addGroup('Готові шаблони', builtinFuselageTemplates)
+  if (userFuselageTemplates.length) addGroup('Мої шаблони', userFuselageTemplates)
+  fuselageTemplateInput.value = allFuselageTemplates().some(template => template.id === selectedId)
+    ? selectedId
+    : 'glider'
+  const template = selectedFuselageTemplate()
+  fuselageTemplateDescription.textContent = template?.description || ''
+  deleteFuselageTemplateButton.disabled = !template || template.builtin
+  fuselageTemplateNameInput.value = template && !template.builtin ? template.name : ''
+}
+
+const captureCurrentFuselageTemplate = name => {
+  fuselageStations = readFuselageStations()
+  saveSelectedSectionSettings()
+  return {
+    name,
+    description: `Власний шаблон «${name}»`,
+    length: Math.max(1, Number(fuselageLengthInput.value) || 900),
+    width: Math.max(1, Number(fuselageWidthInput.value) || 140),
+    height: Math.max(1, Number(fuselageHeightInput.value) || 160),
+    stations: fuselageStations.map(station => ({ ...station })),
+    sectionSettings: fuselageSectionSettings.map(settings => ({ ...settings })),
+    tube: {
+      enabled: fuselageTubeInput.checked,
+      diameter: Math.max(1, Number(fuselageTubeDiameterInput.value) || 8),
+      clearance: Math.max(0, Number(fuselageTubeClearanceInput.value) || 0),
+      height: Number(fuselageTubeHeightInput.value) || 0,
+      sideOffset: Number(fuselageTubeSideOffsetInput.value) || 0,
+      start: Math.max(0, Number(fuselageTubeStartInput.value) || 0),
+      length: Math.max(1, Number(fuselageTubeLengthInput.value) || 1)
+    }
+  }
+}
+
+const applyFuselageTemplate = template => {
+  const copy = cloneFuselageTemplate(template)
+  fuselageLengthInput.value = copy.length
+  fuselageWidthInput.value = copy.width
+  fuselageHeightInput.value = copy.height
+  fuselageStations = copy.stations.map((station, index) => ({
+    ...station,
+    id: station.id || `template-${index}`
+  }))
+  fuselageSectionSettings = fuselageStations.slice(0, -1).map((station, index) => ({
+    hollow: Boolean(copy.sectionSettings?.[index]?.hollow),
+    wallThickness: Math.max(1, Number(copy.sectionSettings?.[index]?.wallThickness) || 5),
+    bottomThickness: Math.max(1, Number(copy.sectionSettings?.[index]?.bottomThickness) || 5)
+  }))
+  const tube = copy.tube || {}
+  fuselageTubeInput.checked = Boolean(tube.enabled)
+  fuselageTubeDiameterInput.value = tube.diameter ?? 8
+  fuselageTubeClearanceInput.value = tube.clearance ?? 0.4
+  fuselageTubeHeightInput.value = tube.height ?? 70
+  fuselageTubeSideOffsetInput.value = tube.sideOffset ?? 0
+  fuselageTubeStartInput.value = tube.start ?? 0
+  fuselageTubeLengthInput.value = tube.length ?? Math.max(1, copy.length - 50)
+  renderFuselageStations()
+  loadSelectedSectionSettings()
+  syncFuselageTubeControls()
+  fuselageLibraryStatus.className = 'profile-library-valid'
+  fuselageLibraryStatus.textContent = `Шаблон «${copy.name}» завантажено: ${fuselageStations.length - 1} секц.`
+  scheduleLibraryPreview('fuselage')
+}
 
 const renderFuselageStations = (selectedSegment = Number(fuselageSegmentInput.value) || 0) => {
   fuselageStationsElement.innerHTML = ''
@@ -965,6 +1071,50 @@ resetFuselageSectionsButton.addEventListener('click', () => {
 })
 
 renderFuselageStations()
+renderFuselageTemplateOptions()
+
+fuselageTemplateInput.addEventListener('change', () => {
+  const template = selectedFuselageTemplate()
+  fuselageTemplateDescription.textContent = template?.description || ''
+  deleteFuselageTemplateButton.disabled = !template || template.builtin
+  fuselageTemplateNameInput.value = template && !template.builtin ? template.name : ''
+})
+
+applyFuselageTemplateButton.addEventListener('click', () => {
+  const template = selectedFuselageTemplate()
+  if (template) applyFuselageTemplate(template)
+})
+
+saveFuselageTemplateButton.addEventListener('click', () => {
+  const name = fuselageTemplateNameInput.value.trim()
+  if (!name) {
+    fuselageLibraryStatus.className = 'profile-library-error'
+    fuselageLibraryStatus.textContent = 'Введіть назву власного шаблону'
+    return
+  }
+  const selected = selectedFuselageTemplate()
+  const existingIndex = selected && !selected.builtin
+    ? userFuselageTemplates.findIndex(template => template.id === selected.id)
+    : userFuselageTemplates.findIndex(template => template.name.toLocaleLowerCase() === name.toLocaleLowerCase())
+  const id = existingIndex >= 0 ? userFuselageTemplates[existingIndex].id : `user-${Date.now()}`
+  const template = { id, builtin: false, ...captureCurrentFuselageTemplate(name) }
+  if (existingIndex >= 0) userFuselageTemplates[existingIndex] = template
+  else userFuselageTemplates.push(template)
+  saveUserFuselageTemplates(userFuselageTemplates)
+  renderFuselageTemplateOptions(id)
+  fuselageLibraryStatus.className = 'profile-library-valid'
+  fuselageLibraryStatus.textContent = `Власний шаблон «${name}» збережено у бібліотеці цього комп’ютера`
+})
+
+deleteFuselageTemplateButton.addEventListener('click', () => {
+  const template = selectedFuselageTemplate()
+  if (!template || template.builtin) return
+  userFuselageTemplates = userFuselageTemplates.filter(item => item.id !== template.id)
+  saveUserFuselageTemplates(userFuselageTemplates)
+  renderFuselageTemplateOptions('glider')
+  fuselageLibraryStatus.className = 'profile-library-valid'
+  fuselageLibraryStatus.textContent = `Власний шаблон «${template.name}» видалено`
+})
 
 previewWingButton.addEventListener('click', () => scheduleLibraryPreview('wing'))
 previewFuselageButton.addEventListener('click', () => scheduleLibraryPreview('fuselage'))

@@ -590,6 +590,37 @@ code {
   color: var(--text-h);
 }
 
+.fuselage-template-toolbar {
+  display: grid;
+  grid-template-columns: minmax(190px, 1.2fr) auto minmax(180px, 1fr) auto auto;
+  gap: 8px;
+  align-items: end;
+  margin: 10px 0 6px;
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--surface) 92%, var(--accent));
+}
+
+.fuselage-template-toolbar label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  text-align: left;
+  font-size: 13px;
+}
+
+.fuselage-template-toolbar select,
+.fuselage-template-toolbar input {
+  box-sizing: border-box;
+  width: 100%;
+}
+
+#fuselageTemplateDescription {
+  margin: 5px 0 12px;
+  color: var(--muted);
+}
+
 .fuselage-hollow-toggle {
   justify-content: center;
 }
@@ -673,6 +704,10 @@ code {
 }
 
 @media (max-width: 800px) {
+  .fuselage-template-toolbar {
+    grid-template-columns: 1fr;
+  }
+
   .profile-library-workspace {
     grid-template-columns: 1fr;
   }
