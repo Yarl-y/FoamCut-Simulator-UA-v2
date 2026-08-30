@@ -13,6 +13,24 @@ const translate = (points, dx, dy) => points.map(point => ({
   y: point.y + dy
 }))
 
+const rotateQuarter = points => points?.map(point => ({
+  ...point,
+  x: -point.y,
+  y: point.x
+})) || null
+
+const orientPart = (part, rotated) => rotated
+  ? {
+      ...part,
+      outerLeft: rotateQuarter(part.outerLeft),
+      outerRight: rotateQuarter(part.outerRight),
+      innerLeft: rotateQuarter(part.innerLeft),
+      innerRight: rotateQuarter(part.innerRight),
+      cutLeft: rotateQuarter(part.cutLeft),
+      cutRight: rotateQuarter(part.cutRight)
+    }
+  : part
+
 export const createFuselageBatchLayout = (parts, settings = {}) => {
   const blockWidth = Number(settings.blockWidth) || 600
   const blockHeight = Number(settings.blockHeight) || 600
@@ -24,67 +42,88 @@ export const createFuselageBatchLayout = (parts, settings = {}) => {
     throw new Error('Розміри блока мають бути більшими за нуль')
   }
 
-  const measuredParts = parts.map(part => {
+  parts.forEach(part => {
     if (Number(part.span) > blockThickness) {
       throw new Error(`${part.name}: довжина секції ${Number(part.span).toFixed(1)} мм `
         + `більша за товщину блока ${blockThickness.toFixed(1)} мм`)
     }
+  })
+
+  const slotAssignments = settings.slotAssignments instanceof Map ? settings.slotAssignments : new Map()
+  const measure = (sourcePart, rotated) => {
+    const part = orientPart(sourcePart, rotated)
     const sourceBounds = boundsOf([...part.outerLeft, ...part.outerRight])
     const width = sourceBounds.maxX - sourceBounds.minX
     const height = sourceBounds.maxY - sourceBounds.minY
-    if (width + corridor > blockWidth || height + corridor > blockHeight) {
-      throw new Error(`${part.name}: потрібно ${(width + corridor).toFixed(1)}×${(height + corridor).toFixed(1)} мм `
-        + `з коридором, блок ${blockWidth.toFixed(1)}×${blockHeight.toFixed(1)} мм`)
+    return { part, sourceBounds, width, height, rotated }
+  }
+  const orderMeasured = measuredParts => {
+    if (!slotAssignments.size) {
+      return [...measuredParts].sort((first, second) => (
+        second.height - first.height || second.width - first.width
+      ))
     }
-    return { part, sourceBounds, width, height }
-  })
-
-  let orderedParts = [...measuredParts].sort((first, second) => (
-    second.height - first.height || second.width - first.width
-  ))
-  const slotAssignments = settings.slotAssignments instanceof Map ? settings.slotAssignments : new Map()
-  if (slotAssignments.size) {
     const slots = Array(parts.length).fill(null)
     const unplaced = []
-    for (const measured of measuredParts) {
+    measuredParts.forEach(measured => {
       const slot = slotAssignments.get(measured.part.id)
-      if (slot == null) {
-        unplaced.push(measured)
-        continue
-      }
+      if (slot == null) return unplaced.push(measured)
       const index = Math.floor(Number(slot))
       if (!Number.isInteger(index) || index < 0 || index >= slots.length) {
         throw new Error(`${measured.part.name}: закріплене місце ${index + 1} поза доступними 1–${slots.length}`)
       }
       if (slots[index]) throw new Error(`Місце ${index + 1} закріплено одночасно за двома секціями`)
       slots[index] = measured
-    }
+    })
     let unplacedIndex = 0
     for (let index = 0; index < slots.length && unplacedIndex < unplaced.length; index += 1) {
       if (!slots[index]) slots[index] = unplaced[unplacedIndex++]
     }
-    orderedParts = slots.filter(Boolean)
+    return slots.filter(Boolean)
+  }
+  const packShelves = orderedParts => {
+    const shelves = []
+    for (const measured of orderedParts) {
+      if (measured.width + corridor > blockWidth || measured.height + corridor > blockHeight) return null
+      let shelf = shelves.find(candidate => (
+        candidate.items.length < requestedColumns
+        && candidate.usedWidth + measured.width <= blockWidth - corridor / 2
+      ))
+      if (!shelf) {
+        shelf = { items: [], usedWidth: corridor / 2, height: measured.height }
+        shelves.push(shelf)
+      }
+      shelf.items.push(measured)
+      shelf.usedWidth += measured.width + corridor
+      shelf.height = Math.max(shelf.height, measured.height)
+    }
+    const usedHeight = shelves.reduce((sum, shelf) => sum + shelf.height, 0) + corridor * shelves.length
+    return usedHeight <= blockHeight ? { shelves, usedHeight } : null
   }
 
-  const shelves = []
-  for (const measured of orderedParts) {
-    let shelf = shelves.find(candidate => (
-      candidate.items.length < requestedColumns
-      && candidate.usedWidth + corridor + measured.width <= blockWidth - corridor
-    ))
-    if (!shelf) {
-      const usedHeight = shelves.reduce((sum, candidate) => sum + candidate.height, 0)
-        + corridor * (shelves.length + 1)
-      if (usedHeight + measured.height > blockHeight) {
-        throw new Error(`не вистачає місця за реальними габаритами ${orderedParts.length} секцій`)
-      }
-      shelf = { items: [], usedWidth: corridor / 2, height: measured.height }
-      shelves.push(shelf)
+  const orientationCount = parts.length <= 12 ? 2 ** parts.length : 2
+  let bestPacking = null
+  for (let mask = 0; mask < orientationCount; mask += 1) {
+    const measured = parts.map((part, index) => measure(part, Boolean(mask & (1 << index))))
+    const orderCandidates = slotAssignments.size
+      ? [orderMeasured(measured)]
+      : [
+          [...measured].sort((a, b) => b.height - a.height || b.width - a.width),
+          [...measured].sort((a, b) => b.width - a.width || b.height - a.height),
+          [...measured].sort((a, b) => b.width * b.height - a.width * a.height)
+        ]
+    for (const ordered of orderCandidates) {
+      const packed = packShelves(ordered)
+      if (!packed) continue
+      const occupiedWidth = Math.max(...packed.shelves.map(shelf => shelf.usedWidth), 0)
+      const score = packed.usedHeight * blockWidth + occupiedWidth
+      if (!bestPacking || score < bestPacking.score) bestPacking = { ...packed, ordered, score }
     }
-    shelf.items.push(measured)
-    shelf.usedWidth += measured.width + corridor
-    shelf.height = Math.max(shelf.height, measured.height)
   }
+  if (!bestPacking) {
+    throw new Error(`не вистачає місця для ${parts.length} секцій навіть з автоповоротом 90°`)
+  }
+  const { shelves } = bestPacking
 
   let topY = blockHeight - corridor / 2
   const positionedParts = []
@@ -99,13 +138,13 @@ export const createFuselageBatchLayout = (parts, settings = {}) => {
     topY -= shelf.height + corridor
   })
 
-  const items = positionedParts.map(({ part, sourceBounds, width, height, row, column, centerX, centerY }, slotIndex) => {
+  const items = positionedParts.map(({ part, sourceBounds, width, height, rotated, row, column, centerX, centerY }, slotIndex) => {
     const dx = centerX - (sourceBounds.minX + sourceBounds.maxX) / 2
     const dy = centerY - (sourceBounds.minY + sourceBounds.maxY) / 2
     return {
       part,
       index: slotIndex,
-      row, column,
+      row, column, rotated,
       dx,
       dy,
       outerLeft: translate(part.outerLeft, dx, dy),
@@ -279,7 +318,7 @@ export const renderBatchLayoutPreview = (svg, layout, side) => {
       x: item.bounds.minX + 4,
       y: layout.blockHeight - item.bounds.maxY + 15,
       fill: '#111827', 'font-size': 12, 'font-weight': 700
-    }, `${sectionNumber(item)}. ${item.part.name}`)
+    }, `${sectionNumber(item)}. ${item.part.name}${item.rotated ? ' · 90°' : ''}`)
   }
 }
 
@@ -336,7 +375,7 @@ export const createBatchCutRoute = layout => {
     }
     const portalLeft = { x: leftCut[0].x, y: laneY }
     const portalRight = { x: rightCut[0].x, y: laneY }
-    addMove(portalLeft, portalRight, `Секція ${sectionNumber(item)}: ${item.part.name}`)
+    addMove(portalLeft, portalRight, `Секція ${sectionNumber(item)}: ${item.part.name}${item.rotated ? ', поворот 90°' : ''}`)
     addMove(leftCut[0], rightCut[0], 'Вхід у деталь')
     for (let index = 1; index < leftCut.length; index += 1) {
       addMove(leftCut[index], rightCut[index])
@@ -484,7 +523,7 @@ export const createBatchSetupMapSvg = (layout, route, options = {}) => {
     const leftBounds = boundsOf(item.outerLeft)
     const rightBounds = boundsOf(item.outerRight)
     const type = item.innerLeft || item.innerRight ? 'порожниста' : 'суцільна'
-    fragments.push(`<text x="${x}" y="${y}" font-family="Arial" font-size="14">${sectionNumber(item)}. ${xmlEscape(item.part.name)} · ${type} · X/Y ${leftBounds.minX.toFixed(1)};${leftBounds.minY.toFixed(1)} · A/Z ${rightBounds.minX.toFixed(1)};${rightBounds.minY.toFixed(1)} мм</text>`)
+    fragments.push(`<text x="${x}" y="${y}" font-family="Arial" font-size="14">${sectionNumber(item)}. ${xmlEscape(item.part.name)} · ${type}${item.rotated ? ' · поворот 90°' : ''} · X/Y ${leftBounds.minX.toFixed(1)};${leftBounds.minY.toFixed(1)} · A/Z ${rightBounds.minX.toFixed(1)};${rightBounds.minY.toFixed(1)} мм</text>`)
   })
   fragments.push(`<text x="${pageWidth / 2}" y="${pageHeight - 22}" text-anchor="middle" font-family="Arial" font-size="13" fill="#475569">Зелений пунктир — безпечний маршрут; фіолетовий пунктир — внутрішній контур, який ріжеться першим.</text>`)
   fragments.push('</svg>')

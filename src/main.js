@@ -2759,7 +2759,11 @@ const buildBatchLayoutPreview = () => {
     downloadAllBatchNcButton.disabled = currentBatchPackages.length === 0 || invalid.length > 0
     batchLayoutStatus.className = invalid.length ? 'batch-layout-error' : 'batch-layout-valid'
     batchLayoutStatus.textContent = `${fuselageParts.length} секцій розподілено між ${currentBatchPackages.length} із ${batchBlocks.length} блоків: `
-      + currentBatchPackages.map(item => `${item.layout.block.name} — ${item.layout.items.length} секц. у ${item.layout.rows} рядах`).join('; ')
+      + currentBatchPackages.map(item => {
+          const rotated = item.layout.items.filter(section => section.rotated).length
+          return `${item.layout.block.name} — ${item.layout.items.length} секц. у ${item.layout.rows} рядах`
+            + (rotated ? `, повернуто 90°: ${rotated}` : '')
+        }).join('; ')
       + (invalid.length ? `. NC заблоковано для: ${invalid.map(item => item.layout.block.name).join(', ')}` : '. Усі NC пройшли перевірку.')
   } catch (error) {
     clearBatchResult(`Розкладку не побудовано: ${error.message}`)
