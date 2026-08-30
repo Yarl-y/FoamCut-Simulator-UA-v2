@@ -374,21 +374,29 @@ view3d.innerHTML = `
       <span id="assemblyFileStatus">Збірку ще не збережено</span>
     </div>
     <p id="assemblyCandidateStatus">Спочатку побудуйте крило або секцію фюзеляжу</p>
-    <div id="assemblyPartsList" class="assembly-parts-list"></div>
-    <div class="assembly-orbit-controls">
-      <button data-assembly-camera="iso">Ізометрія</button>
-      <button data-assembly-camera="front">Спереду</button>
-      <button data-assembly-camera="side">Збоку</button>
-      <button data-assembly-camera="top">Зверху</button>
-      <button id="measureAssembly" type="button">Рулетка</button>
-      <button id="clearAssemblyMeasure" type="button">Очистити</button>
-      <button id="smallerAssemblyMeasure" type="button">Текст −</button>
-      <button id="largerAssemblyMeasure" type="button">Текст +</button>
-      <button id="expandAssemblyView" type="button">На весь екран</button>
+    <div class="assembly-layout">
+      <div class="assembly-view-column">
+        <div class="assembly-orbit-controls">
+          <button data-assembly-camera="iso">Ізометрія</button>
+          <button data-assembly-camera="front">Спереду</button>
+          <button data-assembly-camera="side">Збоку</button>
+          <button data-assembly-camera="top">Зверху</button>
+          <button id="measureAssembly" type="button">Рулетка</button>
+          <button id="clearAssemblyMeasure" type="button">Очистити</button>
+          <button id="smallerAssemblyMeasure" type="button">Текст −</button>
+          <button id="largerAssemblyMeasure" type="button">Текст +</button>
+          <button id="expandAssemblyView" type="button">На весь екран</button>
+        </div>
+        <p class="orbit-help">Збірка: короткий клік — вибір деталі; ліва кнопка — орбіта; Shift + ліва або права — переміщення; коліщатко — масштаб</p>
+        <svg id="assemblySvg" viewBox="0 0 800 500" width="800" height="500"></svg>
+        <p id="assemblyStatus">Збірка поки порожня</p>
+      </div>
+      <aside class="assembly-parts-panel">
+        <h3>Деталі та координати</h3>
+        <p id="assemblySelectionStatus">Клацніть деталь у 3D або виберіть її зі списку</p>
+        <div id="assemblyPartsList" class="assembly-parts-list"></div>
+      </aside>
     </div>
-    <p class="orbit-help">Збірка: ліва кнопка — орбіта; Shift + ліва або права — переміщення; коліщатко — масштаб</p>
-    <svg id="assemblySvg" viewBox="0 0 800 500" width="800" height="500"></svg>
-    <p id="assemblyStatus">Збірка поки порожня</p>
   </section>
   <section class="batch-layout-workspace" data-workspace="blocks">
     <h2>Менеджер блоків і розкладка деталей</h2>
@@ -622,6 +630,7 @@ const assemblyCandidateStatus = document.getElementById('assemblyCandidateStatus
 const assemblyPartsList = document.getElementById('assemblyPartsList')
 const assemblySvg = document.getElementById('assemblySvg')
 const assemblyStatus = document.getElementById('assemblyStatus')
+const assemblySelectionStatus = document.getElementById('assemblySelectionStatus')
 const measureAssemblyButton = document.getElementById('measureAssembly')
 const clearAssemblyMeasureButton = document.getElementById('clearAssemblyMeasure')
 const smallerAssemblyMeasureButton = document.getElementById('smallerAssemblyMeasure')
@@ -685,6 +694,7 @@ const libraryMeasurement = { active: false, points: [], fontSize: 22 }
 const assemblyMeasurement = { active: false, points: [], fontSize: 22 }
 const assemblyParts = []
 let nextAssemblyPartId = 1
+let selectedAssemblyPartId = null
 const assemblyCamera = { yaw: -35, pitch: -22, zoom: 1, panX: 0, panY: 0 }
 const dxfSides = {
   left: {
@@ -2109,13 +2119,43 @@ const updateAssemblyCandidateControls = () => {
     : 'Спочатку побудуйте крило або секцію фюзеляжу'
 }
 
+const syncAssemblySelectionUi = () => {
+  let selectedPart = assemblyParts.find(part => part.id === selectedAssemblyPartId)
+  if (!selectedPart) {
+    selectedAssemblyPartId = null
+    selectedPart = null
+  }
+  assemblyPartsList.querySelectorAll('.assembly-part-row').forEach(row => {
+    row.classList.toggle('selected', String(selectedAssemblyPartId) === row.dataset.partId)
+  })
+  assemblySelectionStatus.textContent = selectedPart
+    ? `${selectedPart.name}: X ${selectedPart.offsets.x} · Y ${selectedPart.offsets.y} · Z ${selectedPart.offsets.z} мм`
+    : 'Клацніть деталь у 3D або виберіть її зі списку'
+}
+
 const updateAssemblySvg = () => {
-  const result = renderAssemblyView(assemblySvg, assemblyParts, assemblyCamera, assemblyMeasurement)
+  const renderedParts = assemblyParts.map(part => ({
+    ...part,
+    assemblySelected: part.id === selectedAssemblyPartId
+  }))
+  const result = renderAssemblyView(assemblySvg, renderedParts, assemblyCamera, assemblyMeasurement)
   saveAssemblyButton.disabled = assemblyParts.length === 0
   assemblyStatus.textContent = result.visibleCount
     ? `У збірці ${assemblyParts.length} деталей; показано ${result.visibleCount}. `
       + 'Виберіть потрібну деталь для симуляції та створення NC.'
     : `У збірці ${assemblyParts.length} деталей; усі деталі приховані`
+  syncAssemblySelectionUi()
+}
+
+const selectAssemblyPartInWorkspace = (partId, scrollToRow = true) => {
+  const part = assemblyParts.find(item => item.id === partId)
+  if (!part) return
+  selectedAssemblyPartId = part.id
+  updateAssemblySvg()
+  const row = [...assemblyPartsList.querySelectorAll('.assembly-part-row')]
+    .find(element => element.dataset.partId === String(part.id))
+  if (scrollToRow) row?.scrollIntoView({ block: 'nearest', behavior: 'smooth' })
+  assemblyStatus.textContent = `${part.name} вибрано у збірці; координати показано праворуч`
 }
 
 const selectedBatchBlock = () => batchBlocks.find(block => block.id === Number(batchBlockSelect.value)) || batchBlocks[0]
@@ -2424,6 +2464,8 @@ const renderAssemblyPartsList = () => {
   for (const part of assemblyParts) {
     const row = document.createElement('div')
     row.className = 'assembly-part-row'
+    row.dataset.partId = part.id
+    row.classList.toggle('selected', part.id === selectedAssemblyPartId)
     const visibleLabel = document.createElement('label')
     const visibleInput = document.createElement('input')
     visibleInput.type = 'checkbox'
@@ -2458,7 +2500,10 @@ const renderAssemblyPartsList = () => {
 
     const selectButton = document.createElement('button')
     selectButton.textContent = 'Вибрати для різання'
-    selectButton.addEventListener('click', () => selectAssemblyPartForCutting(part))
+    selectButton.addEventListener('click', () => {
+      selectAssemblyPartInWorkspace(part.id)
+      selectAssemblyPartForCutting(part)
+    })
     row.appendChild(selectButton)
     assemblyPartsList.appendChild(row)
   }
@@ -2684,6 +2729,7 @@ loadAssemblyButton.addEventListener('click', async () => {
   try {
     const assembly = parseAssemblyFile(await file.text())
     assemblyParts.splice(0, assemblyParts.length, ...assembly.parts)
+    selectedAssemblyPartId = null
     nextAssemblyPartId = Math.max(...assemblyParts.map(part => part.id), 0) + 1
     renderAssemblyPartsList()
     assemblyFileStatus.textContent = `Збірку ${file.name} відкрито: ${assemblyParts.length} деталей`
@@ -2725,9 +2771,13 @@ smallerAssemblyMeasureButton.addEventListener('click', () => {
 largerAssemblyMeasureButton.addEventListener('click', () => {
   adjustMeasurementText(assemblyMeasurement, 2, updateAssemblySvg)
 })
+let assemblySuppressClick = false
 assemblySvg.addEventListener('click', event => {
   if (assemblyMeasurement.active) {
     selectMeasurementPoint(assemblySvg, assemblyMeasurement, event, updateAssemblySvg)
+  } else if (!assemblySuppressClick) {
+    const partElement = event.target.closest?.('[data-assembly-part-id]')
+    if (partElement) selectAssemblyPartInWorkspace(Number(partElement.dataset.assemblyPartId))
   }
 })
 let assemblyCameraDrag = null
@@ -2735,7 +2785,7 @@ assemblySvg.addEventListener('pointerdown', event => {
   if (assemblyMeasurement.active) return
   const pan = event.button === 2 || (event.button === 0 && event.shiftKey)
   if (event.button !== 0 && event.button !== 2) return
-  assemblyCameraDrag = { x: event.clientX, y: event.clientY, pan }
+  assemblyCameraDrag = { x: event.clientX, y: event.clientY, pan, moved: false }
   assemblySvg.setPointerCapture(event.pointerId)
   event.preventDefault()
 })
@@ -2743,6 +2793,7 @@ assemblySvg.addEventListener('pointermove', event => {
   if (!assemblyCameraDrag) return
   const deltaX = event.clientX - assemblyCameraDrag.x
   const deltaY = event.clientY - assemblyCameraDrag.y
+  if (Math.hypot(deltaX, deltaY) > 2) assemblyCameraDrag.moved = true
   assemblyCameraDrag.x = event.clientX
   assemblyCameraDrag.y = event.clientY
   if (assemblyCameraDrag.pan) {
@@ -2755,8 +2806,10 @@ assemblySvg.addEventListener('pointermove', event => {
   updateAssemblySvg()
 })
 assemblySvg.addEventListener('pointerup', event => {
+  assemblySuppressClick = Boolean(assemblyCameraDrag?.moved)
   assemblyCameraDrag = null
   if (assemblySvg.hasPointerCapture(event.pointerId)) assemblySvg.releasePointerCapture(event.pointerId)
+  setTimeout(() => { assemblySuppressClick = false }, 0)
 })
 assemblySvg.addEventListener('pointercancel', () => { assemblyCameraDrag = null })
 assemblySvg.addEventListener('contextmenu', event => event.preventDefault())

@@ -369,6 +369,14 @@ code {
   aspect-ratio: auto;
 }
 
+.viewer-expanded .assembly-layout {
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+
+.viewer-expanded .assembly-parts-list {
+  max-height: calc(100vh - 250px);
+}
+
 .viewer-expanded .batch-layout-previews svg {
   height: min(68vh, 720px);
   aspect-ratio: auto;
@@ -599,7 +607,7 @@ code {
   padding: 10px;
   border: 1px solid var(--border);
   border-radius: 8px;
-  background: color-mix(in srgb, var(--surface) 92%, var(--accent));
+  background: color-mix(in srgb, var(--bg) 92%, var(--accent));
 }
 
 .fuselage-template-toolbar label {
@@ -981,6 +989,42 @@ code {
   border-top: 2px solid var(--border);
 }
 
+.assembly-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 14px;
+  align-items: start;
+}
+
+.assembly-view-column {
+  min-width: 0;
+}
+
+.assembly-parts-panel {
+  box-sizing: border-box;
+  width: 360px;
+  min-width: 280px;
+  max-width: min(48vw, 620px);
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--code-bg);
+  resize: horizontal;
+  overflow: auto;
+}
+
+.assembly-parts-panel h3 {
+  margin: 0 0 6px;
+}
+
+#assemblySelectionStatus {
+  min-height: 36px;
+  margin: 5px 0 8px;
+  color: #047857;
+  font-size: 13px;
+  font-weight: 700;
+}
+
 .assembly-actions {
   display: flex;
   flex-wrap: wrap;
@@ -1014,18 +1058,26 @@ code {
   display: flex;
   flex-direction: column;
   gap: 7px;
-  margin: 10px 0;
+  max-height: min(66vh, 680px);
+  margin: 0;
+  overflow-y: auto;
 }
 
 .assembly-part-row {
-  display: flex;
-  flex-wrap: wrap;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   align-items: center;
-  justify-content: center;
-  gap: 7px 10px;
+  gap: 7px;
   padding: 8px;
   border: 1px solid var(--border);
   border-radius: 7px;
+  background: var(--bg);
+  transition: border-color 120ms ease, box-shadow 120ms ease;
+}
+
+.assembly-part-row.selected {
+  border-color: #10b981;
+  box-shadow: 0 0 0 2px rgb(16 185 129 / 22%);
 }
 
 .assembly-part-row label {
@@ -1036,12 +1088,17 @@ code {
 }
 
 .assembly-part-row label:first-child {
-  min-width: 220px;
+  grid-column: 1 / -1;
+  min-width: 0;
   font-weight: 600;
 }
 
 .assembly-part-row input[type='number'] {
-  width: 58px;
+  width: 54px;
+}
+
+.assembly-part-row button {
+  grid-column: 1 / -1;
 }
 
 #assemblySvg {
@@ -1058,6 +1115,24 @@ code {
 
 #assemblySvg:active {
   cursor: grabbing;
+}
+
+.assembly-model-part {
+  cursor: pointer;
+}
+
+@media (max-width: 900px) {
+  .assembly-layout,
+  .viewer-expanded .assembly-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .assembly-parts-panel {
+    width: 100%;
+    min-width: 0;
+    max-width: none;
+    resize: none;
+  }
 }
 
 .batch-layout-workspace {

@@ -100,9 +100,13 @@ export const renderAssemblyView = (svg, parts, camera = {}, measurement = null) 
   }
 
   for (const { part, root, tip } of geometries) {
+    const partGroup = svgElement('g', {
+      'data-assembly-part-id': part.id,
+      class: 'assembly-model-part'
+    }, svg)
     const color = part.previewInner
       ? colors.inner
-      : part.previewSelected
+      : part.previewSelected || part.assemblySelected
       ? colors.selected
       : colors[part.kind === 'fuselage' ? 'fuselage' : part.side]
     const step = Math.max(1, Math.floor(Math.min(root.length, tip.length) / 64))
@@ -117,7 +121,7 @@ export const renderAssemblyView = (svg, parts, camera = {}, measurement = null) 
         stroke: color.stroke,
         'stroke-opacity': '0.22',
         'stroke-width': '0.8'
-      }, svg)
+      }, partGroup)
     }
 
     for (const profile of [root, tip]) {
@@ -126,7 +130,7 @@ export const renderAssemblyView = (svg, parts, camera = {}, measurement = null) 
         fill: 'none',
         stroke: color.stroke,
         'stroke-width': '2.2'
-      }, svg)
+      }, partGroup)
     }
 
     if (part.kind === 'wing') {
@@ -146,7 +150,7 @@ export const renderAssemblyView = (svg, parts, camera = {}, measurement = null) 
           x1: first[0], y1: first[1], x2: second[0], y2: second[1],
           stroke: '#111827', 'stroke-width': Math.max(2, rod.diameter * scale),
           'stroke-opacity': '0.72', 'stroke-linecap': 'round'
-        }, svg)
+        }, partGroup)
       }
       for (const channel of part.servoChannels || []) {
         const first = project({
@@ -163,7 +167,7 @@ export const renderAssemblyView = (svg, parts, camera = {}, measurement = null) 
           x1: first[0], y1: first[1], x2: second[0], y2: second[1],
           stroke: '#f97316', 'stroke-width': '4', 'stroke-dasharray': '7 4',
           'stroke-opacity': '0.8'
-        }, svg)
+        }, partGroup)
       }
     }
 
@@ -178,7 +182,7 @@ export const renderAssemblyView = (svg, parts, camera = {}, measurement = null) 
           svgElement('polyline', {
             points: [...profile, profile[0]].map(point => project(point).join(',')).join(' '),
             fill: 'none', stroke: '#7c3aed', 'stroke-width': '2', 'stroke-dasharray': '6 3'
-          }, svg)
+          }, partGroup)
         }
       }
       for (const rod of part.straightSparRods || []) {
@@ -196,7 +200,7 @@ export const renderAssemblyView = (svg, parts, camera = {}, measurement = null) 
           x1: first[0], y1: first[1], x2: second[0], y2: second[1],
           stroke: '#111827', 'stroke-width': Math.max(2, rod.diameter * scale),
           'stroke-opacity': '0.8', 'stroke-linecap': 'round'
-        }, svg)
+        }, partGroup)
       }
     }
 
@@ -207,7 +211,7 @@ export const renderAssemblyView = (svg, parts, camera = {}, measurement = null) 
       fill: color.stroke,
       'font-size': '13',
       'font-weight': '700'
-    }, svg).textContent = part.name
+    }, partGroup).textContent = part.name
   }
 
   if (measurement?.points?.length) {
