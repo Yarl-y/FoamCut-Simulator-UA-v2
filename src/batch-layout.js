@@ -17,74 +17,95 @@ export const createFuselageBatchLayout = (parts, settings = {}) => {
   const blockWidth = Number(settings.blockWidth) || 600
   const blockHeight = Number(settings.blockHeight) || 600
   const blockThickness = Number(settings.blockThickness) || 100
-  const columns = Math.max(1, Math.floor(Number(settings.columns) || 3))
+  const requestedColumns = Math.max(1, Math.floor(Number(settings.columns) || parts.length))
   const corridor = Math.max(0, Number(settings.corridor) || 0)
   if (!parts.length) throw new Error('У збірці немає видимих секцій фюзеляжу')
   if ([blockWidth, blockHeight, blockThickness].some(value => value <= 0)) {
     throw new Error('Розміри блока мають бути більшими за нуль')
   }
 
-  const rows = Math.ceil(parts.length / columns)
-  const cellWidth = blockWidth / columns
-  const cellHeight = blockHeight / rows
-  const availableWidth = cellWidth - corridor
-  const availableHeight = cellHeight - corridor
-  if (availableWidth <= 0 || availableHeight <= 0) {
-    throw new Error('Безпечний коридор завеликий для вибраної сітки')
-  }
+  const measuredParts = parts.map(part => {
+    if (Number(part.span) > blockThickness) {
+      throw new Error(`${part.name}: довжина секції ${Number(part.span).toFixed(1)} мм `
+        + `більша за товщину блока ${blockThickness.toFixed(1)} мм`)
+    }
+    const sourceBounds = boundsOf([...part.outerLeft, ...part.outerRight])
+    const width = sourceBounds.maxX - sourceBounds.minX
+    const height = sourceBounds.maxY - sourceBounds.minY
+    if (width + corridor > blockWidth || height + corridor > blockHeight) {
+      throw new Error(`${part.name}: потрібно ${(width + corridor).toFixed(1)}×${(height + corridor).toFixed(1)} мм `
+        + `з коридором, блок ${blockWidth.toFixed(1)}×${blockHeight.toFixed(1)} мм`)
+    }
+    return { part, sourceBounds, width, height }
+  })
 
-  let positionedParts = parts.map((part, slotIndex) => ({ part, slotIndex }))
+  let orderedParts = [...measuredParts].sort((first, second) => (
+    second.height - first.height || second.width - first.width
+  ))
   const slotAssignments = settings.slotAssignments instanceof Map ? settings.slotAssignments : new Map()
   if (slotAssignments.size) {
-    const slotCount = rows * columns
-    const slots = Array(slotCount).fill(null)
+    const slots = Array(parts.length).fill(null)
     const unplaced = []
-    for (const part of parts) {
-      const slot = slotAssignments.get(part.id)
+    for (const measured of measuredParts) {
+      const slot = slotAssignments.get(measured.part.id)
       if (slot == null) {
-        unplaced.push(part)
+        unplaced.push(measured)
         continue
       }
       const index = Math.floor(Number(slot))
-      if (!Number.isInteger(index) || index < 0 || index >= slotCount) {
-        throw new Error(`${part.name}: закріплене місце ${index + 1} поза доступними 1–${slotCount}`)
+      if (!Number.isInteger(index) || index < 0 || index >= slots.length) {
+        throw new Error(`${measured.part.name}: закріплене місце ${index + 1} поза доступними 1–${slots.length}`)
       }
       if (slots[index]) throw new Error(`Місце ${index + 1} закріплено одночасно за двома секціями`)
-      slots[index] = part
+      slots[index] = measured
     }
     let unplacedIndex = 0
     for (let index = 0; index < slots.length && unplacedIndex < unplaced.length; index += 1) {
       if (!slots[index]) slots[index] = unplaced[unplacedIndex++]
     }
-    positionedParts = slots
-      .map((part, slotIndex) => part ? { part, slotIndex } : null)
-      .filter(Boolean)
+    orderedParts = slots.filter(Boolean)
   }
 
-  const items = positionedParts.map(({ part, slotIndex }) => {
-    if (Number(part.span) > blockThickness) {
-      throw new Error(`${part.name}: довжина секції ${Number(part.span).toFixed(1)} мм `
-        + `більша за товщину блока ${blockThickness.toFixed(1)} мм`)
+  const shelves = []
+  for (const measured of orderedParts) {
+    let shelf = shelves.find(candidate => (
+      candidate.items.length < requestedColumns
+      && candidate.usedWidth + corridor + measured.width <= blockWidth - corridor
+    ))
+    if (!shelf) {
+      const usedHeight = shelves.reduce((sum, candidate) => sum + candidate.height, 0)
+        + corridor * (shelves.length + 1)
+      if (usedHeight + measured.height > blockHeight) {
+        throw new Error(`не вистачає місця за реальними габаритами ${orderedParts.length} секцій`)
+      }
+      shelf = { items: [], usedWidth: corridor / 2, height: measured.height }
+      shelves.push(shelf)
     }
-    const sourcePoints = [...part.outerLeft, ...part.outerRight]
-    const sourceBounds = boundsOf(sourcePoints)
-    const width = sourceBounds.maxX - sourceBounds.minX
-    const height = sourceBounds.maxY - sourceBounds.minY
-    if (width > availableWidth || height > availableHeight) {
-      throw new Error(`${part.name}: потрібно ${width.toFixed(1)}×${height.toFixed(1)} мм, `
-        + `доступно ${availableWidth.toFixed(1)}×${availableHeight.toFixed(1)} мм`)
-    }
-    const column = slotIndex % columns
-    const row = Math.floor(slotIndex / columns)
-    const centerX = column * cellWidth + cellWidth / 2
-    const centerY = blockHeight - (row * cellHeight + cellHeight / 2)
+    shelf.items.push(measured)
+    shelf.usedWidth += measured.width + corridor
+    shelf.height = Math.max(shelf.height, measured.height)
+  }
+
+  let topY = blockHeight - corridor / 2
+  const positionedParts = []
+  shelves.forEach((shelf, row) => {
+    let leftX = corridor / 2
+    shelf.items.forEach((measured, column) => {
+      const centerX = leftX + measured.width / 2
+      const centerY = topY - shelf.height / 2
+      positionedParts.push({ ...measured, row, column, centerX, centerY })
+      leftX += measured.width + corridor
+    })
+    topY -= shelf.height + corridor
+  })
+
+  const items = positionedParts.map(({ part, sourceBounds, width, height, row, column, centerX, centerY }, slotIndex) => {
     const dx = centerX - (sourceBounds.minX + sourceBounds.maxX) / 2
     const dy = centerY - (sourceBounds.minY + sourceBounds.maxY) / 2
     return {
       part,
       index: slotIndex,
-      row,
-      column,
+      row, column,
       dx,
       dy,
       outerLeft: translate(part.outerLeft, dx, dy),
@@ -102,7 +123,23 @@ export const createFuselageBatchLayout = (parts, settings = {}) => {
     }
   })
 
-  return { blockWidth, blockHeight, blockThickness, columns, rows, corridor, cellWidth, cellHeight, items }
+  const rows = shelves.length
+  const columns = Math.max(1, ...shelves.map(shelf => shelf.items.length))
+  const slotRects = items.map(item => ({
+    index: item.index,
+    minX: Math.max(0, item.bounds.minX - corridor / 2),
+    maxX: Math.min(blockWidth, item.bounds.maxX + corridor / 2),
+    minY: Math.max(0, item.bounds.minY - corridor / 2),
+    maxY: Math.min(blockHeight, item.bounds.maxY + corridor / 2)
+  }))
+  const rowLanes = shelves.map((shelf, row) => {
+    const rowItems = items.filter(item => item.row === row)
+    return Math.max(corridor / 2, Math.min(...rowItems.map(item => item.bounds.minY)) - corridor / 2)
+  })
+  return {
+    blockWidth, blockHeight, blockThickness, columns, rows, corridor, items, slotRects, rowLanes,
+    cellWidth: blockWidth / columns, cellHeight: blockHeight / rows, adaptive: true
+  }
 }
 
 export const createMultiBlockLayouts = (
@@ -188,17 +225,25 @@ export const renderBatchLayoutPreview = (svg, layout, side) => {
     x: 0, y: 0, width: layout.blockWidth, height: layout.blockHeight,
     fill: '#fef3c7', stroke: '#92400e', 'stroke-width': 2
   })
-  for (let column = 1; column < layout.columns; column += 1) {
-    addSvg(svg, 'line', {
-      x1: column * layout.cellWidth, y1: 0, x2: column * layout.cellWidth, y2: layout.blockHeight,
-      stroke: '#a16207', 'stroke-width': 1, 'stroke-dasharray': '7 5'
-    })
-  }
-  for (let row = 1; row < layout.rows; row += 1) {
-    addSvg(svg, 'line', {
-      x1: 0, y1: row * layout.cellHeight, x2: layout.blockWidth, y2: row * layout.cellHeight,
-      stroke: '#a16207', 'stroke-width': 1, 'stroke-dasharray': '7 5'
-    })
+  if (layout.adaptive) {
+    layout.slotRects.forEach(rect => addSvg(svg, 'rect', {
+      x: rect.minX, y: layout.blockHeight - rect.maxY,
+      width: rect.maxX - rect.minX, height: rect.maxY - rect.minY,
+      fill: 'none', stroke: '#a16207', 'stroke-width': 1, 'stroke-dasharray': '7 5'
+    }))
+  } else {
+    for (let column = 1; column < layout.columns; column += 1) {
+      addSvg(svg, 'line', {
+        x1: column * layout.cellWidth, y1: 0, x2: column * layout.cellWidth, y2: layout.blockHeight,
+        stroke: '#a16207', 'stroke-width': 1, 'stroke-dasharray': '7 5'
+      })
+    }
+    for (let row = 1; row < layout.rows; row += 1) {
+      addSvg(svg, 'line', {
+        x1: 0, y1: row * layout.cellHeight, x2: layout.blockWidth, y2: row * layout.cellHeight,
+        stroke: '#a16207', 'stroke-width': 1, 'stroke-dasharray': '7 5'
+      })
+    }
   }
 
   const stroke = side === 'left' ? '#2563eb' : '#dc2626'
@@ -265,7 +310,8 @@ export const createBatchCutRoute = layout => {
   let currentRow = layout.rows - 1
 
   orderedItems.forEach((item, orderIndex) => {
-    const laneY = layout.blockHeight - (item.row + 1) * layout.cellHeight + edgeInset
+    const laneY = layout.rowLanes?.[item.row]
+      ?? layout.blockHeight - (item.row + 1) * layout.cellHeight + edgeInset
     const rowEntryX = item.row % 2 === 0 ? edgeInset : layout.blockWidth - edgeInset
     if (orderIndex === 0 || item.row !== currentRow) {
       const transitionX = orderIndex === 0
@@ -392,13 +438,21 @@ export const createBatchSetupMapSvg = (layout, route, options = {}) => {
     const originY = panelTop
     fragments.push(`<text x="${originX + drawingWidth / 2}" y="${originY - 14}" text-anchor="middle" font-family="Arial" font-size="20" font-weight="700" fill="${color}">${title}</text>`)
     fragments.push(`<rect x="${originX}" y="${originY}" width="${drawingWidth}" height="${drawingHeight}" fill="#fef3c7" stroke="#92400e" stroke-width="2"/>`)
-    for (let column = 1; column < layout.columns; column += 1) {
-      const x = originX + column * layout.cellWidth * scale
-      fragments.push(`<line x1="${x}" y1="${originY}" x2="${x}" y2="${originY + drawingHeight}" stroke="#a16207" stroke-dasharray="7 5"/>`)
-    }
-    for (let row = 1; row < layout.rows; row += 1) {
-      const y = originY + row * layout.cellHeight * scale
-      fragments.push(`<line x1="${originX}" y1="${y}" x2="${originX + drawingWidth}" y2="${y}" stroke="#a16207" stroke-dasharray="7 5"/>`)
+    if (layout.adaptive) {
+      layout.slotRects.forEach(rect => {
+        const x = originX + rect.minX * scale
+        const y = originY + (layout.blockHeight - rect.maxY) * scale
+        fragments.push(`<rect x="${x}" y="${y}" width="${(rect.maxX - rect.minX) * scale}" height="${(rect.maxY - rect.minY) * scale}" fill="none" stroke="#a16207" stroke-dasharray="7 5"/>`)
+      })
+    } else {
+      for (let column = 1; column < layout.columns; column += 1) {
+        const x = originX + column * layout.cellWidth * scale
+        fragments.push(`<line x1="${x}" y1="${originY}" x2="${x}" y2="${originY + drawingHeight}" stroke="#a16207" stroke-dasharray="7 5"/>`)
+      }
+      for (let row = 1; row < layout.rows; row += 1) {
+        const y = originY + row * layout.cellHeight * scale
+        fragments.push(`<line x1="${originX}" y1="${y}" x2="${originX + drawingWidth}" y2="${y}" stroke="#a16207" stroke-dasharray="7 5"/>`)
+      }
     }
     const routePoints = route.events.map(event => side === 'left' ? event.left : event.right)
     fragments.push(`<polyline points="${mapPolyline(routePoints, originX, originY, scale, layout.blockHeight)}" fill="none" stroke="#16a34a" stroke-width="2" stroke-dasharray="5 4"/>`)

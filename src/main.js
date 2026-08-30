@@ -453,13 +453,13 @@ view3d.innerHTML = `
       <label>Ширина блока, мм <input id="batchBlockWidth" type="number" min="1" step="1" value="600"></label>
       <label>Висота блока, мм <input id="batchBlockHeight" type="number" min="1" step="1" value="600"></label>
       <label>Товщина вздовж струни, мм <input id="batchBlockThickness" type="number" min="1" step="1" value="100"></label>
-      <label>Стовпців <input id="batchColumns" type="number" min="1" max="9" step="1" value="3"></label>
+      <label>Макс. секцій у ряду <input id="batchColumns" type="number" min="1" max="20" step="1" value="3"></label>
       <label>Безпечний коридор, мм <input id="batchCorridor" type="number" min="0" step="1" value="20"></label>
       <button id="buildBatchLayout" type="button">Автоматично розподілити секції</button>
       <button id="expandBatchView" type="button">На весь екран</button>
     </div>
     <p id="batchLayoutStatus">Додайте секції до збірки та натисніть «Розкласти секції»</p>
-    <p class="batch-drag-help">Перетягніть секцію мишкою у потрібну комірку. Зайняті секції автоматично поміняються місцями.</p>
+    <p class="batch-drag-help">Секції розкладаються за реальними габаритами. Перетягніть секцію мишкою, щоб поміняти місця в щільній розкладці.</p>
     <div class="batch-layout-previews">
       <div><h3>Ліва сторона X/Y</h3><svg id="batchLeftSvg"></svg></div>
       <div><h3>Права сторона A/Z</h3><svg id="batchRightSvg"></svg></div>
@@ -2651,15 +2651,22 @@ const clearBatchDropHighlight = () => {
 
 const showBatchDropHighlight = (layout, slot) => {
   clearBatchDropHighlight()
+  const adaptiveRect = layout.slotRects?.find(rect => rect.index === slot)
   const row = Math.floor(slot / layout.columns)
   const column = slot % layout.columns
   ;[batchLeftSvg, batchRightSvg].forEach(svg => {
     const rectangle = document.createElementNS('http://www.w3.org/2000/svg', 'rect')
     rectangle.classList.add('batch-drop-target')
-    rectangle.setAttribute('x', column * layout.cellWidth + 2)
-    rectangle.setAttribute('y', row * layout.cellHeight + 2)
-    rectangle.setAttribute('width', Math.max(0, layout.cellWidth - 4))
-    rectangle.setAttribute('height', Math.max(0, layout.cellHeight - 4))
+    rectangle.setAttribute('x', adaptiveRect ? adaptiveRect.minX + 2 : column * layout.cellWidth + 2)
+    rectangle.setAttribute('y', adaptiveRect
+      ? layout.blockHeight - adaptiveRect.maxY + 2
+      : row * layout.cellHeight + 2)
+    rectangle.setAttribute('width', Math.max(0, adaptiveRect
+      ? adaptiveRect.maxX - adaptiveRect.minX - 4
+      : layout.cellWidth - 4))
+    rectangle.setAttribute('height', Math.max(0, adaptiveRect
+      ? adaptiveRect.maxY - adaptiveRect.minY - 4
+      : layout.cellHeight - 4))
     rectangle.setAttribute('pointer-events', 'none')
     svg.appendChild(rectangle)
   })
@@ -2667,6 +2674,19 @@ const showBatchDropHighlight = (layout, slot) => {
 
 const batchSlotAtPointer = (svg, event, layout) => {
   const point = batchPointerPosition(svg, event, layout)
+  if (layout.slotRects?.length) {
+    const modelY = layout.blockHeight - point.screenY
+    const containing = layout.slotRects.find(rect => (
+      point.x >= rect.minX && point.x <= rect.maxX && modelY >= rect.minY && modelY <= rect.maxY
+    ))
+    if (containing) return containing.index
+    return layout.slotRects.reduce((nearest, rect) => {
+      const centerX = (rect.minX + rect.maxX) / 2
+      const centerY = (rect.minY + rect.maxY) / 2
+      const distance = Math.hypot(point.x - centerX, modelY - centerY)
+      return distance < nearest.distance ? { index: rect.index, distance } : nearest
+    }, { index: 0, distance: Infinity }).index
+  }
   const column = Math.max(0, Math.min(layout.columns - 1, Math.floor(point.x / layout.cellWidth)))
   const row = Math.max(0, Math.min(layout.rows - 1, Math.floor(point.screenY / layout.cellHeight)))
   return row * layout.columns + column
@@ -2739,7 +2759,7 @@ const buildBatchLayoutPreview = () => {
     downloadAllBatchNcButton.disabled = currentBatchPackages.length === 0 || invalid.length > 0
     batchLayoutStatus.className = invalid.length ? 'batch-layout-error' : 'batch-layout-valid'
     batchLayoutStatus.textContent = `${fuselageParts.length} секцій розподілено між ${currentBatchPackages.length} із ${batchBlocks.length} блоків: `
-      + currentBatchPackages.map(item => `${item.layout.block.name} — ${item.layout.items.length}`).join('; ')
+      + currentBatchPackages.map(item => `${item.layout.block.name} — ${item.layout.items.length} секц. у ${item.layout.rows} рядах`).join('; ')
       + (invalid.length ? `. NC заблоковано для: ${invalid.map(item => item.layout.block.name).join(', ')}` : '. Усі NC пройшли перевірку.')
   } catch (error) {
     clearBatchResult(`Розкладку не побудовано: ${error.message}`)
