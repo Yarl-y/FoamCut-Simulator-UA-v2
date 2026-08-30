@@ -22,6 +22,53 @@ const readFeatureList = (features, fields, label) => {
   ))
 }
 
+const sanitizeFuselageDesign = (design, label) => {
+  if (design == null) return null
+  const template = design?.template
+  if (design?.type !== 'fuselage-template' || !template || !Array.isArray(template.stations) || template.stations.length < 2) {
+    throw new Error(`${label}: некоректний параметричний опис фюзеляжу`)
+  }
+  const stations = template.stations.map((station, index) => ({
+    id: String(station?.id || `station-${index + 1}`),
+    name: String(station?.name || `Станція ${index + 1}`),
+    position: finiteNumber(station?.position, `${label}, станція ${index + 1}, положення`),
+    width: finiteNumber(station?.width, `${label}, станція ${index + 1}, ширина`),
+    height: finiteNumber(station?.height, `${label}, станція ${index + 1}, висота`),
+    lift: finiteNumber(station?.lift ?? 0, `${label}, станція ${index + 1}, підйом`),
+    upperFullness: finiteNumber(station?.upperFullness ?? 1, `${label}, станція ${index + 1}, верх`),
+    lowerFullness: finiteNumber(station?.lowerFullness ?? 1, `${label}, станція ${index + 1}, низ`),
+    bottomFlatness: finiteNumber(station?.bottomFlatness ?? 0, `${label}, станція ${index + 1}, плоскість`)
+  }))
+  const sectionSettings = stations.slice(0, -1).map((station, index) => ({
+    hollow: Boolean(template.sectionSettings?.[index]?.hollow),
+    wallThickness: Math.max(1, finiteNumber(template.sectionSettings?.[index]?.wallThickness ?? 5, `${label}, стінка ${index + 1}`)),
+    bottomThickness: Math.max(1, finiteNumber(template.sectionSettings?.[index]?.bottomThickness ?? 5, `${label}, днище ${index + 1}`))
+  }))
+  const tube = template.tube || {}
+  return {
+    type: 'fuselage-template',
+    segmentIndex: Math.max(0, Math.floor(finiteNumber(design.segmentIndex ?? 0, `${label}, номер секції`))),
+    template: {
+      name: String(template.name || 'Фюзеляж зі збірки'),
+      description: String(template.description || 'Параметричний фюзеляж зі збірки'),
+      length: Math.max(1, finiteNumber(template.length, `${label}, довжина`)),
+      width: Math.max(1, finiteNumber(template.width, `${label}, ширина`)),
+      height: Math.max(1, finiteNumber(template.height, `${label}, висота`)),
+      stations,
+      sectionSettings,
+      tube: {
+        enabled: Boolean(tube.enabled),
+        diameter: Math.max(1, finiteNumber(tube.diameter ?? 8, `${label}, діаметр трубки`)),
+        clearance: Math.max(0, finiteNumber(tube.clearance ?? 0.4, `${label}, зазор трубки`)),
+        height: finiteNumber(tube.height ?? 0, `${label}, висота трубки`),
+        sideOffset: finiteNumber(tube.sideOffset ?? 0, `${label}, зміщення трубки`),
+        start: Math.max(0, finiteNumber(tube.start ?? 0, `${label}, початок трубки`)),
+        length: Math.max(1, finiteNumber(tube.length ?? 1, `${label}, довжина трубки`))
+      }
+    }
+  }
+}
+
 const sanitizePart = (part, index) => {
   const kind = part?.kind
   if (!['wing', 'fuselage'].includes(kind)) throw new Error(`Деталь ${index + 1}: невідомий тип`)
@@ -65,6 +112,9 @@ const sanitizePart = (part, index) => {
       y: finiteNumber(part.offsets?.y ?? 0, `Деталь ${index + 1}, зміщення Y`),
       z: finiteNumber(part.offsets?.z ?? 0, `Деталь ${index + 1}, зміщення Z`)
     },
+    designSource: kind === 'fuselage'
+      ? sanitizeFuselageDesign(part.designSource, `Деталь ${index + 1}`)
+      : null,
     visible: part.visible !== false
   }
 }

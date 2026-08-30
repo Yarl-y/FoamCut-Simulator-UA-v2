@@ -394,6 +394,7 @@ view3d.innerHTML = `
       <aside class="assembly-parts-panel">
         <h3>Деталі та координати</h3>
         <p id="assemblySelectionStatus">Клацніть деталь у 3D або виберіть її зі списку</p>
+        <button id="editAssemblyFuselage" type="button" disabled>Редагувати фюзеляж у бібліотеці</button>
         <div id="assemblyPartsList" class="assembly-parts-list"></div>
       </aside>
     </div>
@@ -444,6 +445,8 @@ view3d.innerHTML = `
       placeholder="Після безпечної розкладки тут з’явиться спільний NC/G-code"></textarea>
   </section>
 `
+
+let activateWorkspaceTab = () => {}
 
 const initializeWorkspaceTabs = () => {
   const container = document.querySelector('.container')
@@ -500,6 +503,7 @@ const initializeWorkspaceTabs = () => {
     try { localStorage.setItem('foamcut-workspace-tab', selectedId) } catch {}
     window.dispatchEvent(new Event('resize'))
   }
+  activateWorkspaceTab = activate
   navigation.addEventListener('click', event => {
     const button = event.target.closest('[data-workspace-tab]')
     if (button) activate(button.dataset.workspaceTab)
@@ -631,6 +635,7 @@ const assemblyPartsList = document.getElementById('assemblyPartsList')
 const assemblySvg = document.getElementById('assemblySvg')
 const assemblyStatus = document.getElementById('assemblyStatus')
 const assemblySelectionStatus = document.getElementById('assemblySelectionStatus')
+const editAssemblyFuselageButton = document.getElementById('editAssemblyFuselage')
 const measureAssemblyButton = document.getElementById('measureAssembly')
 const clearAssemblyMeasureButton = document.getElementById('clearAssemblyMeasure')
 const smallerAssemblyMeasureButton = document.getElementById('smallerAssemblyMeasure')
@@ -842,7 +847,7 @@ const captureCurrentFuselageTemplate = name => {
   }
 }
 
-const applyFuselageTemplate = template => {
+const applyFuselageTemplate = (template, selectedSegment = 0) => {
   const copy = cloneFuselageTemplate(template)
   fuselageLengthInput.value = copy.length
   fuselageWidthInput.value = copy.width
@@ -864,7 +869,7 @@ const applyFuselageTemplate = template => {
   fuselageTubeSideOffsetInput.value = tube.sideOffset ?? 0
   fuselageTubeStartInput.value = tube.start ?? 0
   fuselageTubeLengthInput.value = tube.length ?? Math.max(1, copy.length - 50)
-  renderFuselageStations()
+  renderFuselageStations(selectedSegment)
   loadSelectedSectionSettings()
   syncFuselageTubeControls()
   fuselageLibraryStatus.className = 'profile-library-valid'
@@ -2091,7 +2096,14 @@ buildFuselageSegmentButton.addEventListener('click', () => {
           }]
         : [],
       servoChannels: [],
-      defaultOffsets: { x: segment.segmentStart, y: 0, z: 0 }
+      defaultOffsets: { x: segment.segmentStart, y: 0, z: 0 },
+      designSource: {
+        type: 'fuselage-template',
+        segmentIndex: Number(fuselageSegmentInput.value) || 0,
+        template: captureCurrentFuselageTemplate(
+          `${selectedFuselageTemplate()?.name || 'Фюзеляж'} — робоча модель`
+        )
+      }
     }
     updateAssemblyCandidateControls()
     updateDxfAssignmentStatus()
@@ -2131,7 +2143,134 @@ const syncAssemblySelectionUi = () => {
   assemblySelectionStatus.textContent = selectedPart
     ? `${selectedPart.name}: X ${selectedPart.offsets.x} · Y ${selectedPart.offsets.y} · Z ${selectedPart.offsets.z} мм`
     : 'Клацніть деталь у 3D або виберіть її зі списку'
+  editAssemblyFuselageButton.disabled = selectedPart?.kind !== 'fuselage'
+  editAssemblyFuselageButton.title = selectedPart?.kind === 'fuselage'
+    ? selectedPart.designSource
+      ? 'Відновити точні параметри фюзеляжу'
+      : 'Відновити редагований шаблон із контурів старої збірки'
+    : 'Спочатку виберіть секцію фюзеляжу'
 }
+
+const contourBounds = points => ({
+  minX: Math.min(...points.map(point => point.x)),
+  maxX: Math.max(...points.map(point => point.x)),
+  minY: Math.min(...points.map(point => point.y)),
+  maxY: Math.max(...points.map(point => point.y))
+})
+
+const reconstructFuselageFromAssembly = parts => {
+  const ordered = [...parts].sort((first, second) => first.offsets.x - second.offsets.x)
+  if (!ordered.length) throw new Error('У збірці немає секцій фюзеляжу')
+  const totalLength = ordered.reduce((sum, part) => sum + part.span, 0)
+  let position = 0
+  const contours = [ordered[0].outerLeft, ...ordered.map(part => part.outerRight)]
+  const names = []
+  ordered.forEach((part, index) => {
+    const segmentName = part.name.replace(/^Фюзеляж\s*/i, '')
+    const [leftName, rightName] = segmentName.split('→').map(value => value?.trim())
+    if (index === 0) names.push(leftName || 'Ніс')
+    names.push(rightName || `Станція ${index + 2}`)
+  })
+  const dimensions = contours.map(contour => {
+    const bounds = contourBounds(contour)
+    return { width: bounds.maxX - bounds.minX, height: bounds.maxY - bounds.minY }
+  })
+  const maximumWidth = Math.max(...dimensions.map(item => item.width), 1)
+  const maximumHeight = Math.max(...dimensions.map(item => item.height), 1)
+  const stations = contours.map((contour, index) => {
+    if (index > 0) position += ordered[index - 1].span
+    return {
+      id: `recovered-${index + 1}`,
+      name: names[index] || `Станція ${index + 1}`,
+      position: index === contours.length - 1 ? 1 : position / totalLength,
+      width: Math.max(0.01, dimensions[index].width / maximumWidth),
+      height: Math.max(0.01, dimensions[index].height / maximumHeight),
+      lift: 0,
+      upperFullness: 1,
+      lowerFullness: 1,
+      bottomFlatness: 0
+    }
+  })
+  const sectionSettings = ordered.map(part => {
+    if (!part.innerLeft || !part.innerRight) {
+      return { hollow: false, wallThickness: 5, bottomThickness: 5 }
+    }
+    const outerBounds = [contourBounds(part.outerLeft), contourBounds(part.outerRight)]
+    const innerBounds = [contourBounds(part.innerLeft), contourBounds(part.innerRight)]
+    const wallThickness = outerBounds.reduce((sum, bounds, index) => (
+      sum + ((bounds.maxX - bounds.minX) - (innerBounds[index].maxX - innerBounds[index].minX)) / 2
+    ), 0) / 2
+    const bottomThickness = outerBounds.reduce((sum, bounds, index) => (
+      sum + innerBounds[index].minY - bounds.minY
+    ), 0) / 2
+    return {
+      hollow: true,
+      wallThickness: Math.max(1, Math.round(wallThickness * 10) / 10),
+      bottomThickness: Math.max(1, Math.round(bottomThickness * 10) / 10)
+    }
+  })
+  let sectionStart = 0
+  const rodRanges = ordered.flatMap(part => {
+    const ranges = (part.straightSparRods || []).map(rod => ({
+      rod,
+      start: sectionStart + (rod.start || 0),
+      end: sectionStart + (rod.start || 0) + (rod.length || part.span)
+    }))
+    sectionStart += part.span
+    return ranges
+  })
+  const firstRod = rodRanges[0]?.rod
+  const tubeStart = rodRanges.length ? Math.min(...rodRanges.map(range => range.start)) : 0
+  const tubeEnd = rodRanges.length ? Math.max(...rodRanges.map(range => range.end)) : Math.max(1, totalLength - 50)
+  return {
+    name: 'Фюзеляж, відновлений зі збірки',
+    description: 'Параметри приблизно відновлено з готових контурів старої збірки; перевірте форму, порожнини й трубку.',
+    length: Math.max(1, totalLength),
+    width: maximumWidth,
+    height: maximumHeight,
+    stations,
+    sectionSettings,
+    tube: {
+      enabled: Boolean(firstRod),
+      diameter: firstRod?.diameter || 8,
+      clearance: 0.4,
+      height: firstRod?.y || maximumHeight * 0.45,
+      sideOffset: firstRod?.x || 0,
+      start: tubeStart,
+      length: Math.max(1, tubeEnd - tubeStart)
+    }
+  }
+}
+
+const importSelectedAssemblyFuselage = () => {
+  const selectedPart = assemblyParts.find(part => part.id === selectedAssemblyPartId)
+  if (!selectedPart || selectedPart.kind !== 'fuselage') return
+  const exact = selectedPart.designSource?.type === 'fuselage-template'
+  const templateSource = exact
+    ? cloneFuselageTemplate(selectedPart.designSource.template)
+    : reconstructFuselageFromAssembly(assemblyParts.filter(part => part.kind === 'fuselage'))
+  const importedName = exact
+    ? `${templateSource.name.replace(/\s+—\s+робоча модель$/i, '')} — зі збірки`
+    : templateSource.name
+  const existingIndex = userFuselageTemplates.findIndex(template => template.name === importedName)
+  const id = existingIndex >= 0 ? userFuselageTemplates[existingIndex].id : `user-${Date.now()}`
+  const imported = { ...templateSource, id, name: importedName, builtin: false }
+  if (existingIndex >= 0) userFuselageTemplates[existingIndex] = imported
+  else userFuselageTemplates.push(imported)
+  saveUserFuselageTemplates(userFuselageTemplates)
+  renderFuselageTemplateOptions(id)
+  applyFuselageTemplate(imported, exact ? selectedPart.designSource.segmentIndex : 0)
+  profileLibraryPanel.hidden = false
+  toggleProfileLibraryButton.setAttribute('aria-expanded', 'true')
+  activateWorkspaceTab('library')
+  fuselageLibraryStatus.className = exact ? 'profile-library-valid' : 'profile-library-warning'
+  fuselageLibraryStatus.textContent = exact
+    ? `Фюзеляж «${importedName}» точно відновлено зі збірки та додано до власної бібліотеки`
+    : `Стару збірку відновлено приблизно й додано як «${importedName}». Перевірте форму, порожнини та трубку.`
+  document.querySelector('.fuselage-library')?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+}
+
+editAssemblyFuselageButton.addEventListener('click', importSelectedAssemblyFuselage)
 
 const updateAssemblySvg = () => {
   const renderedParts = assemblyParts.map(part => ({
@@ -2531,6 +2670,7 @@ const addCurrentCandidateToAssembly = side => {
     cutRight: candidate.cutRight.map(point => ({ ...point })),
     straightSparRods: candidate.straightSparRods.map(rod => ({ ...rod })),
     servoChannels: candidate.servoChannels.map(channel => ({ ...channel })),
+    designSource: candidate.designSource ? cloneFuselageTemplate(candidate.designSource) : null,
     offsets: { ...candidate.defaultOffsets },
     visible: true
   })

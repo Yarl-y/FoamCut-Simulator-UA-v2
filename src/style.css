@@ -711,6 +711,11 @@ code {
   font-weight: 700;
 }
 
+.profile-library-warning {
+  color: #b45309;
+  font-weight: 700;
+}
+
 @media (max-width: 800px) {
   .fuselage-template-toolbar {
     grid-template-columns: 1fr;
@@ -1023,6 +1028,11 @@ code {
   color: #047857;
   font-size: 13px;
   font-weight: 700;
+}
+
+#editAssemblyFuselage {
+  width: 100%;
+  margin-bottom: 9px;
 }
 
 .assembly-actions {
