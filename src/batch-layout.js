@@ -42,8 +42,9 @@ export const createFuselageBatchLayout = (parts, settings = {}) => {
     throw new Error('Розміри блока мають бути більшими за нуль')
   }
 
+  const dimensionTolerance = 0.001
   parts.forEach(part => {
-    if (Number(part.span) > blockThickness) {
+    if (Number(part.span) - blockThickness > dimensionTolerance) {
       throw new Error(`${part.name}: довжина секції ${Number(part.span).toFixed(1)} мм `
         + `більша за товщину блока ${blockThickness.toFixed(1)} мм`)
     }
@@ -346,6 +347,7 @@ export const createMultiBlockLayouts = (
   if (!blocks.length) throw new Error('Додайте хоча б один піноблок')
   const preparedParts = parts.map((part, sourceIndex) => ({ ...part, batchSourceIndex: sourceIndex }))
   let remaining = preparedParts.filter(part => !assignments.get(part.id))
+  const rejectionReasons = new Map()
   const layouts = []
 
   for (const block of blocks) {
@@ -371,8 +373,9 @@ export const createMultiBlockLayouts = (
           corridor
         })
         selected.push(part)
-      } catch {
+      } catch (error) {
         deferred.push(part)
+        rejectionReasons.set(part.id, error.message)
       }
     }
     remaining = deferred
@@ -395,7 +398,8 @@ export const createMultiBlockLayouts = (
   }
 
   if (remaining.length) {
-    throw new Error(`Не вистачає блоків для ${remaining.length} секц.: ${remaining.map(part => part.name).join(', ')}`)
+    throw new Error(`Не вистачає блоків для ${remaining.length} секц.: `
+      + remaining.map(part => `${part.name} (${rejectionReasons.get(part.id) || 'не помістилася'})`).join('; '))
   }
   return layouts
 }
