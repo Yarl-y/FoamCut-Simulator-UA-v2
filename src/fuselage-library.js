@@ -5,7 +5,8 @@ const station = (id, name, position, width, height, lift = 0, upperFullness = 1,
 const sections = (count, hollowFrom = Infinity) => Array.from({ length: count }, (_, index) => ({
   hollow: index >= hollowFrom,
   wallThickness: 5,
-  bottomThickness: 8
+  bottomThickness: 8,
+  ceilingThickness: 5
 }))
 
 export const builtinFuselageTemplates = [

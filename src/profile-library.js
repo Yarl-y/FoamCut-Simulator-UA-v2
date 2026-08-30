@@ -181,6 +181,8 @@ export const createGliderFuselageSegment = ({
   hollow = false,
   wallThickness = 5,
   bottomThickness = 5,
+  ceilingThickness = wallThickness,
+  sectionSettings = null,
   pointCount = 200
 }) => {
   if (!Array.isArray(stations) || stations.length < 2) {
@@ -239,15 +241,27 @@ export const createGliderFuselageSegment = ({
   let innerRightPoints = null
 
   if (hollow) {
-    const wall = Number(wallThickness)
-    const bottom = Number(bottomThickness)
-    if (!Number.isFinite(wall) || !Number.isFinite(bottom) || wall <= 0 || bottom <= 0) {
-      throw new Error('Товщина стінки та днища повинна бути більшою за нуль')
+    const sharedSettings = stationIndex => {
+      const candidates = [stationIndex - 1, stationIndex]
+        .map(index => sectionSettings?.[index])
+        .filter(settings => settings?.hollow)
+      if (!candidates.length) {
+        candidates.push({ wallThickness, bottomThickness, ceilingThickness })
+      }
+      return {
+        wall: Math.max(...candidates.map(settings => Number(settings.wallThickness ?? wallThickness))),
+        bottom: Math.max(...candidates.map(settings => Number(settings.bottomThickness ?? bottomThickness))),
+        ceiling: Math.max(...candidates.map(settings => Number(settings.ceilingThickness ?? settings.wallThickness ?? ceilingThickness)))
+      }
     }
-    const makeInnerSection = (station, label) => {
+    const makeInnerSection = (station, stationIndex, label) => {
       const dimensions = stationDimensions(station)
+      const { wall, bottom, ceiling } = sharedSettings(stationIndex)
+      if (![wall, bottom, ceiling].every(value => Number.isFinite(value) && value > 0)) {
+        throw new Error('Товщина стінки, днища та стелі повинна бути більшою за нуль')
+      }
       const innerWidth = dimensions.width - wall * 2
-      const innerHeight = dimensions.height - wall - bottom
+      const innerHeight = dimensions.height - ceiling - bottom
       if (innerWidth < 2 || innerHeight < 2) {
         throw new Error(`${label}: недостатньо місця для порожнини при заданій товщині`)
       }
@@ -262,8 +276,8 @@ export const createGliderFuselageSegment = ({
         y: point.y + pair.translation.y
       }))
     }
-    innerLeftPoints = makeInnerSection(leftStation, leftStation.name)
-    innerRightPoints = makeInnerSection(rightStation, rightStation.name)
+    innerLeftPoints = makeInnerSection(leftStation, segmentIndex, leftStation.name)
+    innerRightPoints = makeInnerSection(rightStation, segmentIndex + 1, rightStation.name)
   }
 
   return {

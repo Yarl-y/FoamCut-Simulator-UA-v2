@@ -42,9 +42,22 @@ const sanitizeFuselageDesign = (design, label) => {
   const sectionSettings = stations.slice(0, -1).map((station, index) => ({
     hollow: Boolean(template.sectionSettings?.[index]?.hollow),
     wallThickness: Math.max(1, finiteNumber(template.sectionSettings?.[index]?.wallThickness ?? 5, `${label}, стінка ${index + 1}`)),
-    bottomThickness: Math.max(1, finiteNumber(template.sectionSettings?.[index]?.bottomThickness ?? 5, `${label}, днище ${index + 1}`))
+    bottomThickness: Math.max(1, finiteNumber(template.sectionSettings?.[index]?.bottomThickness ?? 5, `${label}, днище ${index + 1}`)),
+    ceilingThickness: Math.max(1, finiteNumber(template.sectionSettings?.[index]?.ceilingThickness ?? template.sectionSettings?.[index]?.wallThickness ?? 5, `${label}, стеля ${index + 1}`))
   }))
   const tube = template.tube || {}
+  const sanitizeTube = (source, tubeLabel) => ({
+    enabled: Boolean(source?.enabled),
+    diameter: Math.max(1, finiteNumber(source?.diameter ?? 8, `${label}, діаметр ${tubeLabel}`)),
+    clearance: Math.max(0, finiteNumber(source?.clearance ?? 0.4, `${label}, зазор ${tubeLabel}`)),
+    height: finiteNumber(source?.height ?? 0, `${label}, висота ${tubeLabel}`),
+    sideOffset: finiteNumber(source?.sideOffset ?? 0, `${label}, зміщення ${tubeLabel}`),
+    start: Math.max(0, finiteNumber(source?.start ?? 0, `${label}, початок ${tubeLabel}`)),
+    length: Math.max(1, finiteNumber(source?.length ?? 1, `${label}, довжина ${tubeLabel}`))
+  })
+  const tubes = Array.isArray(template.tubes)
+    ? [sanitizeTube(template.tubes[0] || tube, 'трубки №1'), sanitizeTube(template.tubes[1] || {}, 'трубки №2')]
+    : [sanitizeTube(tube, 'трубки №1'), sanitizeTube({}, 'трубки №2')]
   return {
     type: 'fuselage-template',
     segmentIndex: Math.max(0, Math.floor(finiteNumber(design.segmentIndex ?? 0, `${label}, номер секції`))),
@@ -56,15 +69,8 @@ const sanitizeFuselageDesign = (design, label) => {
       height: Math.max(1, finiteNumber(template.height, `${label}, висота`)),
       stations,
       sectionSettings,
-      tube: {
-        enabled: Boolean(tube.enabled),
-        diameter: Math.max(1, finiteNumber(tube.diameter ?? 8, `${label}, діаметр трубки`)),
-        clearance: Math.max(0, finiteNumber(tube.clearance ?? 0.4, `${label}, зазор трубки`)),
-        height: finiteNumber(tube.height ?? 0, `${label}, висота трубки`),
-        sideOffset: finiteNumber(tube.sideOffset ?? 0, `${label}, зміщення трубки`),
-        start: Math.max(0, finiteNumber(tube.start ?? 0, `${label}, початок трубки`)),
-        length: Math.max(1, finiteNumber(tube.length ?? 1, `${label}, довжина трубки`))
-      }
+      tube: tubes[0],
+      tubes
     }
   }
 }
