@@ -1384,3 +1384,11 @@ code {
     grid-template-columns: 1fr;
   }
 }
+
+.cut-wizard-steps { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; margin: 18px 0; }
+.cut-wizard-step { display: flex; flex-direction: column; gap: 5px; padding: 14px; border: 2px solid var(--border); border-radius: 10px; text-align: left; }
+.cut-wizard-step.ready { border-color: #16a34a; background: #f0fdf4; }
+.cut-wizard-step.pending { border-color: #d97706; background: #fffbeb; }
+.cut-wizard-actions { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px; }
+.cut-wizard-summary { margin-top: 16px; padding: 14px; white-space: pre-wrap; text-align: left; background: #f8fafc; border: 1px solid var(--border); border-radius: 8px; }
+@media (max-width: 700px) { .cut-wizard-steps { grid-template-columns: 1fr; } }

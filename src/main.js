@@ -476,6 +476,20 @@ view3d.innerHTML = `
     <textarea id="batchNcPreview" rows="10" readonly
       placeholder="Після безпечної розкладки тут з’явиться спільний NC/G-code"></textarea>
   </section>
+  <section class="cut-wizard" data-workspace="wizard">
+    <h2>Майстер підготовки різання</h2>
+    <p>Перевірка установки перед передаванням NC у Mach3.</p>
+    <div id="cutWizardSteps" class="cut-wizard-steps"></div>
+    <div class="cut-wizard-actions">
+      <button type="button" data-wizard-go="assembly">1. Збірка</button>
+      <button type="button" data-wizard-go="files">2. Станок і струна</button>
+      <button type="button" data-wizard-go="blocks">3. Блок і розкладка</button>
+      <button id="wizardSimulate" type="button" disabled>4. Перевірити у 2D/3D</button>
+      <button id="wizardDownloadNc" type="button" disabled>5. Завантажити перевірений NC</button>
+      <button id="refreshCutWizard" type="button">Оновити перевірку</button>
+    </div>
+    <pre id="cutWizardSummary" class="cut-wizard-summary"></pre>
+  </section>
 `
 
 let activateWorkspaceTab = () => {}
@@ -487,7 +501,8 @@ const initializeWorkspaceTabs = () => {
     { id: 'files', label: 'Файли та NC' },
     { id: 'simulation', label: 'Симуляція 2D/3D' },
     { id: 'assembly', label: 'Збірка' },
-    { id: 'blocks', label: 'Блоки й розкладка' }
+    { id: 'blocks', label: 'Блоки й розкладка' },
+    { id: 'wizard', label: 'Підготовка різання' }
   ]
   const navigation = document.createElement('nav')
   navigation.className = 'workspace-tabs'
@@ -745,6 +760,36 @@ const libraryPreviewCamera = { yaw: -35, pitch: -22, zoom: 1, panX: 0, panY: 0 }
 const libraryMeasurement = { active: false, points: [], fontSize: 22 }
 const assemblyMeasurement = { active: false, points: [], fontSize: 22 }
 const assemblyParts = []
+
+const renderCutWizard = () => {
+  const sections = assemblyParts.filter(part => part.visible && part.kind === 'fuselage').length
+  const compensated = blockCompensationInput.checked && Number(wireSpanInput.value) > 0
+  const packagesReady = currentBatchPackages.length > 0
+  const ncReady = packagesReady && currentBatchPackages.every(item => item.validation.valid)
+  const steps = [
+    [sections > 0, 'Збірка', sections ? `${sections} секц. готово` : 'Завантажте збірку'],
+    [compensated, 'Станок і струна', compensated ? `струна ${wireSpanInput.value} мм; компенсація увімкнена` : 'Задайте струну та компенсацію'],
+    [packagesReady, 'Блок і розкладка', packagesReady ? `${currentBatchPackages.length} блок(ів)` : 'Побудуйте розкладку'],
+    [ncReady, 'Перевірка осей', ncReady ? 'усі NC у межах станка' : 'NC ще не готовий']
+  ]
+  cutWizardSteps.replaceChildren(...steps.map(([ready, title, detail]) => {
+    const card = document.createElement('div')
+    card.className = `cut-wizard-step ${ready ? 'ready' : 'pending'}`
+    const strong = document.createElement('strong')
+    strong.textContent = `${ready ? '✓' : '○'} ${title}`
+    const span = document.createElement('span')
+    span.textContent = detail
+    card.append(strong, span)
+    return card
+  }))
+  const selected = currentBatchPackages.find(item => item.layout.block.id === selectedBatchBlock()?.id)
+  const ranges = selected?.validation?.ranges
+  wizardSimulateButton.disabled = !ncReady
+  wizardDownloadNcButton.disabled = !ncReady || !selected
+  cutWizardSummary.textContent = ncReady && selected
+    ? `ГОТОВО ДО СИМУЛЯЦІЇ\nБлок: ${selected.layout.blockWidth} × ${selected.layout.blockHeight} × ${selected.layout.blockThickness} мм\nСтруна: ${selected.blockSetup?.wireSpan ?? wireSpanInput.value} мм\nУстановка: ${selected.blockSetup ? `${selected.blockSetup.leftGap} + ${selected.blockSetup.blockWidth} + ${selected.blockSetup.rightGap} мм` : 'без компенсації'}\nX: ${ranges.x.minimum.toFixed(3)}…${ranges.x.maximum.toFixed(3)} мм\nY: ${ranges.y.minimum.toFixed(3)}…${ranges.y.maximum.toFixed(3)} мм\nA: ${ranges.a.minimum.toFixed(3)}…${ranges.a.maximum.toFixed(3)} мм\nZ: ${ranges.z.minimum.toFixed(3)}…${ranges.z.maximum.toFixed(3)} мм\nНаступне: перевірка 2D/3D, потім холостий прогін Mach3 без нагрівання.`
+    : 'Пройдіть незавершені кроки. NC дозволяється лише після зеленої перевірки осей.'
+}
 let nextAssemblyPartId = 1
 let selectedAssemblyPartId = null
 const assemblyCamera = { yaw: -35, pitch: -22, zoom: 1, panX: 0, panY: 0 }
@@ -2782,6 +2827,19 @@ const buildBatchLayoutPreview = () => {
 }
 
 renderBatchBlockSelect()
+
+const cutWizardSteps = document.getElementById('cutWizardSteps')
+const cutWizardSummary = document.getElementById('cutWizardSummary')
+const wizardSimulateButton = document.getElementById('wizardSimulate')
+const wizardDownloadNcButton = document.getElementById('wizardDownloadNc')
+document.getElementById('refreshCutWizard').addEventListener('click', renderCutWizard)
+wizardSimulateButton.addEventListener('click', () => simulateBatchButton.click())
+wizardDownloadNcButton.addEventListener('click', () => downloadBatchNcButton.click())
+document.querySelector('.cut-wizard').addEventListener('click', event => {
+  const button = event.target.closest('[data-wizard-go]')
+  if (button) activateWorkspaceTab(button.dataset.wizardGo)
+})
+document.querySelector('[data-workspace-tab="wizard"]').addEventListener('click', () => setTimeout(renderCutWizard))
 
 const selectAssemblyPartForCutting = part => {
   activeStraightSparRods = part.straightSparRods.map(rod => ({ ...rod }))
