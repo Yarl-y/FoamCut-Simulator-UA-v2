@@ -306,8 +306,7 @@ export const createFuselageBatchLayout = (parts, settings = {}) => {
     const occupiedHeight = totalHeight + rowGap * Math.max(0, rowData.length - 1)
     const outsideSpace = blockHeight - occupiedHeight
     if (outsideSpace < corridor) return sourceItems
-    const topMargin = outsideSpace / 2 + corridor / 2
-    const bottomMargin = outsideSpace - topMargin
+    const bottomMargin = Math.min(rowGap, outsideSpace - corridor / 2)
     let bottomY = bottomMargin
     const rowCenters = new Map()
     ;[...rowData].reverse().forEach(row => {
