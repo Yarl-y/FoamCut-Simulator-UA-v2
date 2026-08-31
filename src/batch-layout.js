@@ -302,11 +302,12 @@ export const createFuselageBatchLayout = (parts, settings = {}) => {
       return { row, items, height: Math.max(...items.map(item => item.height)) }
     })
     const totalHeight = rowData.reduce((sum, row) => sum + row.height, 0)
-    const bottomMargin = corridor / 2
-    const topMargin = Math.max(corridor * 2, corridor / 2)
-    const freeBetweenRows = blockHeight - bottomMargin - topMargin - totalHeight
-    if (freeBetweenRows < corridor * Math.max(0, rowData.length - 1)) return sourceItems
-    const rowGap = rowData.length > 1 ? freeBetweenRows / (rowData.length - 1) : 0
+    const rowGap = Math.max(50, corridor * 2)
+    const occupiedHeight = totalHeight + rowGap * Math.max(0, rowData.length - 1)
+    const outsideSpace = blockHeight - occupiedHeight
+    if (outsideSpace < corridor) return sourceItems
+    const topMargin = outsideSpace / 2 + corridor / 2
+    const bottomMargin = outsideSpace - topMargin
     let bottomY = bottomMargin
     const rowCenters = new Map()
     ;[...rowData].reverse().forEach(row => {
@@ -675,7 +676,7 @@ export const optimizeBatchLayoutForCarriages = (layout, setup, limits = {}, requ
 
 export const createBatchCutRoute = layout => {
   const orderedItems = [...layout.items].sort((first, second) => {
-    if (first.row !== second.row) return second.row - first.row
+    if (first.row !== second.row) return first.row - second.row
     return first.row % 2 === 0
       ? first.column - second.column
       : second.column - first.column
