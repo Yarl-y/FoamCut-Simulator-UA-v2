@@ -7,6 +7,7 @@ import {
   createBatchMach3Nc,
   createBatchSetupMapSvg,
   createMultiBlockLayouts,
+  optimizeBatchLayoutForCarriages,
   renderBatchLayoutPreview,
   renderBatchRouteOverlay
 } from './batch-layout.js'
@@ -2578,11 +2579,20 @@ const clearBatchResult = (message = 'Параметри блоків зміне�
 }
 
 const createBatchPackage = layout => {
-  const faceRoute = createBatchCutRoute(layout)
+  let preparedLayout = layout
   let blockSetup = null
-  let events = faceRoute.events
   if (blockCompensationInput.checked) {
     blockSetup = calculateBlockSetup(layout.blockThickness)
+    preparedLayout = optimizeBatchLayoutForCarriages(layout, blockSetup, {
+      x: Number(machineLimitInputs.x.value),
+      y: Number(machineLimitInputs.y.value),
+      a: Number(machineLimitInputs.a.value),
+      z: Number(machineLimitInputs.z.value)
+    })
+  }
+  const faceRoute = createBatchCutRoute(preparedLayout)
+  let events = faceRoute.events
+  if (blockSetup) {
     const carriage = projectProfilesToCarriages(
       events.map(event => event.left),
       events.map(event => event.right),
@@ -2599,7 +2609,7 @@ const createBatchPackage = layout => {
     feedRate, blockSetup, applyProfileOffsets: false
   }
   return {
-    layout, faceRoute, feedRate, blockSetup,
+    layout: preparedLayout, faceRoute, machineEvents: events, feedRate, blockSetup,
     validation: validateMachineEnvelope(trajectory),
     nc: createBatchMach3Nc(events, feedRate, blockSetup)
   }
@@ -2618,15 +2628,15 @@ const showSelectedBatchPackage = () => {
     downloadBatchNcButton.disabled = true
     return
   }
-  const { layout, faceRoute, feedRate, validation, nc } = packageData
+  const { layout, faceRoute, machineEvents, feedRate, validation, nc } = packageData
   renderBatchLayoutPreview(batchLeftSvg, layout, 'left')
   renderBatchLayoutPreview(batchRightSvg, layout, 'right')
   renderBatchRouteOverlay(batchLeftSvg, faceRoute, layout.blockHeight, 'left')
   renderBatchRouteOverlay(batchRightSvg, faceRoute, layout.blockHeight, 'right')
   generatedBatchNcText = nc
   currentBatchSimulation = {
-    leftPoints: faceRoute.events.map(event => ({ ...event.left })),
-    rightPoints: faceRoute.events.map(event => ({ ...event.right })),
+    leftPoints: machineEvents.map(event => ({ ...event.left })),
+    rightPoints: machineEvents.map(event => ({ ...event.right })),
     layout, feedRate
   }
   batchNcPreview.value = nc

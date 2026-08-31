@@ -294,6 +294,46 @@ export const createFuselageBatchLayout = (parts, settings = {}) => {
     })
   }
 
+  const spreadRowsAcrossBlock = sourceItems => {
+    const rows = [...new Set(sourceItems.map(item => item.row))].sort((a, b) => a - b)
+    if (!rows.length) return sourceItems
+    const rowData = rows.map(row => {
+      const items = sourceItems.filter(item => item.row === row).sort((a, b) => a.column - b.column)
+      return { row, items, height: Math.max(...items.map(item => item.height)) }
+    })
+    const totalHeight = rowData.reduce((sum, row) => sum + row.height, 0)
+    const bottomMargin = corridor / 2
+    const topMargin = Math.max(corridor * 2, corridor / 2)
+    const freeBetweenRows = blockHeight - bottomMargin - topMargin - totalHeight
+    if (freeBetweenRows < corridor * Math.max(0, rowData.length - 1)) return sourceItems
+    const rowGap = rowData.length > 1 ? freeBetweenRows / (rowData.length - 1) : 0
+    let bottomY = bottomMargin
+    const rowCenters = new Map()
+    ;[...rowData].reverse().forEach(row => {
+      rowCenters.set(row.row, bottomY + row.height / 2)
+      bottomY += row.height + rowGap
+    })
+    return sourceItems.map(item => {
+      const row = rowData.find(candidate => candidate.row === item.row)
+      const totalWidth = row.items.reduce((sum, candidate) => sum + candidate.width, 0)
+      const horizontalGap = (blockWidth - totalWidth) / (row.items.length + 1)
+      if (horizontalGap < corridor / 2) return { ...item, centerY: rowCenters.get(item.row) }
+      let leftX = horizontalGap
+      const centers = new Map()
+      row.items.forEach(candidate => {
+        centers.set(candidate.part.id, leftX + candidate.width / 2)
+        leftX += candidate.width + horizontalGap
+      })
+      return {
+        ...item,
+        centerX: centers.get(item.part.id),
+        centerY: rowCenters.get(item.row)
+      }
+    })
+  }
+
+  positionedParts = spreadRowsAcrossBlock(positionedParts)
+
   const items = positionedParts.map(({ part, sourceBounds, width, height, rotated, row, column, centerX, centerY }, slotIndex) => {
     const dx = centerX - (sourceBounds.minX + sourceBounds.maxX) / 2
     const dy = centerY - (sourceBounds.minY + sourceBounds.maxY) / 2
@@ -491,9 +531,151 @@ const rotateContour = (points, index) => [
   ...points.slice(0, index)
 ]
 
+const permutations = items => {
+  if (items.length < 2) return [items]
+  return items.flatMap((item, index) => permutations([
+    ...items.slice(0, index), ...items.slice(index + 1)
+  ]).map(rest => [item, ...rest]))
+}
+
+const translatedItem = (item, dx, dy) => {
+  const move = points => points?.map(point => ({ ...point, x: point.x + dx, y: point.y + dy })) || null
+  return {
+    ...item,
+    dx: item.dx + dx,
+    dy: item.dy + dy,
+    outerLeft: move(item.outerLeft),
+    outerRight: move(item.outerRight),
+    innerLeft: move(item.innerLeft),
+    innerRight: move(item.innerRight),
+    cutLeft: move(item.cutLeft),
+    cutRight: move(item.cutRight),
+    bounds: {
+      minX: item.bounds.minX + dx,
+      maxX: item.bounds.maxX + dx,
+      minY: item.bounds.minY + dy,
+      maxY: item.bounds.maxY + dy
+    }
+  }
+}
+
+const carriageBounds = (item, setup) => {
+  const leftFactor = setup.leftGap / setup.blockWidth
+  const rightFactor = setup.rightGap / setup.blockWidth
+  const projected = []
+  item.cutLeft.forEach((left, index) => {
+    const right = item.cutRight[index]
+    projected.push(
+      {
+        x: left.x - (right.x - left.x) * leftFactor,
+        y: left.y - (right.y - left.y) * leftFactor
+      },
+      {
+        x: right.x + (right.x - left.x) * rightFactor,
+        y: right.y + (right.y - left.y) * rightFactor
+      }
+    )
+  })
+  return boundsOf(projected)
+}
+
+export const optimizeBatchLayoutForCarriages = (layout, setup, limits = {}, requestedMargin = 10) => {
+  const limitX = Math.min(Number(limits.x) || 600, Number(limits.a) || 600)
+  const limitY = Math.min(Number(limits.y) || 600, Number(limits.z) || 600)
+  const marginX = Math.min(Math.max(0, requestedMargin), limitX / 4)
+  const marginY = Math.min(Math.max(0, requestedMargin), limitY / 4)
+  const rows = [...new Set(layout.items.map(item => item.row))]
+  const optimized = []
+
+  for (const rowIndex of rows) {
+    const rowItems = layout.items.filter(item => item.row === rowIndex)
+    let best = null
+    for (const order of permutations(rowItems)) {
+      let previousRight = -Infinity
+      const placed = []
+      let valid = true
+      for (const item of order) {
+        const machine = carriageBounds(item, setup)
+        const machineMinOffset = machine.minX - item.bounds.minX
+        const machineMaxOffset = machine.maxX - item.bounds.minX
+        const width = item.bounds.maxX - item.bounds.minX
+        const minimumLeft = Math.max(
+          layout.corridor / 2,
+          marginX - machineMinOffset,
+          previousRight + layout.corridor
+        )
+        const maximumLeft = Math.min(
+          layout.blockWidth - layout.corridor / 2 - width,
+          limitX - marginX - machineMaxOffset
+        )
+        if (minimumLeft > maximumLeft + 0.0005) {
+          valid = false
+          break
+        }
+        placed.push({ item, left: minimumLeft, maximumLeft })
+        previousRight = minimumLeft + width
+      }
+      if (!valid) continue
+      const usedWidth = previousRight + layout.corridor / 2
+      if (!best || usedWidth < best.usedWidth) best = { placed, usedWidth }
+    }
+    if (!best) throw new Error(`ряд ${rowIndex + 1} не вміщується у ходи X/A після компенсації`)
+
+    let nextLeft = Infinity
+    for (let index = best.placed.length - 1; index >= 0; index -= 1) {
+      const entry = best.placed[index]
+      const width = entry.item.bounds.maxX - entry.item.bounds.minX
+      entry.latestLeft = Math.min(entry.maximumLeft, nextLeft - layout.corridor - width)
+      nextLeft = entry.latestLeft
+    }
+    best.placed.forEach((entry, column) => {
+      const targetLeft = (entry.left + entry.latestLeft) / 2
+      optimized.push({
+        ...translatedItem(entry.item, targetLeft - entry.item.bounds.minX, 0),
+        column
+      })
+    })
+  }
+
+  const verticallyAdjusted = []
+  for (const rowIndex of rows) {
+    const rowItems = optimized.filter(item => item.row === rowIndex)
+    const machine = rowItems.map(item => carriageBounds(item, setup))
+    const minimumMachineY = Math.min(...machine.map(bounds => bounds.minY))
+    const maximumMachineY = Math.max(...machine.map(bounds => bounds.maxY))
+    const minimumFaceY = Math.min(...rowItems.map(item => item.bounds.minY))
+    const maximumFaceY = Math.max(...rowItems.map(item => item.bounds.maxY))
+    const minimumDy = Math.max(marginY - minimumMachineY, layout.corridor / 2 - minimumFaceY)
+    const maximumDy = Math.min(
+      limitY - marginY - maximumMachineY,
+      layout.blockHeight - layout.corridor / 2 - maximumFaceY
+    )
+    if (minimumDy > maximumDy + 0.0005) {
+      throw new Error(`ряд ${rowIndex + 1} не вміщується у ходи Y/Z після компенсації`)
+    }
+    const dy = Math.max(minimumDy, Math.min(0, maximumDy))
+    rowItems.forEach(item => verticallyAdjusted.push(translatedItem(item, 0, dy)))
+  }
+
+  verticallyAdjusted.sort((first, second) => first.row - second.row || first.column - second.column)
+  verticallyAdjusted.forEach((item, index) => { item.index = index })
+  const slotRects = verticallyAdjusted.map(item => ({
+    index: item.index,
+    minX: Math.max(0, item.bounds.minX - layout.corridor / 2),
+    maxX: Math.min(layout.blockWidth, item.bounds.maxX + layout.corridor / 2),
+    minY: Math.max(0, item.bounds.minY - layout.corridor / 2),
+    maxY: Math.min(layout.blockHeight, item.bounds.maxY + layout.corridor / 2)
+  }))
+  const rowLanes = rows.map(row => Math.max(
+    layout.corridor / 2,
+    Math.min(...verticallyAdjusted.filter(item => item.row === row).map(item => item.bounds.minY)) - layout.corridor / 2
+  ))
+  return { ...layout, items: verticallyAdjusted, slotRects, rowLanes, carriageOptimized: true }
+}
+
 export const createBatchCutRoute = layout => {
   const orderedItems = [...layout.items].sort((first, second) => {
-    if (first.row !== second.row) return first.row - second.row
+    if (first.row !== second.row) return second.row - first.row
     return first.row % 2 === 0
       ? first.column - second.column
       : second.column - first.column
