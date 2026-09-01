@@ -890,6 +890,37 @@ code {
   width: 72px;
 }
 
+.profile-entry-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 9px 16px;
+  margin: 12px 0;
+  padding: 12px;
+  border: 2px solid #0f766e;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--bg) 96%, #14b8a6);
+}
+
+.profile-entry-controls > strong,
+.profile-entry-controls > p {
+  flex-basis: 100%;
+}
+
+.profile-entry-controls label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 14px;
+}
+
+.profile-entry-controls p {
+  margin: 0;
+  color: #0f766e;
+  font-weight: 600;
+}
+
 .dxf-tools {
   display: flex;
   flex-wrap: wrap;

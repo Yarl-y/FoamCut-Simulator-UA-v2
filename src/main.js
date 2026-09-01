@@ -15,6 +15,7 @@ import { parseDxf, renderDxfPreview, resampleDxfContour } from './dxf.js'
 import { createDxfPolyline, createPreviewModel, recoverNcProfiles } from './nc-dxf.js'
 import { createFoamCutProject, parseFoamCutProject } from './project-file.js'
 import { initializeMachineControl } from './machine-control.js'
+import { chooseEntrySide, createSafeLeadPoint, orientProfile, startProfileAtSide } from './profile-entry.js'
 import {
   builtinFuselageTemplates,
   cloneFuselageTemplate,
@@ -278,6 +279,28 @@ document.querySelector('#app').innerHTML = `
         <label>Швидкість різання, мм/хв
           <input id="cutFeedRate" type="number" min="1" step="10" value="300">
         </label>
+      </div>
+      <div class="profile-entry-controls">
+        <strong>Орієнтація і безпечний вхід</strong>
+        <label>Орієнтація обох профілів
+          <select id="profileOrientation">
+            <option value="none">Як у DXF</option>
+            <option value="rotate180">Повернути на 180°</option>
+            <option value="mirrorX">Дзеркально ліворуч/праворуч</option>
+            <option value="mirrorY">Дзеркально вгору/вниз</option>
+          </select>
+        </label>
+        <label>Сторона входу струни
+          <select id="profileEntrySide">
+            <option value="auto">Автоматично — найближчий край блока</option>
+            <option value="right">Справа</option>
+            <option value="left">Зліва</option>
+            <option value="top">Зверху</option>
+            <option value="bottom">Знизу</option>
+          </select>
+        </label>
+        <label><input id="profileAutoStart" type="checkbox" checked> Автоматично перенести старт у крайню точку профілю</label>
+        <p id="profileEntryStatus">Орієнтація буде застосована однаково до X/Y та A/Z; DXF-файли не змінюються.</p>
       </div>
       <div class="dxf-profile-grid">
         <section id="dxfLeftPanel" class="dxf-profile-panel" data-side="left">
@@ -785,6 +808,10 @@ const ncToDxfStatus = document.querySelector('#ncToDxfStatus')
 const dxfPointCountInput = document.querySelector('#dxfPointCount')
 const cutPassModeInput = document.querySelector('#cutPassMode')
 const leadDistanceInput = document.querySelector('#leadDistance')
+const profileOrientationInput = document.querySelector('#profileOrientation')
+const profileEntrySideInput = document.querySelector('#profileEntrySide')
+const profileAutoStartInput = document.querySelector('#profileAutoStart')
+const profileEntryStatus = document.querySelector('#profileEntryStatus')
 const cutFeedRateInput = document.querySelector('#cutFeedRate')
 const dxfAssignmentStatus = document.querySelector('#dxfAssignmentStatus')
 const generateNcButton = document.querySelector('#generateNc')
@@ -1742,6 +1769,9 @@ const getProjectSettings = () => ({
   pointCount: Number(dxfPointCountInput.value),
   passMode: cutPassModeInput.value,
   leadDistance: Number(leadDistanceInput.value),
+  profileOrientation: profileOrientationInput.value,
+  profileEntrySide: profileEntrySideInput.value,
+  profileAutoStart: profileAutoStartInput.checked,
   feedRate: Number(cutFeedRateInput.value),
   foamLength: Number(foamLengthInput.value),
   foamWidth: Number(foamWidthInput.value),
@@ -1786,6 +1816,9 @@ const applyProjectSettings = settings => {
     if (Number.isFinite(value)) input.value = value
   }
   if (['single', 'double'].includes(settings.passMode)) cutPassModeInput.value = settings.passMode
+  if (['none', 'rotate180', 'mirrorX', 'mirrorY'].includes(settings.profileOrientation)) profileOrientationInput.value = settings.profileOrientation
+  if (['auto', 'right', 'left', 'top', 'bottom'].includes(settings.profileEntrySide)) profileEntrySideInput.value = settings.profileEntrySide
+  if (typeof settings.profileAutoStart === 'boolean') profileAutoStartInput.checked = settings.profileAutoStart
   blockCompensationInput.checked = settings.blockCompensation === true
   if (['center', 'manual', 'auto'].includes(settings.blockPlacementMode)) {
     blockPlacementModeInput.value = settings.blockPlacementMode
@@ -1870,7 +1903,27 @@ const getOutsidePoint = (points, point, distance) => {
   }
 }
 
-const buildCuttingPath = (points, passMode = cutPassModeInput.value) => {
+const buildBoundaryEntryRoute = (start, side, leadDistance) => {
+  const offsetX = Math.max(0, Number(profileLengthOffsetInput.value) || 0)
+  const offsetY = Math.max(0, Number(profileHeightOffsetInput.value) || 0)
+  const left = -offsetX
+  const bottom = -offsetY
+  const right = Math.max(left, Number(foamLengthInput.value) - offsetX)
+  const top = Math.max(bottom, Number(foamHeightInput.value) - offsetY)
+  const zero = { x: left, y: bottom }
+  let boundary
+  let corner = null
+  if (side === 'left') boundary = { x: Math.min(left, start.x - leadDistance), y: start.y }
+  else if (side === 'top') { corner = { x: left, y: top }; boundary = { x: start.x, y: Math.max(top, start.y + leadDistance) } }
+  else if (side === 'bottom') boundary = { x: start.x, y: Math.min(bottom, start.y - leadDistance) }
+  else { corner = { x: right, y: bottom }; boundary = { x: Math.max(right, start.x + leadDistance), y: start.y } }
+  const route = [zero]
+  if (corner && Math.hypot(corner.x - zero.x, corner.y - zero.y) > 1e-7) route.push(corner)
+  if (Math.hypot(boundary.x - route.at(-1).x, boundary.y - route.at(-1).y) > 1e-7) route.push(boundary)
+  return { route, boundary }
+}
+
+const buildCuttingPath = (points, passMode = cutPassModeInput.value, entrySide = 'right') => {
   if (points.length < 2) return points.map(point => ({ ...point }))
 
   let orderedPoints = points
@@ -1890,8 +1943,9 @@ const buildCuttingPath = (points, passMode = cutPassModeInput.value) => {
   const start = orderedPoints[0]
   const splitIndex = Math.floor(orderedPoints.length / 2)
   const opposite = orderedPoints[splitIndex]
-  const outsideStart = getOutsidePoint(orderedPoints, start, leadDistance)
-  const approachStart = [outsideStart, ...interpolateMove(outsideStart, start)]
+  const { route: safeRoute, boundary: outsideStart } = buildBoundaryEntryRoute(start, entrySide, leadDistance)
+  const approachStart = [...safeRoute, ...interpolateMove(outsideStart, start)]
+  const returnToZero = [...safeRoute].reverse()
 
   if (passMode === 'double') {
     const outsideOpposite = getOutsidePoint(orderedPoints, opposite, leadDistance)
@@ -1909,7 +1963,8 @@ const buildCuttingPath = (points, passMode = cutPassModeInput.value) => {
       ...enterSecond,
       ...secondSurface,
       ...closeAtStart,
-      ...exitSecond
+      ...exitSecond,
+      ...returnToZero.slice(1)
     ]
   }
 
@@ -1917,7 +1972,8 @@ const buildCuttingPath = (points, passMode = cutPassModeInput.value) => {
     ...approachStart,
     ...orderedPoints.slice(1),
     { ...start },
-    ...interpolateMove(start, outsideStart)
+    ...interpolateMove(start, outsideStart),
+    ...returnToZero.slice(1)
   ]
 }
 
@@ -2105,8 +2161,27 @@ const renderPreparedDxfSimulation = () => {
   const internalFirst = preparedDxfProfiles.left.internalFirst === true
     || preparedDxfProfiles.right.internalFirst === true
   const effectivePassMode = internalFirst ? 'single' : cutPassModeInput.value
-  const faceLeftPoints = buildCuttingPath(preparedDxfProfiles.left.points, effectivePassMode)
-  const faceRightPoints = buildCuttingPath(preparedDxfProfiles.right.points, effectivePassMode)
+  let sourceLeftPoints = orientProfile(preparedDxfProfiles.left.points, profileOrientationInput.value)
+  let sourceRightPoints = orientProfile(preparedDxfProfiles.right.points, profileOrientationInput.value)
+  const requestedEntrySide = profileEntrySideInput.value
+  const entrySide = requestedEntrySide === 'auto'
+    ? chooseEntrySide(sourceLeftPoints, sourceRightPoints, {
+        length: foamLengthInput.value,
+        height: foamHeightInput.value,
+        offsetX: profileLengthOffsetInput.value,
+        offsetY: profileHeightOffsetInput.value
+      })
+    : requestedEntrySide
+  if (profileAutoStartInput.checked && !internalFirst) {
+    sourceLeftPoints = startProfileAtSide(sourceLeftPoints, entrySide)
+    sourceRightPoints = startProfileAtSide(sourceRightPoints, entrySide)
+  }
+  const faceLeftPoints = buildCuttingPath(sourceLeftPoints, effectivePassMode, entrySide)
+  const faceRightPoints = buildCuttingPath(sourceRightPoints, effectivePassMode, entrySide)
+  const sideLabels = { right: 'справа', left: 'зліва', top: 'зверху', bottom: 'знизу' }
+  const orientationLabels = { none: 'як у DXF', rotate180: 'поворот 180°', mirrorX: 'дзеркально ліворуч/праворуч', mirrorY: 'дзеркально вгору/вниз' }
+  profileEntryStatus.textContent = `Застосовано до обох сторін: ${orientationLabels[profileOrientationInput.value]}; `
+    + `безпечний вхід ${sideLabels[entrySide]} від X0/Y0 уздовж зовнішніх граней блока${internalFirst ? '; автоматичний старт вимкнено для складеної траєкторії порожнин' : ''}.`
 
   if (faceLeftPoints.length !== faceRightPoints.length) {
     preparedCuttingTrajectory = null
@@ -2140,8 +2215,8 @@ const renderPreparedDxfSimulation = () => {
   preparedCuttingTrajectory = {
     leftPoints,
     rightPoints,
-    sourceLeftPoints: preparedDxfProfiles.left.points.map(point => ({ ...point })),
-    sourceRightPoints: preparedDxfProfiles.right.points.map(point => ({ ...point })),
+    sourceLeftPoints: sourceLeftPoints.map(point => ({ ...point })),
+    sourceRightPoints: sourceRightPoints.map(point => ({ ...point })),
     feedRate: cuttingSettings.feedRate,
     passMode: effectivePassMode,
     blockSetup
@@ -3546,6 +3621,9 @@ dxfPointCountInput.addEventListener('change', () => {
 })
 cutPassModeInput.addEventListener('change', renderPreparedDxfSimulation)
 leadDistanceInput.addEventListener('input', renderPreparedDxfSimulation)
+profileOrientationInput.addEventListener('change', renderPreparedDxfSimulation)
+profileEntrySideInput.addEventListener('change', renderPreparedDxfSimulation)
+profileAutoStartInput.addEventListener('change', renderPreparedDxfSimulation)
 cutFeedRateInput.addEventListener('input', renderPreparedDxfSimulation)
 Object.values(machineLimitInputs).forEach(input => {
   input.addEventListener('input', updateGeneratedNcPreview)
