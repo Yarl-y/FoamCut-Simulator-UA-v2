@@ -1,11 +1,12 @@
 import { validateVirtualProgram, VirtualFluidNC, VIRTUAL_AXES } from './virtual-fluidnc.js'
 import { calculateCalibratedSteps, createControllerPlan } from './controller-setup.js'
 import { runSafetyScenarios, sanitizeColdRunLine } from './safety-scenarios.js'
+import { analyzeMachineJob, formatMachineSetupCard } from './machine-job-setup.js'
 
 const AXES = VIRTUAL_AXES
 const STATUS_AXES = ['X', 'Y', 'Z', 'A', 'B']
 
-export function initializeMachineControl({ getNcText, onPositionChange, onJobStateChange }) {
+export function initializeMachineControl({ getNcText, getBlockSetup, onPositionChange, onJobStateChange }) {
   const root = document.getElementById('machineControlWorkspace')
   if (!root) return
 
@@ -57,6 +58,10 @@ export function initializeMachineControl({ getNcText, onPositionChange, onJobSta
   const runSafetyTests = el('machineRunSafetyTests')
   const safetyStatus = el('machineSafetyStatus')
   const safetyResults = el('machineSafetyResults')
+  const prepareSetup = el('machinePrepareSetup')
+  const downloadSetup = el('machineDownloadSetup')
+  const setupReport = el('machineSetupReport')
+  const installationStatus = el('machineInstallationStatus')
 
   let port = null
   let reader = null
@@ -72,6 +77,7 @@ export function initializeMachineControl({ getNcText, onPositionChange, onJobSta
   const getLimits = () => Object.fromEntries(AXES.map(axis => [axis, Math.max(0, Number(profileInputs[axis].value) || 0)]))
   const virtualController = new VirtualFluidNC(getLimits())
   const journal = []
+  let installationCard = ''
 
   const getProfile = () => ({
     limits: getLimits(),
@@ -189,6 +195,30 @@ export function initializeMachineControl({ getNcText, onPositionChange, onJobSta
       ...report.errors.map(value => `ПОМИЛКА: ${value}`),
       ...report.warnings.map(value => `УВАГА: ${value}`)
     ].join('\n')
+    return report
+  }
+
+  const renderInstallationStatus = () => {
+    const checks = [...root.querySelectorAll('[data-install-check]')]
+    const complete = checks.length > 0 && checks.every(input => input.checked)
+    installationStatus.className = complete ? 'machine-installation-status ready' : 'machine-installation-status'
+    installationStatus.textContent = complete
+      ? 'Усі дії оператора підтверджено — можна переходити до контрольованого запуску'
+      : `Підтверджено ${checks.filter(input => input.checked).length} із ${checks.length} дій оператора`
+  }
+
+  const buildInstallationCard = () => {
+    if (!ncText.value.trim()) throw new Error('Спочатку завантажте NC')
+    const block = getBlockSetup?.() || {}
+    const report = analyzeMachineJob(ncText.value, {
+      limits: getLimits(), maximumFeed: maximumFeed.value, defaultFeed: jogFeed.value,
+      block
+    })
+    installationCard = formatMachineSetupCard(report, { block })
+    setupReport.textContent = installationCard
+    setupReport.className = report.safe ? 'ready' : 'warning'
+    downloadSetup.disabled = false
+    log(report.safe ? 'Карту встановлення підготовлено' : 'Карта встановлення містить небезпечні межі', report.safe ? 'success' : 'error')
     return report
   }
 
@@ -426,6 +456,17 @@ export function initializeMachineControl({ getNcText, onPositionChange, onJobSta
   validateNc.addEventListener('click', runValidation)
   ncText.addEventListener('input', () => { validationReport.textContent = 'NC змінено — виконайте перевірку ще раз'; validationReport.className = 'machine-validation'; renderProgram() })
   coldRun.addEventListener('change', () => { runValidation(); renderProgram() })
+  prepareSetup.addEventListener('click', () => {
+    try { buildInstallationCard() } catch (error) { setupReport.className = 'warning'; setupReport.textContent = error.message; log(error.message, 'error') }
+  })
+  downloadSetup.addEventListener('click', () => {
+    if (!installationCard) return
+    const url = URL.createObjectURL(new Blob([installationCard], { type: 'text/plain;charset=utf-8' }))
+    const link = document.createElement('a')
+    link.href = url; link.download = `foamcut-setup-${new Date().toISOString().slice(0, 10)}.txt`; link.click()
+    URL.revokeObjectURL(url)
+  })
+  root.querySelectorAll('[data-install-check]').forEach(input => input.addEventListener('change', renderInstallationStatus))
   downloadJournal.addEventListener('click', () => {
     const payload = {
       format: 'FoamCut Simulator execution journal', version: 1,
@@ -503,6 +544,7 @@ export function initializeMachineControl({ getNcText, onPositionChange, onJobSta
   } catch {}
 
   renderSetupStatus()
+  renderInstallationStatus()
   renderPositions()
   renderProgram([])
   mode.dispatchEvent(new Event('change'))

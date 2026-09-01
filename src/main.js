@@ -555,6 +555,21 @@ view3d.innerHTML = `
         <div id="machineProgramLines" class="machine-program-lines" aria-label="NC-програма з поточним рядком"></div>
       </section>
     </div>
+    <section class="machine-installation-card">
+      <div class="machine-installation-header">
+        <div><h2>Контроль перед запуском</h2><p>Карта фізичного встановлення блока, струни та робочого нуля.</p></div>
+        <div><button id="machinePrepareSetup" type="button">Підготувати станок</button><button id="machineDownloadSetup" type="button" disabled>Зберегти карту TXT</button></div>
+      </div>
+      <pre id="machineSetupReport">Завантажте NC і натисніть «Підготувати станок».</pre>
+      <div class="machine-installation-checks">
+        <label><input type="checkbox" data-install-check="block"> Блок установлено й закріплено</label>
+        <label><input type="checkbox" data-install-check="wire"> Холодну струну підведено до контрольного кута</label>
+        <label><input type="checkbox" data-install-check="zero"> Робочий нуль X/Y/A/Z установлено</label>
+        <label><input type="checkbox" data-install-check="safety"> E-stop і кінцевики перевірено</label>
+        <label><input type="checkbox" data-install-check="dryrun"> Холодний прогін завершено без помилок</label>
+      </div>
+      <p id="machineInstallationStatus" class="machine-installation-status">Підготовку ще не виконано</p>
+    </section>
     <div class="machine-diagnostics">
       <h3>Діагностика контролера</h3>
       <p id="machineControllerMessage">Увімкнено безпечний режим симуляції</p>
@@ -844,6 +859,14 @@ let activeMachineControlBridge = null
 
 initializeMachineControl({
   getNcText: () => batchNcPreview.value.trim() || generatedNcText.trim(),
+  getBlockSetup: () => ({
+    length: Number(foamLengthInput.value),
+    width: Number(foamWidthInput.value),
+    height: Number(foamHeightInput.value),
+    offsetX: Number(profileLengthOffsetInput.value),
+    offsetY: Number(profileHeightOffsetInput.value),
+    wireSpan: Number(wireSpanInput.value)
+  }),
   onPositionChange: positions => activeMachineControlBridge?.setPositions(positions),
   onJobStateChange: state => activeMachineControlBridge?.setState(state)
 })
