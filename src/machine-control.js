@@ -2,6 +2,7 @@ import { validateVirtualProgram, VirtualFluidNC, VIRTUAL_AXES } from './virtual-
 import { calculateCalibratedSteps, createControllerPlan } from './controller-setup.js'
 import { runSafetyScenarios, sanitizeColdRunLine } from './safety-scenarios.js'
 import { analyzeMachineJob, formatMachineSetupCard } from './machine-job-setup.js'
+import { analyzeMotionDynamics } from './motion-analysis.js'
 
 const AXES = VIRTUAL_AXES
 const STATUS_AXES = ['X', 'Y', 'Z', 'A', 'B']
@@ -62,6 +63,8 @@ export function initializeMachineControl({ getNcText, getBlockSetup, onPositionC
   const downloadSetup = el('machineDownloadSetup')
   const setupReport = el('machineSetupReport')
   const installationStatus = el('machineInstallationStatus')
+  const motionSummary = el('machineMotionSummary')
+  const motionFindings = el('machineMotionFindings')
 
   let port = null
   let reader = null
@@ -218,6 +221,9 @@ export function initializeMachineControl({ getNcText, getBlockSetup, onPositionC
     downloadSetup.disabled = true
     setupReport.className = ''
     setupReport.textContent = 'NC або параметри змінено — підготуйте нову карту встановлення.'
+    motionSummary.className = ''
+    motionSummary.textContent = 'NC або параметри змінено — аналіз потрібно виконати знову.'
+    motionFindings.replaceChildren()
     ;['block', 'wire', 'zero', 'dryrun'].forEach(name => setInstallationCheck(name, false))
     zeroConfirmed = false
   }
@@ -233,8 +239,30 @@ export function initializeMachineControl({ getNcText, getBlockSetup, onPositionC
     setupReport.textContent = installationCard
     setupReport.className = report.safe ? 'ready' : 'warning'
     downloadSetup.disabled = false
+    const dynamics = analyzeMotionDynamics(ncText.value, {
+      limits: getLimits(), maximumFeed: maximumFeed.value, acceleration: acceleration.value
+    })
+    motionSummary.className = dynamics.safe ? 'ready' : 'warning'
+    motionSummary.textContent = dynamics.findings.length
+      ? `Проаналізовано ${dynamics.segments.length} рухів: небезпек ${dynamics.dangerCount}, попереджень ${dynamics.warningCount}; найбільша F${dynamics.maximumProgramFeed}.`
+      : `Проаналізовано ${dynamics.segments.length} рухів: різких або небезпечних переходів не знайдено; найбільша F${dynamics.maximumProgramFeed}.`
+    const shownFindings = dynamics.findings.slice(0, 150)
+    motionFindings.replaceChildren(...shownFindings.map(item => {
+      const row = document.createElement('tr')
+      row.dataset.severity = item.severity
+      const values = [item.severity === 'danger' ? 'НЕБЕЗПЕКА' : 'УВАГА', item.lineNumber, item.type, item.message]
+      values.forEach(value => { const cell = document.createElement('td'); cell.textContent = value; row.appendChild(cell) })
+      return row
+    }))
+    if (dynamics.findings.length > shownFindings.length) {
+      const row = document.createElement('tr')
+      const cell = document.createElement('td')
+      cell.colSpan = 4
+      cell.textContent = `Показано перші ${shownFindings.length} із ${dynamics.findings.length} зауважень`
+      row.appendChild(cell); motionFindings.appendChild(row)
+    }
     log(report.safe ? 'Карту встановлення підготовлено' : 'Карта встановлення містить небезпечні межі', report.safe ? 'success' : 'error')
-    return report
+    return { report, dynamics }
   }
 
   const parseStatus = line => {

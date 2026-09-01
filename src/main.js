@@ -569,6 +569,11 @@ view3d.innerHTML = `
         <label><input type="checkbox" data-install-check="dryrun"> Холодний прогін завершено без помилок</label>
       </div>
       <p id="machineInstallationStatus" class="machine-installation-status">Підготовку ще не виконано</p>
+      <div class="machine-motion-analysis">
+        <h3>Аналіз швидкості, прискорення та різких рухів</h3>
+        <p id="machineMotionSummary">Аналіз буде виконано разом із картою встановлення.</p>
+        <div class="machine-motion-scroll"><table><thead><tr><th>Рівень</th><th>Рядок NC</th><th>Тип</th><th>Пояснення</th></tr></thead><tbody id="machineMotionFindings"></tbody></table></div>
+      </div>
     </section>
     <div class="machine-diagnostics">
       <h3>Діагностика контролера</h3>
