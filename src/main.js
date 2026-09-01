@@ -554,6 +554,11 @@ view3d.innerHTML = `
         <div class="machine-current-command"><strong>Поточний рядок:</strong> <output id="machineCurrentLine">—</output></div>
         <div id="machineProgramLines" class="machine-program-lines" aria-label="NC-програма з поточним рядком"></div>
       </section>
+      <section class="machine-live-preview">
+        <div><h3>Живе положення струни на траєкторії</h3><small>Синій — X/Y; червоний — A/Z; зелений — поточне положення струни</small></div>
+        <svg id="machineLivePreview" viewBox="0 0 640 300" role="img" aria-label="Поточне положення струни на NC-траєкторії"></svg>
+        <p id="machineLivePreviewStatus">Завантажте NC для побудови траєкторії</p>
+      </section>
     </div>
     <section class="machine-installation-card">
       <div class="machine-installation-header">

@@ -65,6 +65,8 @@ export function initializeMachineControl({ getNcText, getBlockSetup, onPositionC
   const installationStatus = el('machineInstallationStatus')
   const motionSummary = el('machineMotionSummary')
   const motionFindings = el('machineMotionFindings')
+  const livePreview = el('machineLivePreview')
+  const livePreviewStatus = el('machineLivePreviewStatus')
 
   let port = null
   let reader = null
@@ -81,6 +83,7 @@ export function initializeMachineControl({ getNcText, getBlockSetup, onPositionC
   const virtualController = new VirtualFluidNC(getLimits())
   const journal = []
   let installationCard = ''
+  let livePreviewProjection = null
 
   const getProfile = () => ({
     limits: getLimits(),
@@ -144,6 +147,61 @@ export function initializeMachineControl({ getNcText, getBlockSetup, onPositionC
     machineState.dataset.state = state.toLowerCase()
   }
 
+  const svgNode = (tag, attributes = {}) => {
+    const node = document.createElementNS('http://www.w3.org/2000/svg', tag)
+    Object.entries(attributes).forEach(([name, value]) => node.setAttribute(name, value))
+    return node
+  }
+
+  const updateLivePreviewPosition = () => {
+    if (!livePreviewProjection) return
+    const left = livePreviewProjection.toSvg(positions.X, positions.Y)
+    const right = livePreviewProjection.toSvg(positions.A, positions.Z)
+    const wire = livePreview.querySelector('[data-live-wire]')
+    const leftPoint = livePreview.querySelector('[data-live-left]')
+    const rightPoint = livePreview.querySelector('[data-live-right]')
+    if (!wire || !leftPoint || !rightPoint) return
+    wire.setAttribute('x1', left.x); wire.setAttribute('y1', left.y)
+    wire.setAttribute('x2', right.x); wire.setAttribute('y2', right.y)
+    leftPoint.setAttribute('cx', left.x); leftPoint.setAttribute('cy', left.y)
+    rightPoint.setAttribute('cx', right.x); rightPoint.setAttribute('cy', right.y)
+    livePreviewStatus.textContent = `X/Y ${positions.X.toFixed(3)}, ${positions.Y.toFixed(3)} мм · A/Z ${positions.A.toFixed(3)}, ${positions.Z.toFixed(3)} мм`
+  }
+
+  const renderLivePreview = () => {
+    const dynamics = analyzeMotionDynamics(ncText.value, {
+      limits: getLimits(), maximumFeed: maximumFeed.value, acceleration: acceleration.value
+    })
+    if (!dynamics.segments.length) {
+      livePreview.replaceChildren()
+      livePreviewProjection = null
+      livePreviewStatus.textContent = 'Завантажте NC для побудови траєкторії'
+      return
+    }
+    const leftPoints = [dynamics.segments[0].from, ...dynamics.segments.map(segment => segment.to)].map(point => ({ x: point.X, y: point.Y }))
+    const rightPoints = [dynamics.segments[0].from, ...dynamics.segments.map(segment => segment.to)].map(point => ({ x: point.A, y: point.Z }))
+    const all = [...leftPoints, ...rightPoints]
+    const minX = Math.min(...all.map(point => point.x)); const maxX = Math.max(...all.map(point => point.x))
+    const minY = Math.min(...all.map(point => point.y)); const maxY = Math.max(...all.map(point => point.y))
+    const padding = 24; const width = 640; const height = 300
+    const scale = Math.min((width - padding * 2) / Math.max(1, maxX - minX), (height - padding * 2) / Math.max(1, maxY - minY))
+    const toSvg = (x, y) => ({ x: padding + (x - minX) * scale, y: height - padding - (y - minY) * scale })
+    livePreviewProjection = { toSvg }
+    const pointsAttribute = points => points.map(point => { const projected = toSvg(point.x, point.y); return `${projected.x},${projected.y}` }).join(' ')
+    const grid = svgNode('g', { class: 'machine-live-grid' })
+    for (let index = 1; index < 10; index += 1) {
+      grid.append(svgNode('line', { x1: index * width / 10, y1: 0, x2: index * width / 10, y2: height }))
+      grid.append(svgNode('line', { x1: 0, y1: index * height / 10, x2: width, y2: index * height / 10 }))
+    }
+    const leftPath = svgNode('polyline', { points: pointsAttribute(leftPoints), fill: 'none', stroke: '#2563eb', 'stroke-width': 2 })
+    const rightPath = svgNode('polyline', { points: pointsAttribute(rightPoints), fill: 'none', stroke: '#dc2626', 'stroke-width': 2 })
+    const wire = svgNode('line', { 'data-live-wire': '', stroke: '#22c55e', 'stroke-width': 4, 'stroke-linecap': 'round' })
+    const leftPoint = svgNode('circle', { 'data-live-left': '', r: 5, fill: '#22c55e', stroke: '#14532d' })
+    const rightPoint = svgNode('circle', { 'data-live-right': '', r: 5, fill: '#22c55e', stroke: '#14532d' })
+    livePreview.replaceChildren(grid, leftPath, rightPath, wire, leftPoint, rightPoint)
+    updateLivePreviewPosition()
+  }
+
   const renderPositions = () => {
     AXES.forEach(axis => {
       const output = root.querySelector(`[data-machine-position="${axis}"]`)
@@ -151,6 +209,7 @@ export function initializeMachineControl({ getNcText, getBlockSetup, onPositionC
       root.querySelector(`[data-limit-min="${axis}"]`)?.classList.toggle('active', positions[axis] <= 0.0001)
       root.querySelector(`[data-limit-max="${axis}"]`)?.classList.toggle('active', positions[axis] >= getLimits()[axis] - 0.0001)
     })
+    updateLivePreviewPosition()
     onPositionChange?.({ ...positions })
   }
 
@@ -418,6 +477,7 @@ export function initializeMachineControl({ getNcText, getBlockSetup, onPositionC
     log(ncText.value ? 'Поточний NC завантажено у пульт' : 'У Simulator ще немає готового NC', ncText.value ? 'success' : 'error')
     runValidation()
     renderProgram()
+    renderLivePreview()
   })
   ncFile.addEventListener('change', async () => {
     const file = ncFile.files?.[0]
@@ -427,6 +487,7 @@ export function initializeMachineControl({ getNcText, getBlockSetup, onPositionC
     log(`Відкрито ${file.name}`, 'success')
     runValidation()
     renderProgram()
+    renderLivePreview()
   })
 
   run.addEventListener('click', async () => {
@@ -514,7 +575,7 @@ export function initializeMachineControl({ getNcText, getBlockSetup, onPositionC
     setState('Alarm'); connection.textContent = 'Зв’язок втрачено'; log('ALARM: змодельовано втрату зв’язку', 'error')
   })
   validateNc.addEventListener('click', runValidation)
-  ncText.addEventListener('input', () => { invalidateJobPreparation(); validationReport.textContent = 'NC змінено — виконайте перевірку ще раз'; validationReport.className = 'machine-validation'; renderProgram() })
+  ncText.addEventListener('input', () => { invalidateJobPreparation(); validationReport.textContent = 'NC змінено — виконайте перевірку ще раз'; validationReport.className = 'machine-validation'; renderProgram(); renderLivePreview() })
   coldRun.addEventListener('change', () => { setInstallationCheck('dryrun', false); runValidation(); renderProgram() })
   prepareSetup.addEventListener('click', () => {
     try { buildInstallationCard() } catch (error) { setupReport.className = 'warning'; setupReport.textContent = error.message; log(error.message, 'error') }
@@ -608,5 +669,6 @@ export function initializeMachineControl({ getNcText, getBlockSetup, onPositionC
   renderInstallationStatus()
   renderPositions()
   renderProgram([])
+  renderLivePreview()
   mode.dispatchEvent(new Event('change'))
 }
