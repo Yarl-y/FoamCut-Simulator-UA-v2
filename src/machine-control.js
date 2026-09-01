@@ -207,6 +207,21 @@ export function initializeMachineControl({ getNcText, getBlockSetup, onPositionC
       : `Підтверджено ${checks.filter(input => input.checked).length} із ${checks.length} дій оператора`
   }
 
+  const setInstallationCheck = (name, checked) => {
+    const input = root.querySelector(`[data-install-check="${name}"]`)
+    if (input) input.checked = checked
+    renderInstallationStatus()
+  }
+
+  const invalidateJobPreparation = () => {
+    installationCard = ''
+    downloadSetup.disabled = true
+    setupReport.className = ''
+    setupReport.textContent = 'NC або параметри змінено — підготуйте нову карту встановлення.'
+    ;['block', 'wire', 'zero', 'dryrun'].forEach(name => setInstallationCheck(name, false))
+    zeroConfirmed = false
+  }
+
   const buildInstallationCard = () => {
     if (!ncText.value.trim()) throw new Error('Спочатку завантажте NC')
     const block = getBlockSetup?.() || {}
@@ -321,6 +336,9 @@ export function initializeMachineControl({ getNcText, getBlockSetup, onPositionC
     interlock.checked = simulation
     setState(simulation ? 'Готовий' : 'Не підключено')
     zeroConfirmed = false
+    setInstallationCheck('zero', false)
+    setInstallationCheck('dryrun', false)
+    setInstallationCheck('safety', false)
     log(simulation ? 'Увімкнено безпечний режим симуляції' : 'Оберіть USB-порт Root Controller')
   })
 
@@ -344,7 +362,8 @@ export function initializeMachineControl({ getNcText, getBlockSetup, onPositionC
       const response = await send('$H')
       if (response !== 'ok') throw new Error(response)
       setState('Готовий'); log('Пошук дому завершено, координати обнулено', 'success')
-      zeroConfirmed = true
+      zeroConfirmed = false
+      setInstallationCheck('zero', false)
     } catch (error) { log(error.message, 'error') }
   })
   el('machineUnlock').addEventListener('click', async () => {
@@ -361,11 +380,13 @@ export function initializeMachineControl({ getNcText, getBlockSetup, onPositionC
       if (mode.value !== 'simulation') AXES.forEach(axis => { positions[axis] = 0 })
       renderPositions(); log('Робочий нуль X/Y/A/Z/B встановлено', 'success')
       zeroConfirmed = true
+      setInstallationCheck('zero', true)
     } catch (error) { log(error.message, 'error') }
   })
 
   loadCurrentNc.addEventListener('click', () => {
     ncText.value = getNcText?.() || ''
+    invalidateJobPreparation()
     log(ncText.value ? 'Поточний NC завантажено у пульт' : 'У Simulator ще немає готового NC', ncText.value ? 'success' : 'error')
     runValidation()
     renderProgram()
@@ -374,6 +395,7 @@ export function initializeMachineControl({ getNcText, getBlockSetup, onPositionC
     const file = ncFile.files?.[0]
     if (!file) return
     ncText.value = await file.text()
+    invalidateJobPreparation()
     log(`Відкрито ${file.name}`, 'success')
     runValidation()
     renderProgram()
@@ -386,6 +408,7 @@ export function initializeMachineControl({ getNcText, getBlockSetup, onPositionC
     if (running) return
     try {
       if (!ncText.value.trim()) throw new Error('Спочатку завантажте NC')
+      if (!coldRun.checked) throw new Error('Реальний нагрів заблоковано до перевірки силової схеми контролера')
       if (mode.value !== 'simulation' && !interlock.checked) throw new Error('Не підтверджено E-stop, кінцевики та холодний прогін')
       const validation = runValidation()
       if (!validation.valid) throw new Error(validation.errors.join('; '))
@@ -400,8 +423,11 @@ export function initializeMachineControl({ getNcText, getBlockSetup, onPositionC
         if (response !== 'ok') throw new Error(response)
         if (mode.value === 'simulation') await new Promise(resolve => setTimeout(resolve, 45))
       }
-      if (token === jobToken) { setState('Готовий'); onJobStateChange?.('complete'); log('NC виконано', 'success') }
-    } catch (error) { setState(virtualController.alarm ? 'Alarm' : 'Помилка'); onJobStateChange?.('error'); log(error.message, 'error') }
+      if (token === jobToken) {
+        setState('Готовий'); onJobStateChange?.('complete'); setInstallationCheck('dryrun', true)
+        log('Холодний прогін NC виконано без помилок', 'success')
+      }
+    } catch (error) { setInstallationCheck('dryrun', false); setState(virtualController.alarm ? 'Alarm' : 'Помилка'); onJobStateChange?.('error'); log(error.message, 'error') }
     finally { running = false; paused = false; pause.disabled = true; stop.disabled = true; run.disabled = false; pause.textContent = 'Пауза' }
   })
 
@@ -417,12 +443,14 @@ export function initializeMachineControl({ getNcText, getBlockSetup, onPositionC
     jobToken += 1; running = false; paused = false
     try { await writeRaw('!'); await writeRaw('\x18') } catch {}
     setState('Зупинено'); log('Завдання зупинено оператором', 'error')
+    setInstallationCheck('dryrun', false)
     onJobStateChange?.('stopped')
   })
   reset.addEventListener('click', async () => {
     jobToken += 1; running = false; paused = false; progress.value = 0; progressText.textContent = '0 / 0'
     try { await writeRaw('\x18') } catch {}
     setState(mode.value === 'simulation' ? 'Готовий' : 'Очікування'); log('Стан пульта скинуто')
+    setInstallationCheck('dryrun', false)
     currentLine.textContent = '—'; renderProgram(); onJobStateChange?.('reset')
   })
 
@@ -435,12 +463,15 @@ export function initializeMachineControl({ getNcText, getBlockSetup, onPositionC
   saveProfile.addEventListener('click', () => {
     virtualController.setLimits(getLimits())
     try { localStorage.setItem('foamcut-machine-profile', JSON.stringify(getProfile())) } catch {}
+    setInstallationCheck('safety', false)
+    setInstallationCheck('dryrun', false)
     log('Профіль віртуального станка збережено', 'success')
   })
   estop.addEventListener('click', () => {
     if (mode.value !== 'simulation') return
     jobToken += 1; running = false; paused = false
     virtualController.emergencyStop()
+    setInstallationCheck('dryrun', false)
     setState('Alarm'); log('ALARM: натиснуто віртуальний E-stop', 'error')
   })
   clearEstop.addEventListener('click', () => {
@@ -451,11 +482,12 @@ export function initializeMachineControl({ getNcText, getBlockSetup, onPositionC
     if (mode.value !== 'simulation') return
     jobToken += 1; running = false; paused = false
     virtualController.emergencyStop('Втрачено зв’язок із контролером')
+    setInstallationCheck('dryrun', false)
     setState('Alarm'); connection.textContent = 'Зв’язок втрачено'; log('ALARM: змодельовано втрату зв’язку', 'error')
   })
   validateNc.addEventListener('click', runValidation)
-  ncText.addEventListener('input', () => { validationReport.textContent = 'NC змінено — виконайте перевірку ще раз'; validationReport.className = 'machine-validation'; renderProgram() })
-  coldRun.addEventListener('change', () => { runValidation(); renderProgram() })
+  ncText.addEventListener('input', () => { invalidateJobPreparation(); validationReport.textContent = 'NC змінено — виконайте перевірку ще раз'; validationReport.className = 'machine-validation'; renderProgram() })
+  coldRun.addEventListener('change', () => { setInstallationCheck('dryrun', false); runValidation(); renderProgram() })
   prepareSetup.addEventListener('click', () => {
     try { buildInstallationCard() } catch (error) { setupReport.className = 'warning'; setupReport.textContent = error.message; log(error.message, 'error') }
   })
@@ -513,6 +545,7 @@ export function initializeMachineControl({ getNcText, getBlockSetup, onPositionC
   setupYaml.addEventListener('click', () => log('YAML заблокований до визначення плати та контактів', 'error'))
   runSafetyTests.addEventListener('click', () => {
     const report = runSafetyScenarios(getProfile())
+    setInstallationCheck('safety', report.passed)
     safetyStatus.className = report.passed ? 'machine-safety-status passed' : 'machine-safety-status failed'
     safetyStatus.textContent = report.passed
       ? `Усі ${report.results.length} аварійних сценаріїв пройдено`
