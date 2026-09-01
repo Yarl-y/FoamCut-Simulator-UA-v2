@@ -1392,3 +1392,30 @@ code {
 .cut-wizard-actions { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px; }
 .cut-wizard-summary { margin-top: 16px; padding: 14px; white-space: pre-wrap; text-align: left; background: #f8fafc; border: 1px solid var(--border); border-radius: 8px; }
 @media (max-width: 700px) { .cut-wizard-steps { grid-template-columns: 1fr; } }
+
+.machine-control-workspace { max-width: 1380px; margin: 0 auto; text-align: left; }
+.machine-control-header, .machine-connect-panel, .machine-status-strip, .machine-axis-actions, .machine-nc-load, .machine-job-actions, .machine-jog-settings { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+.machine-control-header { justify-content: space-between; margin-bottom: 14px; }
+.machine-control-header h2, .machine-control-header p { margin: 4px 0; }
+.machine-status-strip span, .machine-status-strip strong { padding: 9px 14px; border: 1px solid var(--border); border-radius: 999px; }
+#machineState { color: #166534; background: #dcfce7; }
+#machineState[data-state*="помилка"], #machineState[data-state*="зупинено"], #machineState[data-state*="alarm"] { color: #991b1b; background: #fee2e2; }
+.machine-connect-panel { padding: 12px; margin-bottom: 14px; border: 1px solid var(--border); border-radius: 10px; background: color-mix(in srgb, var(--bg) 94%, #2563eb); }
+.machine-interlock { flex: 1 1 340px; }
+.machine-heat-locked { color: #991b1b; border-color: #dc2626; background: #fee2e2; }
+.machine-dashboard { display: grid; grid-template-columns: minmax(280px,.8fr) minmax(280px,.8fr) minmax(380px,1.4fr); gap: 14px; }
+.machine-dashboard > section, .machine-diagnostics { padding: 14px; border: 1px solid var(--border); border-radius: 10px; background: var(--bg); }
+.machine-dashboard h3, .machine-diagnostics h3 { margin-top: 0; }
+.machine-position-grid { display: grid; grid-template-columns: repeat(auto-fit,minmax(72px,1fr)); gap: 8px; margin: 12px 0; }
+.machine-position-grid div { padding: 10px 6px; text-align: center; border: 1px solid var(--border); border-radius: 8px; }
+.machine-position-grid b, .machine-position-grid output { display: block; }
+.machine-position-grid b { color: #2563eb; font-size: 20px; }.machine-position-grid output { margin-top: 6px; font-family: var(--mono); font-size: 15px; }
+.machine-jog-grid { display: grid; grid-template-columns: 54px 1fr 1fr; gap: 8px; margin-top: 14px; }.machine-jog-grid strong { display: grid; place-items: center; color: #2563eb; font-size: 20px; }
+.machine-jog-grid button { min-height: 45px; font-size: 22px; }
+.machine-job textarea { width: 100%; box-sizing: border-box; margin: 10px 0; resize: vertical; font-family: var(--mono); font-size: 13px; }
+.machine-cold-run { display: block; margin-bottom: 10px; font-weight: 600; }
+.machine-job progress { width: calc(100% - 80px); margin-top: 12px; }
+.machine-diagnostics { margin-top: 14px; }.machine-diagnostics pre { min-height: 110px; max-height: 220px; overflow: auto; padding: 10px; color: #d1fae5; background: #111827; font: 13px/1.45 var(--mono); }.machine-diagnostics > div { display: flex; gap: 8px; }.machine-diagnostics input { flex: 1; }
+#machineControllerMessage[data-kind="error"] { color: #dc2626; font-weight: 700; }#machineControllerMessage[data-kind="success"] { color: #15803d; font-weight: 700; }
+@media (max-width: 1000px) { .machine-dashboard { grid-template-columns: 1fr 1fr; }.machine-job { grid-column: 1 / -1; } }
+@media (max-width: 680px) { .machine-dashboard { grid-template-columns: 1fr; }.machine-job { grid-column: auto; }.machine-position-grid { grid-template-columns: repeat(3,1fr); } }

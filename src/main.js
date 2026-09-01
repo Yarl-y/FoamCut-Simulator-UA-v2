@@ -14,6 +14,7 @@ import {
 import { parseDxf, renderDxfPreview, resampleDxfContour } from './dxf.js'
 import { createDxfPolyline, createPreviewModel, recoverNcProfiles } from './nc-dxf.js'
 import { createFoamCutProject, parseFoamCutProject } from './project-file.js'
+import { initializeMachineControl } from './machine-control.js'
 import {
   builtinFuselageTemplates,
   cloneFuselageTemplate,
@@ -490,6 +491,50 @@ view3d.innerHTML = `
     </div>
     <pre id="cutWizardSummary" class="cut-wizard-summary"></pre>
   </section>
+  <section id="machineControlWorkspace" class="machine-control-workspace" data-workspace="control">
+    <div class="machine-control-header">
+      <div><h2>Керування пінорізом</h2><p>Робоче місце оператора X/Y/A/Z з резервом для осі B</p></div>
+      <div class="machine-status-strip">
+        <span id="machineConnection">Симуляція</span><strong id="machineState">Готовий</strong>
+      </div>
+    </div>
+    <div class="machine-connect-panel">
+      <label>Режим <select id="machineMode"><option value="simulation">Симуляція</option><option value="serial">USB / FluidNC</option></select></label>
+      <button id="machineConnect" type="button" disabled>Підключити</button>
+      <label class="machine-interlock"><input id="machineInterlock" type="checkbox" checked disabled> E-stop, кінцевики та холодний прогін перевірено</label>
+      <button id="machineHeat" class="machine-heat-locked" type="button">Нагрів заблоковано</button>
+    </div>
+    <div class="machine-dashboard">
+      <section class="machine-coordinates">
+        <h3>Координати, мм</h3>
+        <div class="machine-position-grid">
+          ${['X','Y','A','Z','B'].map(axis => `<div><b>${axis}</b><output data-machine-position="${axis}">0.000</output></div>`).join('')}
+        </div>
+        <div class="machine-axis-actions"><button id="machineHome">Пошук дому</button><button id="machineZero">Встановити робочий нуль</button><button id="machineUnlock">Скинути Alarm</button></div>
+      </section>
+      <section class="machine-jog">
+        <h3>Ручне переміщення</h3>
+        <div class="machine-jog-settings"><label>Крок, мм <select id="machineJogStep"><option>0.1</option><option>1</option><option selected>10</option><option>50</option></select></label><label>Швидкість, мм/хв <input id="machineJogFeed" type="number" min="1" value="300"></label></div>
+        <div class="machine-jog-grid">
+          ${['X','Y','A','Z','B'].map(axis => `<strong>${axis}</strong><button data-jog-axis="${axis}" data-jog-direction="-1">−</button><button data-jog-axis="${axis}" data-jog-direction="1">+</button>`).join('')}
+        </div>
+      </section>
+      <section class="machine-job">
+        <h3>Завдання NC</h3>
+        <div class="machine-nc-load"><input id="machineNcFile" type="file" accept=".nc,.tap,.gcode,.txt"><button id="machineLoadCurrentNc">Взяти готовий NC із Simulator</button></div>
+        <textarea id="machineNcText" rows="9" placeholder="Завантажте або вставте NC/G-code"></textarea>
+        <label class="machine-cold-run"><input id="machineColdRun" type="checkbox" checked> Холодний прогін — команди нагріву не передавати</label>
+        <div class="machine-job-actions"><button id="machineRun">Запуск</button><button id="machinePause" disabled>Пауза</button><button id="machineStop" disabled>Стоп</button><button id="machineReset">Reset</button></div>
+        <progress id="machineProgress" value="0" max="1"></progress><span id="machineProgressText">0 / 0</span>
+      </section>
+    </div>
+    <div class="machine-diagnostics">
+      <h3>Діагностика контролера</h3>
+      <p id="machineControllerMessage">Увімкнено безпечний режим симуляції</p>
+      <pre id="machineConsole"></pre>
+      <div><input id="machineCommand" type="text" placeholder="Команда FluidNC, наприклад $$"><button id="machineSendCommand">Надіслати</button></div>
+    </div>
+  </section>
 `
 
 let activateWorkspaceTab = () => {}
@@ -502,7 +547,8 @@ const initializeWorkspaceTabs = () => {
     { id: 'simulation', label: 'Симуляція 2D/3D' },
     { id: 'assembly', label: 'Збірка' },
     { id: 'blocks', label: 'Блоки й розкладка' },
-    { id: 'wizard', label: 'Підготовка різання' }
+    { id: 'wizard', label: 'Підготовка різання' },
+    { id: 'control', label: 'Керування станком' }
   ]
   const navigation = document.createElement('nav')
   navigation.className = 'workspace-tabs'
@@ -733,6 +779,10 @@ const preparedDxfProfiles = { left: null, right: null }
 const cuttingSettings = { feedRate: 300 }
 let preparedCuttingTrajectory = null
 let generatedNcText = ''
+
+initializeMachineControl({
+  getNcText: () => batchNcPreview.value.trim() || generatedNcText.trim()
+})
 let generatedBatchNcText = ''
 let currentBatchSimulation = null
 let nextBatchBlockId = 2
