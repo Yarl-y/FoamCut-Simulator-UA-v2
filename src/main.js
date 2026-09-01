@@ -504,11 +504,35 @@ view3d.innerHTML = `
       <label class="machine-interlock"><input id="machineInterlock" type="checkbox" checked disabled> E-stop, кінцевики та холодний прогін перевірено</label>
       <button id="machineHeat" class="machine-heat-locked" type="button">Нагрів заблоковано</button>
     </div>
+    <details class="machine-profile" open>
+      <summary>Профіль віртуального станка</summary>
+      <div class="machine-profile-grid">
+        <label>Хід X, мм <input id="machineLimitX" type="number" min="1" value="600"></label>
+        <label>Хід Y, мм <input id="machineLimitY" type="number" min="1" value="600"></label>
+        <label>Хід A, мм <input id="machineLimitA" type="number" min="1" value="600"></label>
+        <label>Хід Z, мм <input id="machineLimitZ" type="number" min="1" value="600"></label>
+        <label>Діапазон B, ° <input id="machineLimitB" type="number" min="1" value="360"></label>
+        <label>Макс. швидкість, мм/хв <input id="machineMaximumFeed" type="number" min="1" value="1000"></label>
+        <label>Прискорення, мм/с² <input id="machineAcceleration" type="number" min="1" value="100"></label>
+        <label class="machine-axis-enabled"><input id="machineAxisBEnabled" type="checkbox"> Вісь B встановлена</label>
+        <button id="machineSaveProfile" type="button">Зберегти профіль</button>
+        <button id="machineVirtualEstop" class="machine-estop" type="button">Віртуальний E-stop</button>
+        <button id="machineVirtualClearEstop" type="button">Скинути E-stop</button>
+        <button id="machineVirtualDisconnect" type="button">Втратити зв’язок</button>
+      </div>
+      <div class="machine-calibration-grid">
+        ${['X','Y','A','Z','B'].map(axis => `<div><b>${axis}</b><label>кроків/мм <input id="machineSteps${axis}" type="number" min="0.001" step="0.001" value="80"></label><label><input id="machineDirection${axis}" type="checkbox"> змінити напрям двигуна</label></div>`).join('')}
+      </div>
+      <small>Віртуальний контролер зупинить NC, якщо будь-яка вісь вийде за встановлені межі.</small>
+    </details>
     <div class="machine-dashboard">
       <section class="machine-coordinates">
         <h3>Координати, мм</h3>
         <div class="machine-position-grid">
           ${['X','Y','A','Z','B'].map(axis => `<div><b>${axis}</b><output data-machine-position="${axis}">0.000</output></div>`).join('')}
+        </div>
+        <div class="machine-limit-grid">
+          ${['X','Y','A','Z','B'].map(axis => `<div><b>${axis}</b><span data-limit-min="${axis}">MIN</span><span data-limit-max="${axis}">MAX</span></div>`).join('')}
         </div>
         <div class="machine-axis-actions"><button id="machineHome">Пошук дому</button><button id="machineZero">Встановити робочий нуль</button><button id="machineUnlock">Скинути Alarm</button></div>
       </section>
@@ -524,7 +548,8 @@ view3d.innerHTML = `
         <div class="machine-nc-load"><input id="machineNcFile" type="file" accept=".nc,.tap,.gcode,.txt"><button id="machineLoadCurrentNc">Взяти готовий NC із Simulator</button></div>
         <textarea id="machineNcText" rows="9" placeholder="Завантажте або вставте NC/G-code"></textarea>
         <label class="machine-cold-run"><input id="machineColdRun" type="checkbox" checked> Холодний прогін — команди нагріву не передавати</label>
-        <div class="machine-job-actions"><button id="machineRun">Запуск</button><button id="machinePause" disabled>Пауза</button><button id="machineStop" disabled>Стоп</button><button id="machineReset">Reset</button></div>
+        <div class="machine-job-actions"><button id="machineValidateNc">Перевірити NC</button><button id="machineRun">Запуск</button><button id="machinePause" disabled>Пауза</button><button id="machineStop" disabled>Стоп</button><button id="machineReset">Reset</button></div>
+        <pre id="machineValidationReport" class="machine-validation">Завантажте NC та виконайте перевірку</pre>
         <progress id="machineProgress" value="0" max="1"></progress><span id="machineProgressText">0 / 0</span>
       </section>
     </div>
@@ -534,6 +559,10 @@ view3d.innerHTML = `
       <pre id="machineConsole"></pre>
       <div><input id="machineCommand" type="text" placeholder="Команда FluidNC, наприклад $$"><button id="machineSendCommand">Надіслати</button></div>
     </div>
+    <section class="machine-journal">
+      <div class="machine-journal-header"><div><h3>Журнал виконання</h3><small>Команди, зміни стану, координати та причини аварій</small></div><div><button id="machineDownloadJournal" type="button">Зберегти журнал</button><button id="machineClearJournal" type="button">Очистити сеанс</button></div></div>
+      <div class="machine-journal-scroll"><table><thead><tr><th>Час</th><th>Тип</th><th>Подія</th><th>Координати</th></tr></thead><tbody id="machineJournalBody"></tbody></table></div>
+    </section>
   </section>
 `
 

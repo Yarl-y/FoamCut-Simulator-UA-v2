@@ -1,4 +1,7 @@
-const AXES = ['X', 'Y', 'A', 'Z', 'B']
+import { validateVirtualProgram, VirtualFluidNC, VIRTUAL_AXES } from './virtual-fluidnc.js'
+
+const AXES = VIRTUAL_AXES
+const STATUS_AXES = ['X', 'Y', 'Z', 'A', 'B']
 
 const stripForColdRun = line => line
   .replace(/\bM(?:3|4)\b/gi, '')
@@ -33,6 +36,21 @@ export function initializeMachineControl({ getNcText }) {
   const heat = el('machineHeat')
   const command = el('machineCommand')
   const sendCommand = el('machineSendCommand')
+  const profileInputs = Object.fromEntries(AXES.map(axis => [axis, el(`machineLimit${axis}`)]))
+  const saveProfile = el('machineSaveProfile')
+  const estop = el('machineVirtualEstop')
+  const clearEstop = el('machineVirtualClearEstop')
+  const loseConnection = el('machineVirtualDisconnect')
+  const validateNc = el('machineValidateNc')
+  const validationReport = el('machineValidationReport')
+  const maximumFeed = el('machineMaximumFeed')
+  const acceleration = el('machineAcceleration')
+  const axisBEnabled = el('machineAxisBEnabled')
+  const stepsInputs = Object.fromEntries(AXES.map(axis => [axis, el(`machineSteps${axis}`)]))
+  const directionInputs = Object.fromEntries(AXES.map(axis => [axis, el(`machineDirection${axis}`)]))
+  const journalBody = el('machineJournalBody')
+  const downloadJournal = el('machineDownloadJournal')
+  const clearJournal = el('machineClearJournal')
 
   let port = null
   let reader = null
@@ -42,8 +60,44 @@ export function initializeMachineControl({ getNcText }) {
   let jobToken = 0
   let paused = false
   let running = false
+  let zeroConfirmed = false
   const pending = []
   const positions = Object.fromEntries(AXES.map(axis => [axis, 0]))
+  const getLimits = () => Object.fromEntries(AXES.map(axis => [axis, Math.max(0, Number(profileInputs[axis].value) || 0)]))
+  const virtualController = new VirtualFluidNC(getLimits())
+  const journal = []
+
+  const getProfile = () => ({
+    limits: getLimits(),
+    maximumFeed: Math.max(1, Number(maximumFeed.value) || 1000),
+    acceleration: Math.max(1, Number(acceleration.value) || 100),
+    axisBEnabled: axisBEnabled.checked,
+    stepsPerMm: Object.fromEntries(AXES.map(axis => [axis, Math.max(0.001, Number(stepsInputs[axis].value) || 1)])),
+    reversed: Object.fromEntries(AXES.map(axis => [axis, directionInputs[axis].checked]))
+  })
+
+  const renderJournal = () => {
+    journalBody.replaceChildren(...journal.slice(-120).reverse().map(entry => {
+      const row = document.createElement('tr')
+      ;[entry.time, entry.type, entry.message, entry.coordinates].forEach(value => {
+        const cell = document.createElement('td')
+        cell.textContent = value
+        row.appendChild(cell)
+      })
+      return row
+    }))
+  }
+
+  const addJournal = (type, message) => {
+    journal.push({
+      timestamp: new Date().toISOString(),
+      time: new Date().toLocaleTimeString('uk-UA'),
+      type,
+      message,
+      coordinates: AXES.map(axis => `${axis}${Number(positions[axis]).toFixed(3)}`).join(' ')
+    })
+    renderJournal()
+  }
 
   const log = (message, kind = '') => {
     const stamp = new Date().toLocaleTimeString('uk-UA')
@@ -51,6 +105,7 @@ export function initializeMachineControl({ getNcText }) {
     consoleOutput.scrollTop = consoleOutput.scrollHeight
     controllerMessage.textContent = message
     controllerMessage.dataset.kind = kind
+    addJournal(kind || 'INFO', message)
   }
 
   const setState = state => {
@@ -62,7 +117,27 @@ export function initializeMachineControl({ getNcText }) {
     AXES.forEach(axis => {
       const output = root.querySelector(`[data-machine-position="${axis}"]`)
       if (output) output.textContent = Number(positions[axis] || 0).toFixed(3)
+      root.querySelector(`[data-limit-min="${axis}"]`)?.classList.toggle('active', positions[axis] <= 0.0001)
+      root.querySelector(`[data-limit-max="${axis}"]`)?.classList.toggle('active', positions[axis] >= getLimits()[axis] - 0.0001)
     })
+  }
+
+  const runValidation = () => {
+    const report = validateVirtualProgram(ncText.value, {
+      limits: getLimits(), startPositions: positions, maximumFeed: maximumFeed.value,
+      zeroConfirmed, coldRun: coldRun.checked,
+      enabledAxes: axisBEnabled.checked ? AXES : AXES.filter(axis => axis !== 'B')
+    })
+    const final = AXES.map(axis => `${axis}${report.finalPositions[axis].toFixed(3)}`).join(' ')
+    validationReport.className = report.valid ? 'machine-validation valid' : 'machine-validation invalid'
+    validationReport.textContent = [
+      report.valid ? 'NC перевірено: запуск дозволено' : 'NC не готовий до запуску',
+      `Рухів: ${report.movements}; найбільша швидкість: F${report.maximumFeed || 0}`,
+      `Кінцева позиція: ${final}`,
+      ...report.errors.map(value => `ПОМИЛКА: ${value}`),
+      ...report.warnings.map(value => `УВАГА: ${value}`)
+    ].join('\n')
+    return report
   }
 
   const parseStatus = line => {
@@ -70,7 +145,7 @@ export function initializeMachineControl({ getNcText }) {
     const state = line.slice(1).split('|')[0]
     setState(state === 'Idle' ? 'Готовий' : state === 'Run' ? 'Виконується' : state === 'Hold' ? 'Пауза' : state)
     const coords = line.match(/(?:MPos|WPos):([^|>]+)/)?.[1]?.split(',').map(Number)
-    if (coords) AXES.forEach((axis, index) => { if (Number.isFinite(coords[index])) positions[axis] = coords[index] })
+    if (coords) STATUS_AXES.forEach((axis, index) => { if (Number.isFinite(coords[index])) positions[axis] = coords[index] })
     renderPositions()
   }
 
@@ -112,6 +187,12 @@ export function initializeMachineControl({ getNcText }) {
     if (mode.value === 'simulation') {
       log(`SIM → ${line}`)
       await new Promise(resolve => setTimeout(resolve, 18))
+      virtualController.setLimits(getLimits())
+      const result = virtualController.execute(line)
+      Object.assign(positions, result.positions)
+      renderPositions()
+      if (!result.ok) { setState('Alarm'); return result.error }
+      if (result.state === 'Run') setState('Виконується')
       return 'ok'
     }
     await writeRaw(`${line}\n`)
@@ -157,6 +238,7 @@ export function initializeMachineControl({ getNcText }) {
     interlock.disabled = simulation
     interlock.checked = simulation
     setState(simulation ? 'Готовий' : 'Не підключено')
+    zeroConfirmed = false
     log(simulation ? 'Увімкнено безпечний режим симуляції' : 'Оберіть USB-порт Root Controller')
   })
 
@@ -172,29 +254,45 @@ export function initializeMachineControl({ getNcText }) {
       if (mode.value !== 'simulation' && !interlock.checked) throw new Error('Спочатку підтвердьте готовність E-stop і холодний прогін')
       const response = await send(`$J=G91 ${axis}${distance.toFixed(3)} F${feed.toFixed(0)}`)
       if (response !== 'ok') throw new Error(response)
-      if (mode.value === 'simulation') { positions[axis] += distance; renderPositions() }
     } catch (error) { log(error.message, 'error') }
   }))
 
-  el('machineHome').addEventListener('click', () => send('$H').catch(error => log(error.message, 'error')))
-  el('machineUnlock').addEventListener('click', () => send('$X').catch(error => log(error.message, 'error')))
+  el('machineHome').addEventListener('click', async () => {
+    try {
+      const response = await send('$H')
+      if (response !== 'ok') throw new Error(response)
+      setState('Готовий'); log('Пошук дому завершено, координати обнулено', 'success')
+      zeroConfirmed = true
+    } catch (error) { log(error.message, 'error') }
+  })
+  el('machineUnlock').addEventListener('click', async () => {
+    try {
+      const response = await send('$X')
+      if (response !== 'ok') throw new Error(response)
+      setState('Готовий'); log('Alarm скинуто', 'success')
+    } catch (error) { log(error.message, 'error') }
+  })
   el('machineZero').addEventListener('click', async () => {
     try {
       const response = await send('G10 L20 P1 X0 Y0 A0 Z0 B0')
       if (response !== 'ok') throw new Error(response)
-      AXES.forEach(axis => { positions[axis] = 0 }); renderPositions(); log('Робочий нуль X/Y/A/Z/B встановлено', 'success')
+      if (mode.value !== 'simulation') AXES.forEach(axis => { positions[axis] = 0 })
+      renderPositions(); log('Робочий нуль X/Y/A/Z/B встановлено', 'success')
+      zeroConfirmed = true
     } catch (error) { log(error.message, 'error') }
   })
 
   loadCurrentNc.addEventListener('click', () => {
     ncText.value = getNcText?.() || ''
     log(ncText.value ? 'Поточний NC завантажено у пульт' : 'У Simulator ще немає готового NC', ncText.value ? 'success' : 'error')
+    runValidation()
   })
   ncFile.addEventListener('change', async () => {
     const file = ncFile.files?.[0]
     if (!file) return
     ncText.value = await file.text()
     log(`Відкрито ${file.name}`, 'success')
+    runValidation()
   })
 
   run.addEventListener('click', async () => {
@@ -205,6 +303,8 @@ export function initializeMachineControl({ getNcText }) {
     try {
       if (!ncText.value.trim()) throw new Error('Спочатку завантажте NC')
       if (mode.value !== 'simulation' && !interlock.checked) throw new Error('Не підтверджено E-stop, кінцевики та холодний прогін')
+      const validation = runValidation()
+      if (!validation.valid) throw new Error(validation.errors.join('; '))
       const lines = ncText.value.split(/\r?\n/).map(line => coldRun.checked ? stripForColdRun(line) : line.trim()).filter(Boolean)
       const token = ++jobToken
       running = true; paused = false; pause.disabled = false; stop.disabled = false; run.disabled = true; setState('Виконується')
@@ -216,7 +316,7 @@ export function initializeMachineControl({ getNcText }) {
         progressText.textContent = `${index + 1} / ${lines.length}`
       }
       if (token === jobToken) { setState('Готовий'); log('NC виконано', 'success') }
-    } catch (error) { setState('Помилка'); log(error.message, 'error') }
+    } catch (error) { setState(virtualController.alarm ? 'Alarm' : 'Помилка'); log(error.message, 'error') }
     finally { running = false; paused = false; pause.disabled = true; stop.disabled = true; run.disabled = false; pause.textContent = 'Пауза' }
   })
 
@@ -243,6 +343,57 @@ export function initializeMachineControl({ getNcText }) {
   })
   command.addEventListener('keydown', event => { if (event.key === 'Enter') sendCommand.click() })
   heat.addEventListener('click', () => log('Нагрів заблокований до затвердження силової схеми Root Controller', 'error'))
+
+  saveProfile.addEventListener('click', () => {
+    virtualController.setLimits(getLimits())
+    try { localStorage.setItem('foamcut-machine-profile', JSON.stringify(getProfile())) } catch {}
+    log('Профіль віртуального станка збережено', 'success')
+  })
+  estop.addEventListener('click', () => {
+    if (mode.value !== 'simulation') return
+    jobToken += 1; running = false; paused = false
+    virtualController.emergencyStop()
+    setState('Alarm'); log('ALARM: натиснуто віртуальний E-stop', 'error')
+  })
+  clearEstop.addEventListener('click', () => {
+    if (mode.value !== 'simulation') return
+    virtualController.unlock(); setState('Готовий'); log('Віртуальний E-stop скинуто', 'success')
+  })
+  loseConnection.addEventListener('click', () => {
+    if (mode.value !== 'simulation') return
+    jobToken += 1; running = false; paused = false
+    virtualController.emergencyStop('Втрачено зв’язок із контролером')
+    setState('Alarm'); connection.textContent = 'Зв’язок втрачено'; log('ALARM: змодельовано втрату зв’язку', 'error')
+  })
+  validateNc.addEventListener('click', runValidation)
+  ncText.addEventListener('input', () => { validationReport.textContent = 'NC змінено — виконайте перевірку ще раз'; validationReport.className = 'machine-validation' })
+  coldRun.addEventListener('change', runValidation)
+  downloadJournal.addEventListener('click', () => {
+    const payload = {
+      format: 'FoamCut Simulator execution journal', version: 1,
+      exportedAt: new Date().toISOString(), profile: getProfile(), entries: journal
+    }
+    const url = URL.createObjectURL(new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' }))
+    const link = document.createElement('a')
+    link.href = url; link.download = `foamcut-journal-${new Date().toISOString().replace(/[:.]/g, '-')}.json`; link.click()
+    URL.revokeObjectURL(url)
+  })
+  clearJournal.addEventListener('click', () => { journal.length = 0; renderJournal(); log('Журнал поточного сеансу очищено') })
+
+  try {
+    const saved = JSON.parse(localStorage.getItem('foamcut-machine-profile') || 'null')
+    if (saved) {
+      const savedLimits = saved.limits || saved
+      AXES.forEach(axis => {
+        if (Number.isFinite(Number(savedLimits[axis]))) profileInputs[axis].value = savedLimits[axis]
+        if (Number.isFinite(Number(saved.stepsPerMm?.[axis]))) stepsInputs[axis].value = saved.stepsPerMm[axis]
+        directionInputs[axis].checked = Boolean(saved.reversed?.[axis])
+      })
+      if (Number.isFinite(Number(saved.maximumFeed))) maximumFeed.value = saved.maximumFeed
+      if (Number.isFinite(Number(saved.acceleration))) acceleration.value = saved.acceleration
+      if (typeof saved.axisBEnabled === 'boolean') axisBEnabled.checked = saved.axisBEnabled
+    }
+  } catch {}
 
   renderPositions()
   mode.dispatchEvent(new Event('change'))

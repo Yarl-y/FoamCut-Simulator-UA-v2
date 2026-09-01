@@ -1403,6 +1403,13 @@ code {
 .machine-connect-panel { padding: 12px; margin-bottom: 14px; border: 1px solid var(--border); border-radius: 10px; background: color-mix(in srgb, var(--bg) 94%, #2563eb); }
 .machine-interlock { flex: 1 1 340px; }
 .machine-heat-locked { color: #991b1b; border-color: #dc2626; background: #fee2e2; }
+.machine-profile { padding: 10px 12px; margin-bottom: 14px; border: 1px solid var(--border); border-radius: 10px; }
+.machine-profile summary { cursor: pointer; font-weight: 700; }
+.machine-profile-grid { display: grid; grid-template-columns: repeat(auto-fit,minmax(135px,1fr)); gap: 10px; align-items: end; margin: 12px 0 8px; }
+.machine-profile-grid label, .machine-profile-grid input { width: 100%; box-sizing: border-box; }
+.machine-axis-enabled { align-self: center; }
+.machine-calibration-grid { display: grid; grid-template-columns: repeat(auto-fit,minmax(190px,1fr)); gap: 8px; margin: 8px 0 12px; }.machine-calibration-grid > div { padding: 8px; border: 1px solid var(--border); border-radius: 7px; }.machine-calibration-grid b { display: block; margin-bottom: 5px; color: #2563eb; }.machine-calibration-grid label { display: block; margin: 4px 0; font-size: 12px; }.machine-calibration-grid input[type="number"] { width: 86px; }
+.machine-estop { color: white; font-weight: 800; background: #dc2626; border-color: #991b1b; }
 .machine-dashboard { display: grid; grid-template-columns: minmax(280px,.8fr) minmax(280px,.8fr) minmax(380px,1.4fr); gap: 14px; }
 .machine-dashboard > section, .machine-diagnostics { padding: 14px; border: 1px solid var(--border); border-radius: 10px; background: var(--bg); }
 .machine-dashboard h3, .machine-diagnostics h3 { margin-top: 0; }
@@ -1410,12 +1417,15 @@ code {
 .machine-position-grid div { padding: 10px 6px; text-align: center; border: 1px solid var(--border); border-radius: 8px; }
 .machine-position-grid b, .machine-position-grid output { display: block; }
 .machine-position-grid b { color: #2563eb; font-size: 20px; }.machine-position-grid output { margin-top: 6px; font-family: var(--mono); font-size: 15px; }
+.machine-limit-grid { display: grid; grid-template-columns: repeat(5,1fr); gap: 5px; margin: 8px 0 14px; }.machine-limit-grid div { display: grid; grid-template-columns: auto 1fr 1fr; gap: 3px; align-items: center; font-size: 10px; }.machine-limit-grid span { padding: 3px; text-align: center; color: #64748b; background: #e2e8f0; border-radius: 4px; }.machine-limit-grid span.active { color: white; background: #dc2626; }
 .machine-jog-grid { display: grid; grid-template-columns: 54px 1fr 1fr; gap: 8px; margin-top: 14px; }.machine-jog-grid strong { display: grid; place-items: center; color: #2563eb; font-size: 20px; }
 .machine-jog-grid button { min-height: 45px; font-size: 22px; }
 .machine-job textarea { width: 100%; box-sizing: border-box; margin: 10px 0; resize: vertical; font-family: var(--mono); font-size: 13px; }
 .machine-cold-run { display: block; margin-bottom: 10px; font-weight: 600; }
 .machine-job progress { width: calc(100% - 80px); margin-top: 12px; }
+.machine-validation { min-height: 76px; margin: 10px 0 0; padding: 9px; white-space: pre-wrap; color: #475569; background: #f8fafc; border: 1px solid var(--border); border-radius: 7px; font: 12px/1.4 var(--mono); }.machine-validation.valid { color: #166534; background: #f0fdf4; border-color: #22c55e; }.machine-validation.invalid { color: #991b1b; background: #fef2f2; border-color: #ef4444; }
 .machine-diagnostics { margin-top: 14px; }.machine-diagnostics pre { min-height: 110px; max-height: 220px; overflow: auto; padding: 10px; color: #d1fae5; background: #111827; font: 13px/1.45 var(--mono); }.machine-diagnostics > div { display: flex; gap: 8px; }.machine-diagnostics input { flex: 1; }
 #machineControllerMessage[data-kind="error"] { color: #dc2626; font-weight: 700; }#machineControllerMessage[data-kind="success"] { color: #15803d; font-weight: 700; }
+.machine-journal { margin-top: 14px; padding: 14px; border: 1px solid var(--border); border-radius: 10px; }.machine-journal-header, .machine-journal-header > div { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; }.machine-journal h3 { margin: 0; }.machine-journal-scroll { max-height: 300px; margin-top: 12px; overflow: auto; }.machine-journal table { width: 100%; border-collapse: collapse; font-size: 12px; }.machine-journal th, .machine-journal td { padding: 7px; border-bottom: 1px solid var(--border); text-align: left; }.machine-journal th { position: sticky; top: 0; background: var(--bg); }.machine-journal td:last-child { white-space: nowrap; font-family: var(--mono); }
 @media (max-width: 1000px) { .machine-dashboard { grid-template-columns: 1fr 1fr; }.machine-job { grid-column: 1 / -1; } }
 @media (max-width: 680px) { .machine-dashboard { grid-template-columns: 1fr; }.machine-job { grid-column: auto; }.machine-position-grid { grid-template-columns: repeat(3,1fr); } }
