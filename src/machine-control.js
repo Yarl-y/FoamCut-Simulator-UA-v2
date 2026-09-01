@@ -1,4 +1,5 @@
 import { validateVirtualProgram, VirtualFluidNC, VIRTUAL_AXES } from './virtual-fluidnc.js'
+import { calculateCalibratedSteps, createControllerPlan } from './controller-setup.js'
 
 const AXES = VIRTUAL_AXES
 const STATUS_AXES = ['X', 'Y', 'Z', 'A', 'B']
@@ -51,6 +52,11 @@ export function initializeMachineControl({ getNcText }) {
   const journalBody = el('machineJournalBody')
   const downloadJournal = el('machineDownloadJournal')
   const clearJournal = el('machineClearJournal')
+  const setupController = el('setupControllerModel')
+  const setupNotes = el('setupControllerNotes')
+  const setupStatus = el('setupStatus')
+  const setupExport = el('setupExportPlan')
+  const setupYaml = el('setupGenerateYaml')
 
   let port = null
   let reader = null
@@ -97,6 +103,22 @@ export function initializeMachineControl({ getNcText }) {
       coordinates: AXES.map(axis => `${axis}${Number(positions[axis]).toFixed(3)}`).join(' ')
     })
     renderJournal()
+  }
+
+  const getSetupChecks = () => Object.fromEntries(
+    [...root.querySelectorAll('[data-setup-check]')].map(input => [input.dataset.setupCheck, input.checked])
+  )
+
+  const renderSetupStatus = () => {
+    const checks = getSetupChecks()
+    const done = Object.values(checks).filter(Boolean).length
+    const total = Object.keys(checks).length
+    const controllerKnown = setupController.value !== 'unknown'
+    setupStatus.className = done === total && controllerKnown ? 'setup-status ready' : 'setup-status'
+    setupStatus.textContent = controllerKnown
+      ? `Виконано ${done} із ${total} перевірок. План можна зберігати; YAML очікує карту контактів.`
+      : `Виконано ${done} із ${total} перевірок. Спочатку визначимо контролер після приїзду станка.`
+    setupYaml.disabled = true
   }
 
   const log = (message, kind = '') => {
@@ -380,6 +402,39 @@ export function initializeMachineControl({ getNcText }) {
   })
   clearJournal.addEventListener('click', () => { journal.length = 0; renderJournal(); log('Журнал поточного сеансу очищено') })
 
+  root.querySelectorAll('[data-calibrate-axis]').forEach(button => button.addEventListener('click', () => {
+    const axis = button.dataset.calibrateAxis
+    const commanded = el(`setupCommanded${axis}`)
+    const measured = el(`setupMeasured${axis}`)
+    const result = root.querySelector(`[data-calibration-result="${axis}"]`)
+    try {
+      const value = calculateCalibratedSteps(stepsInputs[axis].value, commanded.value, measured.value)
+      stepsInputs[axis].value = value.toFixed(4)
+      result.textContent = `${value.toFixed(4)} кроків/мм — застосовано до профілю`
+      result.dataset.kind = 'success'
+      log(`Калібрування ${axis}: ${value.toFixed(4)} кроків/мм`, 'success')
+    } catch (error) {
+      result.textContent = error.message
+      result.dataset.kind = 'error'
+    }
+  }))
+  root.querySelectorAll('[data-setup-check]').forEach(input => input.addEventListener('change', renderSetupStatus))
+  setupController.addEventListener('change', renderSetupStatus)
+  setupExport.addEventListener('click', () => {
+    const plan = createControllerPlan({
+      profile: getProfile(), controller: setupController.value,
+      checks: getSetupChecks(), notes: setupNotes.value
+    })
+    const url = URL.createObjectURL(new Blob([JSON.stringify(plan, null, 2)], { type: 'application/json' }))
+    const link = document.createElement('a')
+    link.href = url
+    link.download = 'foamcut-controller-setup-plan.json'
+    link.click()
+    URL.revokeObjectURL(url)
+    log('План першого підключення збережено', 'success')
+  })
+  setupYaml.addEventListener('click', () => log('YAML заблокований до визначення плати та контактів', 'error'))
+
   try {
     const saved = JSON.parse(localStorage.getItem('foamcut-machine-profile') || 'null')
     if (saved) {
@@ -395,6 +450,7 @@ export function initializeMachineControl({ getNcText }) {
     }
   } catch {}
 
+  renderSetupStatus()
   renderPositions()
   mode.dispatchEvent(new Event('change'))
 }

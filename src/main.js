@@ -563,6 +563,31 @@ view3d.innerHTML = `
       <div class="machine-journal-header"><div><h3>Журнал виконання</h3><small>Команди, зміни стану, координати та причини аварій</small></div><div><button id="machineDownloadJournal" type="button">Зберегти журнал</button><button id="machineClearJournal" type="button">Очистити сеанс</button></div></div>
       <div class="machine-journal-scroll"><table><thead><tr><th>Час</th><th>Тип</th><th>Подія</th><th>Координати</th></tr></thead><tbody id="machineJournalBody"></tbody></table></div>
     </section>
+    <section class="controller-setup-wizard">
+      <h2>Майстер першого підключення</h2>
+      <p>Проходимо послідовно після приїзду станка. Нагрів на перших чотирьох етапах вимкнений.</p>
+      <div class="setup-controller-row">
+        <label>Контролер
+          <select id="setupControllerModel"><option value="unknown">Ще не визначено</option><option value="existing">Штатний контролер станка</option><option value="root-iso-rev3">Root Controller ISO Rev 3</option></select>
+        </label>
+        <label>Примітки до електроніки <input id="setupControllerNotes" type="text" placeholder="Драйвери, напруга, двигуни"></label>
+      </div>
+      <div class="setup-checks">
+        <label><input type="checkbox" data-setup-check="controllerPhoto"> 1. Контролер і роз’єми сфотографовано</label>
+        <label><input type="checkbox" data-setup-check="driversIdentified"> 2. Моделі драйверів і напругу визначено</label>
+        <label><input type="checkbox" data-setup-check="directionsChecked"> 3. Напрямки X/Y/A/Z перевірено без струни</label>
+        <label><input type="checkbox" data-setup-check="limitsChecked"> 4. Кінцевики та E-stop перевірено</label>
+        <label><input type="checkbox" data-setup-check="coldRunChecked"> 5. Повний холодний прогін виконано</label>
+      </div>
+      <h3>Калібрування переміщення</h3>
+      <p>Даємо команду, вимірюємо фактичний рух — майстер перерахує кроки/мм.</p>
+      <div class="setup-calibration-table">
+        ${['X','Y','A','Z','B'].map(axis => `<div class="setup-calibration-row"><b>${axis}</b><label>Команда, мм <input id="setupCommanded${axis}" type="number" min="0.001" step="0.001" value="100"></label><label>Фактично, мм <input id="setupMeasured${axis}" type="number" min="0.001" step="0.001" value="100"></label><button type="button" data-calibrate-axis="${axis}">Розрахувати</button><output data-calibration-result="${axis}">—</output></div>`).join('')}
+      </div>
+      <p id="setupStatus" class="setup-status"></p>
+      <div class="setup-actions"><button id="setupExportPlan" type="button">Зберегти план підключення</button><button id="setupGenerateYaml" type="button" disabled>Створити FluidNC config.yaml</button></div>
+      <small>config.yaml розблокуємо тільки після перевірки точної плати, контактів і драйверів.</small>
+    </section>
   </section>
 `
 

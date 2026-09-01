@@ -1427,5 +1427,22 @@ code {
 .machine-diagnostics { margin-top: 14px; }.machine-diagnostics pre { min-height: 110px; max-height: 220px; overflow: auto; padding: 10px; color: #d1fae5; background: #111827; font: 13px/1.45 var(--mono); }.machine-diagnostics > div { display: flex; gap: 8px; }.machine-diagnostics input { flex: 1; }
 #machineControllerMessage[data-kind="error"] { color: #dc2626; font-weight: 700; }#machineControllerMessage[data-kind="success"] { color: #15803d; font-weight: 700; }
 .machine-journal { margin-top: 14px; padding: 14px; border: 1px solid var(--border); border-radius: 10px; }.machine-journal-header, .machine-journal-header > div { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; }.machine-journal h3 { margin: 0; }.machine-journal-scroll { max-height: 300px; margin-top: 12px; overflow: auto; }.machine-journal table { width: 100%; border-collapse: collapse; font-size: 12px; }.machine-journal th, .machine-journal td { padding: 7px; border-bottom: 1px solid var(--border); text-align: left; }.machine-journal th { position: sticky; top: 0; background: var(--bg); }.machine-journal td:last-child { white-space: nowrap; font-family: var(--mono); }
+.controller-setup-wizard { margin-top: 14px; padding: 16px; border: 2px solid #2563eb; border-radius: 10px; text-align: left; }
+.controller-setup-wizard h2 { margin-top: 0; }
+.setup-controller-row, .setup-actions { display: flex; flex-wrap: wrap; gap: 10px; }
+.setup-controller-row label { flex: 1 1 300px; }
+.setup-controller-row input, .setup-controller-row select { width: 100%; box-sizing: border-box; }
+.setup-checks { display: grid; grid-template-columns: repeat(auto-fit,minmax(280px,1fr)); gap: 8px; margin: 14px 0; }
+.setup-checks label { padding: 10px; border: 1px solid var(--border); border-radius: 7px; }
+.setup-calibration-table { display: grid; gap: 6px; }
+.setup-calibration-row { display: grid; grid-template-columns: 36px repeat(2,minmax(130px,1fr)) auto minmax(220px,1.2fr); gap: 8px; align-items: end; padding: 7px; border-bottom: 1px solid var(--border); }
+.setup-calibration-row label { font-size: 12px; }
+.setup-calibration-row input { width: 100%; box-sizing: border-box; }
+.setup-calibration-row output { align-self: center; font-size: 12px; }
+.setup-calibration-row output[data-kind="success"] { color: #15803d; }
+.setup-calibration-row output[data-kind="error"] { color: #dc2626; }
+.setup-status { padding: 10px; background: #fffbeb; border: 1px solid #f59e0b; border-radius: 7px; }
+.setup-status.ready { color: #166534; background: #f0fdf4; border-color: #22c55e; }
 @media (max-width: 1000px) { .machine-dashboard { grid-template-columns: 1fr 1fr; }.machine-job { grid-column: 1 / -1; } }
 @media (max-width: 680px) { .machine-dashboard { grid-template-columns: 1fr; }.machine-job { grid-column: auto; }.machine-position-grid { grid-template-columns: repeat(3,1fr); } }
+@media (max-width: 760px) { .setup-calibration-row { grid-template-columns: 32px 1fr 1fr; }.setup-calibration-row button, .setup-calibration-row output { grid-column: 2 / -1; } }
