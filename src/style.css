@@ -1423,6 +1423,14 @@ code {
 .machine-job textarea { width: 100%; box-sizing: border-box; margin: 10px 0; resize: vertical; font-family: var(--mono); font-size: 13px; }
 .machine-cold-run { display: block; margin-bottom: 10px; font-weight: 600; }
 .machine-job progress { width: calc(100% - 80px); margin-top: 12px; }
+.machine-current-command { margin-top: 10px; padding: 8px 10px; color: #166534; background: #f0fdf4; border: 1px solid #86efac; border-radius: 7px; font: 12px/1.4 var(--mono); }
+.machine-current-command output { overflow-wrap: anywhere; }
+.machine-program-lines { max-height: 230px; margin-top: 8px; overflow: auto; border: 1px solid var(--border); border-radius: 7px; color: #cbd5e1; background: #0f172a; font: 12px/1.45 var(--mono); }
+.machine-program-line { display: grid; grid-template-columns: 52px 1fr; min-height: 22px; }
+.machine-program-line > span { padding: 3px 8px; color: #64748b; text-align: right; border-right: 1px solid #334155; user-select: none; }
+.machine-program-line code { padding: 3px 9px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.machine-program-line[data-active="true"] { color: #052e16; background: #86efac; font-weight: 700; }
+.machine-program-line[data-active="true"] > span { color: #166534; border-color: #22c55e; }
 .machine-validation { min-height: 76px; margin: 10px 0 0; padding: 9px; white-space: pre-wrap; color: #475569; background: #f8fafc; border: 1px solid var(--border); border-radius: 7px; font: 12px/1.4 var(--mono); }.machine-validation.valid { color: #166534; background: #f0fdf4; border-color: #22c55e; }.machine-validation.invalid { color: #991b1b; background: #fef2f2; border-color: #ef4444; }
 .machine-diagnostics { margin-top: 14px; }.machine-diagnostics pre { min-height: 110px; max-height: 220px; overflow: auto; padding: 10px; color: #d1fae5; background: #111827; font: 13px/1.45 var(--mono); }.machine-diagnostics > div { display: flex; gap: 8px; }.machine-diagnostics input { flex: 1; }
 #machineControllerMessage[data-kind="error"] { color: #dc2626; font-weight: 700; }#machineControllerMessage[data-kind="success"] { color: #15803d; font-weight: 700; }

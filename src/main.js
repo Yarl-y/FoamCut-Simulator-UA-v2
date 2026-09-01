@@ -551,6 +551,8 @@ view3d.innerHTML = `
         <div class="machine-job-actions"><button id="machineValidateNc">Перевірити NC</button><button id="machineRun">Запуск</button><button id="machinePause" disabled>Пауза</button><button id="machineStop" disabled>Стоп</button><button id="machineReset">Reset</button></div>
         <pre id="machineValidationReport" class="machine-validation">Завантажте NC та виконайте перевірку</pre>
         <progress id="machineProgress" value="0" max="1"></progress><span id="machineProgressText">0 / 0</span>
+        <div class="machine-current-command"><strong>Поточний рядок:</strong> <output id="machineCurrentLine">—</output></div>
+        <div id="machineProgramLines" class="machine-program-lines" aria-label="NC-програма з поточним рядком"></div>
       </section>
     </div>
     <div class="machine-diagnostics">
@@ -838,9 +840,12 @@ const preparedDxfProfiles = { left: null, right: null }
 const cuttingSettings = { feedRate: 300 }
 let preparedCuttingTrajectory = null
 let generatedNcText = ''
+let activeMachineControlBridge = null
 
 initializeMachineControl({
-  getNcText: () => batchNcPreview.value.trim() || generatedNcText.trim()
+  getNcText: () => batchNcPreview.value.trim() || generatedNcText.trim(),
+  onPositionChange: positions => activeMachineControlBridge?.setPositions(positions),
+  onJobStateChange: state => activeMachineControlBridge?.setState(state)
 })
 let generatedBatchNcText = ''
 let currentBatchSimulation = null
@@ -3967,6 +3972,26 @@ const updateMachinePosition = index => {
   movingWire.setAttribute("y2", rightPosition[1])
 }
 
+const updateMachineCoordinates = positions => {
+  if (!project3d || !movingWire || !leftCarriage || !rightCarriage) return
+  const leftPosition = project3d(
+    Number(positions.X || 0) + machineScene.profileOffset.x,
+    Number(positions.Y || 0) + machineScene.profileOffset.y,
+    machineScene.leftDepth
+  )
+  const rightPosition = project3d(
+    Number(positions.A || 0) + machineScene.profileOffset.x,
+    Number(positions.Z || 0) + machineScene.profileOffset.y,
+    machineScene.rightDepth
+  )
+  leftCarriage.setAttribute("transform", `translate(${leftPosition[0]} ${leftPosition[1]})`)
+  rightCarriage.setAttribute("transform", `translate(${rightPosition[0]} ${rightPosition[1]})`)
+  movingWire.setAttribute("x1", leftPosition[0])
+  movingWire.setAttribute("y1", leftPosition[1])
+  movingWire.setAttribute("x2", rightPosition[0])
+  movingWire.setAttribute("y2", rightPosition[1])
+}
+
 const renderMachineScene = () => {
   const length = readBlockDimension(foamLengthInput, machineScene.foam.defaultLength)
   const width = readBlockDimension(foamWidthInput, machineScene.foam.defaultWidth)
@@ -4263,6 +4288,16 @@ const renderMachineScene = () => {
 
 renderActiveFoamBlock = renderMachineScene
 renderMachineScene()
+activeMachineControlBridge = {
+  setPositions: updateMachineCoordinates,
+  setState: state => {
+    if (['running', 'paused', 'stopped', 'complete', 'error'].includes(state)) cancelWireAnimation3D()
+    if (state === 'reset') {
+      wireIndex = 0
+      updateMachinePosition(0)
+    }
+  }
+}
 
 const cameraViews = {
   iso: { yaw: -28, pitch: -18 },

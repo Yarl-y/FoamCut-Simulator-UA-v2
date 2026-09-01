@@ -5,7 +5,7 @@ import { runSafetyScenarios, sanitizeColdRunLine } from './safety-scenarios.js'
 const AXES = VIRTUAL_AXES
 const STATUS_AXES = ['X', 'Y', 'Z', 'A', 'B']
 
-export function initializeMachineControl({ getNcText }) {
+export function initializeMachineControl({ getNcText, onPositionChange, onJobStateChange }) {
   const root = document.getElementById('machineControlWorkspace')
   if (!root) return
 
@@ -27,6 +27,8 @@ export function initializeMachineControl({ getNcText }) {
   const interlock = el('machineInterlock')
   const progress = el('machineProgress')
   const progressText = el('machineProgressText')
+  const currentLine = el('machineCurrentLine')
+  const programLines = el('machineProgramLines')
   const jogStep = el('machineJogStep')
   const jogFeed = el('machineJogFeed')
   const heat = el('machineHeat')
@@ -140,6 +142,36 @@ export function initializeMachineControl({ getNcText }) {
       root.querySelector(`[data-limit-min="${axis}"]`)?.classList.toggle('active', positions[axis] <= 0.0001)
       root.querySelector(`[data-limit-max="${axis}"]`)?.classList.toggle('active', positions[axis] >= getLimits()[axis] - 0.0001)
     })
+    onPositionChange?.({ ...positions })
+  }
+
+  const prepareProgram = () => ncText.value.split(/\r?\n/).map((source, index) => ({
+    source,
+    lineNumber: index + 1,
+    command: coldRun.checked ? sanitizeColdRunLine(source) : source.trim()
+  })).filter(entry => entry.command)
+
+  const renderProgram = (entries = prepareProgram(), activeIndex = -1) => {
+    programLines.replaceChildren(...entries.map((entry, index) => {
+      const row = document.createElement('div')
+      row.className = 'machine-program-line'
+      row.dataset.active = String(index === activeIndex)
+      const number = document.createElement('span')
+      number.textContent = entry.lineNumber
+      const code = document.createElement('code')
+      code.textContent = entry.command
+      row.append(number, code)
+      return row
+    }))
+    programLines.querySelector('[data-active="true"]')?.scrollIntoView({ block: 'nearest' })
+  }
+
+  const showCurrentLine = (entry, index, total) => {
+    currentLine.textContent = entry ? `${entry.lineNumber}: ${entry.command}` : '—'
+    renderProgram(prepareProgram(), index)
+    progress.value = Math.max(0, index + 1)
+    progress.max = Math.max(1, total)
+    progressText.textContent = `${Math.max(0, index + 1)} / ${total}`
   }
 
   const runValidation = () => {
@@ -306,6 +338,7 @@ export function initializeMachineControl({ getNcText }) {
     ncText.value = getNcText?.() || ''
     log(ncText.value ? 'Поточний NC завантажено у пульт' : 'У Simulator ще немає готового NC', ncText.value ? 'success' : 'error')
     runValidation()
+    renderProgram()
   })
   ncFile.addEventListener('change', async () => {
     const file = ncFile.files?.[0]
@@ -313,6 +346,7 @@ export function initializeMachineControl({ getNcText }) {
     ncText.value = await file.text()
     log(`Відкрито ${file.name}`, 'success')
     runValidation()
+    renderProgram()
   })
 
   run.addEventListener('click', async () => {
@@ -325,18 +359,19 @@ export function initializeMachineControl({ getNcText }) {
       if (mode.value !== 'simulation' && !interlock.checked) throw new Error('Не підтверджено E-stop, кінцевики та холодний прогін')
       const validation = runValidation()
       if (!validation.valid) throw new Error(validation.errors.join('; '))
-      const lines = ncText.value.split(/\r?\n/).map(line => coldRun.checked ? sanitizeColdRunLine(line) : line.trim()).filter(Boolean)
+      const lines = prepareProgram()
       const token = ++jobToken
       running = true; paused = false; pause.disabled = false; stop.disabled = false; run.disabled = true; setState('Виконується')
+      onJobStateChange?.('running')
       for (let index = 0; index < lines.length && token === jobToken; index += 1) {
         while (paused && token === jobToken) await new Promise(resolve => setTimeout(resolve, 50))
-        const response = await send(lines[index])
+        showCurrentLine(lines[index], index, lines.length)
+        const response = await send(lines[index].command)
         if (response !== 'ok') throw new Error(response)
-        progress.value = index + 1; progress.max = lines.length
-        progressText.textContent = `${index + 1} / ${lines.length}`
+        if (mode.value === 'simulation') await new Promise(resolve => setTimeout(resolve, 45))
       }
-      if (token === jobToken) { setState('Готовий'); log('NC виконано', 'success') }
-    } catch (error) { setState(virtualController.alarm ? 'Alarm' : 'Помилка'); log(error.message, 'error') }
+      if (token === jobToken) { setState('Готовий'); onJobStateChange?.('complete'); log('NC виконано', 'success') }
+    } catch (error) { setState(virtualController.alarm ? 'Alarm' : 'Помилка'); onJobStateChange?.('error'); log(error.message, 'error') }
     finally { running = false; paused = false; pause.disabled = true; stop.disabled = true; run.disabled = false; pause.textContent = 'Пауза' }
   })
 
@@ -346,16 +381,19 @@ export function initializeMachineControl({ getNcText }) {
     await writeRaw(paused ? '!' : '~')
     setState(paused ? 'Пауза' : 'Виконується')
     pause.textContent = paused ? 'Продовжити' : 'Пауза'
+    onJobStateChange?.(paused ? 'paused' : 'running')
   })
   stop.addEventListener('click', async () => {
     jobToken += 1; running = false; paused = false
     try { await writeRaw('!'); await writeRaw('\x18') } catch {}
     setState('Зупинено'); log('Завдання зупинено оператором', 'error')
+    onJobStateChange?.('stopped')
   })
   reset.addEventListener('click', async () => {
     jobToken += 1; running = false; paused = false; progress.value = 0; progressText.textContent = '0 / 0'
     try { await writeRaw('\x18') } catch {}
     setState(mode.value === 'simulation' ? 'Готовий' : 'Очікування'); log('Стан пульта скинуто')
+    currentLine.textContent = '—'; renderProgram(); onJobStateChange?.('reset')
   })
 
   sendCommand.addEventListener('click', async () => {
@@ -386,8 +424,8 @@ export function initializeMachineControl({ getNcText }) {
     setState('Alarm'); connection.textContent = 'Зв’язок втрачено'; log('ALARM: змодельовано втрату зв’язку', 'error')
   })
   validateNc.addEventListener('click', runValidation)
-  ncText.addEventListener('input', () => { validationReport.textContent = 'NC змінено — виконайте перевірку ще раз'; validationReport.className = 'machine-validation' })
-  coldRun.addEventListener('change', runValidation)
+  ncText.addEventListener('input', () => { validationReport.textContent = 'NC змінено — виконайте перевірку ще раз'; validationReport.className = 'machine-validation'; renderProgram() })
+  coldRun.addEventListener('change', () => { runValidation(); renderProgram() })
   downloadJournal.addEventListener('click', () => {
     const payload = {
       format: 'FoamCut Simulator execution journal', version: 1,
@@ -466,5 +504,6 @@ export function initializeMachineControl({ getNcText }) {
 
   renderSetupStatus()
   renderPositions()
+  renderProgram([])
   mode.dispatchEvent(new Event('change'))
 }
