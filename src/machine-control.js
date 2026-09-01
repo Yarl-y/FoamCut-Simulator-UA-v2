@@ -1,14 +1,9 @@
 import { validateVirtualProgram, VirtualFluidNC, VIRTUAL_AXES } from './virtual-fluidnc.js'
 import { calculateCalibratedSteps, createControllerPlan } from './controller-setup.js'
+import { runSafetyScenarios, sanitizeColdRunLine } from './safety-scenarios.js'
 
 const AXES = VIRTUAL_AXES
 const STATUS_AXES = ['X', 'Y', 'Z', 'A', 'B']
-
-const stripForColdRun = line => line
-  .replace(/\bM(?:3|4)\b/gi, '')
-  .replace(/\bS[-+]?\d*\.?\d+\b/gi, '')
-  .replace(/\s+/g, ' ')
-  .trim()
 
 export function initializeMachineControl({ getNcText }) {
   const root = document.getElementById('machineControlWorkspace')
@@ -57,6 +52,9 @@ export function initializeMachineControl({ getNcText }) {
   const setupStatus = el('setupStatus')
   const setupExport = el('setupExportPlan')
   const setupYaml = el('setupGenerateYaml')
+  const runSafetyTests = el('machineRunSafetyTests')
+  const safetyStatus = el('machineSafetyStatus')
+  const safetyResults = el('machineSafetyResults')
 
   let port = null
   let reader = null
@@ -327,7 +325,7 @@ export function initializeMachineControl({ getNcText }) {
       if (mode.value !== 'simulation' && !interlock.checked) throw new Error('Не підтверджено E-stop, кінцевики та холодний прогін')
       const validation = runValidation()
       if (!validation.valid) throw new Error(validation.errors.join('; '))
-      const lines = ncText.value.split(/\r?\n/).map(line => coldRun.checked ? stripForColdRun(line) : line.trim()).filter(Boolean)
+      const lines = ncText.value.split(/\r?\n/).map(line => coldRun.checked ? sanitizeColdRunLine(line) : line.trim()).filter(Boolean)
       const token = ++jobToken
       running = true; paused = false; pause.disabled = false; stop.disabled = false; run.disabled = true; setState('Виконується')
       for (let index = 0; index < lines.length && token === jobToken; index += 1) {
@@ -434,6 +432,22 @@ export function initializeMachineControl({ getNcText }) {
     log('План першого підключення збережено', 'success')
   })
   setupYaml.addEventListener('click', () => log('YAML заблокований до визначення плати та контактів', 'error'))
+  runSafetyTests.addEventListener('click', () => {
+    const report = runSafetyScenarios(getProfile())
+    safetyStatus.className = report.passed ? 'machine-safety-status passed' : 'machine-safety-status failed'
+    safetyStatus.textContent = report.passed
+      ? `Усі ${report.results.length} аварійних сценаріїв пройдено`
+      : `${report.results.filter(result => !result.passed).length} сценаріїв завершилися помилкою`
+    safetyResults.replaceChildren(...report.results.map(result => {
+      const row = document.createElement('tr')
+      const values = [result.passed ? 'ПРОЙДЕНО' : 'ПОМИЛКА', result.name, result.detail]
+      values.forEach(value => { const cell = document.createElement('td'); cell.textContent = value; row.appendChild(cell) })
+      row.dataset.passed = String(result.passed)
+      return row
+    }))
+    report.results.forEach(result => addJournal(result.passed ? 'SAFETY OK' : 'SAFETY ERROR', `${result.name}: ${result.detail}`))
+    log(report.passed ? 'Автоматичний стенд безпеки пройдено' : 'Стенд безпеки виявив помилки', report.passed ? 'success' : 'error')
+  })
 
   try {
     const saved = JSON.parse(localStorage.getItem('foamcut-machine-profile') || 'null')

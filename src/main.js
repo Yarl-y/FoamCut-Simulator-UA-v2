@@ -588,6 +588,11 @@ view3d.innerHTML = `
       <div class="setup-actions"><button id="setupExportPlan" type="button">Зберегти план підключення</button><button id="setupGenerateYaml" type="button" disabled>Створити FluidNC config.yaml</button></div>
       <small>config.yaml розблокуємо тільки після перевірки точної плати, контактів і драйверів.</small>
     </section>
+    <section class="machine-safety-tests">
+      <div class="machine-safety-header"><div><h2>Автоматичний стенд безпеки</h2><p>Віртуальні аварії без підключення двигунів і нагріву.</p></div><button id="machineRunSafetyTests" type="button">Запустити всі тести</button></div>
+      <p id="machineSafetyStatus" class="machine-safety-status">Тести ще не запускалися</p>
+      <div class="machine-safety-scroll"><table><thead><tr><th>Результат</th><th>Сценарій</th><th>Що перевірено</th></tr></thead><tbody id="machineSafetyResults"></tbody></table></div>
+    </section>
   </section>
 `
 
