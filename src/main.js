@@ -12,7 +12,13 @@ import {
   renderBatchRouteOverlay
 } from './batch-layout.js'
 import { parseDxf, renderDxfPreview, resampleDxfContour } from './dxf.js'
-import { createDxfPolyline, createPreviewModel, detectCircularHoles, recoverNcProfiles } from './nc-dxf.js'
+import {
+  createDxfPolyline,
+  createPreviewModel,
+  detectCircularHoles,
+  recoverNcProfiles,
+  removeInteriorCutLoops
+} from './nc-dxf.js'
 import { createFoamCutProject, parseFoamCutProject } from './project-file.js'
 import { initializeMachineControl } from './machine-control.js'
 import { chooseEntrySide, createSafeLeadPoint, orientProfile, startProfileAtSide } from './profile-entry.js'
@@ -3886,7 +3892,7 @@ buildWingInsertButton.addEventListener('click', () => {
     if (scale < 1) throw new Error('Профіль X/Y вставки не може бути меншим за стиковий профіль')
     const sweep = readLibraryNumber(wingInsertSweepInput, 'Зміщення профілю X/Y')
     const rods = wing.straightSparRods.map(rod => ({ ...rod }))
-    const matingProfile = wing.leftPoints.map(point => ({ ...point }))
+    const matingProfile = removeInteriorCutLoops(wing.leftPoints)
     const bounds = contourBounds(matingProfile)
     const anchor = rods[0] || { x: bounds.minX, y: (bounds.minY + bounds.maxY) / 2 }
     const rootProfile = matingProfile.map(point => ({

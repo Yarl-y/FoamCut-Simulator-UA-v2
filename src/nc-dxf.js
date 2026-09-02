@@ -70,6 +70,31 @@ export const detectCircularHoles = points => {
     .map(({ x, y, diameter }) => ({ x, y, diameter }))
 }
 
+export const removeInteriorCutLoops = points => {
+  if (points.length < 4) return points.map(point => ({ ...point }))
+  const profileWidth = Math.max(...points.map(point => point.x)) - Math.min(...points.map(point => point.x))
+  const intervals = []
+  for (let start = 0; start < points.length - 12; start++) {
+    for (let end = points.length - 1; end >= start + 12; end--) {
+      if (pointDistance(points[start], points[end]) > 0.02) continue
+      const segment = points.slice(start, end + 1)
+      const width = Math.max(...segment.map(point => point.x)) - Math.min(...segment.map(point => point.x))
+      if (width > 0 && width < profileWidth * 0.25 && end - start < points.length * 0.55) {
+        intervals.push({ start, end })
+      }
+      break
+    }
+  }
+  const outerIntervals = intervals.filter(interval => !intervals.some(other => (
+    other !== interval && other.start <= interval.start && other.end >= interval.end
+  )))
+  const removed = new Set()
+  outerIntervals.forEach(({ start, end }) => {
+    for (let index = start + 1; index <= end; index++) removed.add(index)
+  })
+  return points.filter((point, index) => !removed.has(index)).map(point => ({ ...point }))
+}
+
 export const extractEmbeddedNcProfiles = text => {
   const coordinate = '[+-]?(?:\\d+(?:\\.\\d*)?|\\.\\d+)'
   const pattern = new RegExp(
