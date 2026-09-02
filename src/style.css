@@ -1187,6 +1187,16 @@ code {
   font-weight: 700;
 }
 
+.assembly-part-info {
+  margin: 8px 0 12px;
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--social-bg);
+  font-size: 13px;
+  line-height: 1.45;
+}
+
 #editAssemblyFuselage {
   width: 100%;
   margin-bottom: 9px;

@@ -121,6 +121,15 @@ const sanitizePart = (part, index) => {
     designSource: kind === 'fuselage'
       ? sanitizeFuselageDesign(part.designSource, `Деталь ${index + 1}`)
       : null,
+    wingDesign: kind === 'wing' && part.wingDesign
+      ? {
+          type: String(part.wingDesign.type || 'wing'),
+          sourceWingId: String(part.wingDesign.sourceWingId || ''),
+          sourceWingName: String(part.wingDesign.sourceWingName || ''),
+          scalePercent: finiteNumber(part.wingDesign.scalePercent ?? 100, `Деталь ${index + 1}, масштаб профілю`),
+          sweep: finiteNumber(part.wingDesign.sweep ?? 0, `Деталь ${index + 1}, зміщення профілю`)
+        }
+      : null,
     visible: part.visible !== false
   }
 }

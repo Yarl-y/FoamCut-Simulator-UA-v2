@@ -483,10 +483,11 @@ view3d.innerHTML = `
         <svg id="assemblySvg" viewBox="0 0 800 500" width="800" height="500"></svg>
         <p id="assemblyStatus">Збірка поки порожня</p>
       </div>
-      <aside class="assembly-parts-panel">
-        <h3>Деталі та координати</h3>
-        <p id="assemblySelectionStatus">Клацніть деталь у 3D або виберіть її зі списку</p>
-        <button id="editAssemblyFuselage" type="button" disabled>Редагувати фюзеляж у бібліотеці</button>
+        <aside class="assembly-parts-panel">
+          <h3>Деталі та координати</h3>
+          <p id="assemblySelectionStatus">Клацніть деталь у 3D або виберіть її зі списку</p>
+          <div id="assemblyPartInfo" class="assembly-part-info">Параметри вибраної деталі з’являться тут.</div>
+          <button id="editAssemblyFuselage" type="button" disabled>Редагувати фюзеляж у бібліотеці</button>
         <div id="assemblyPartsList" class="assembly-parts-list"></div>
       </aside>
     </div>
@@ -908,6 +909,7 @@ const assemblyPartsList = document.getElementById('assemblyPartsList')
 const assemblySvg = document.getElementById('assemblySvg')
 const assemblyStatus = document.getElementById('assemblyStatus')
 const assemblySelectionStatus = document.getElementById('assemblySelectionStatus')
+const assemblyPartInfo = document.getElementById('assemblyPartInfo')
 const editAssemblyFuselageButton = document.getElementById('editAssemblyFuselage')
 const measureAssemblyButton = document.getElementById('measureAssembly')
 const clearAssemblyMeasureButton = document.getElementById('clearAssemblyMeasure')
@@ -2654,6 +2656,25 @@ const syncAssemblySelectionUi = () => {
   assemblySelectionStatus.textContent = selectedPart
     ? `${selectedPart.name}: X ${selectedPart.offsets.x} · Y ${selectedPart.offsets.y} · Z ${selectedPart.offsets.z} мм`
     : 'Клацніть деталь у 3D або виберіть її зі списку'
+  if (!selectedPart) {
+    assemblyPartInfo.textContent = 'Параметри вибраної деталі з’являться тут.'
+  } else if (selectedPart.wingDesign?.type === 'transition-insert') {
+    const design = selectedPart.wingDesign
+    const rods = (selectedPart.straightSparRods || [])
+      .map((rod, index) => `№${index + 1}: X ${rod.x} · Y ${rod.y} · Ø${rod.diameter} мм`)
+      .join('; ')
+    assemblyPartInfo.textContent = `Вставка: довжина ${selectedPart.span} мм; профіль X/Y ${design.scalePercent}%; `
+      + `зміщення ${design.sweep} мм; стикове крило «${design.sourceWingName}». `
+      + (rods ? `Лонжерони: ${rods}.` : 'Лонжерони не задані.')
+  } else if (selectedPart.kind === 'wing') {
+    const rods = (selectedPart.straightSparRods || [])
+      .map((rod, index) => `№${index + 1}: X ${rod.x} · Y ${rod.y} · Ø${rod.diameter} мм`)
+      .join('; ')
+    assemblyPartInfo.textContent = `Півкрило: довжина ${selectedPart.span} мм. `
+      + (rods ? `Лонжерони: ${rods}.` : 'Лонжерони не задані.')
+  } else {
+    assemblyPartInfo.textContent = `Секція фюзеляжу: довжина ${selectedPart.span} мм.`
+  }
   editAssemblyFuselageButton.disabled = selectedPart?.kind !== 'fuselage'
   editAssemblyFuselageButton.title = selectedPart?.kind === 'fuselage'
     ? selectedPart.designSource
@@ -3214,6 +3235,22 @@ const addCurrentCandidateToAssembly = side => {
   if (candidate.kind === 'wing' && !['left', 'right'].includes(side)) return
   if (candidate.kind === 'fuselage' && side !== 'fuselage') return
   const sideLabel = side === 'left' ? 'Ліве півкрило' : side === 'right' ? 'Праве півкрило' : ''
+  const direction = side === 'left' ? -1 : 1
+  const matchingWing = candidate.wingDesign?.type === 'transition-insert'
+    ? [...assemblyParts].reverse().find(part => (
+        part.kind === 'wing'
+        && part.side === side
+        && part.wingDesign?.sourceWingId === candidate.wingDesign.sourceWingId
+        && part.wingDesign?.type !== 'transition-insert'
+      ))
+    : null
+  const offsets = matchingWing
+    ? {
+        x: matchingWing.offsets.x,
+        y: matchingWing.offsets.y,
+        z: matchingWing.offsets.z - direction * candidate.span
+      }
+    : { ...candidate.defaultOffsets }
   assemblyParts.push({
     id: nextAssemblyPartId++,
     kind: candidate.kind,
@@ -3229,10 +3266,13 @@ const addCurrentCandidateToAssembly = side => {
     straightSparRods: candidate.straightSparRods.map(rod => ({ ...rod })),
     servoChannels: candidate.servoChannels.map(channel => ({ ...channel })),
     designSource: candidate.designSource ? cloneFuselageTemplate(candidate.designSource) : null,
-    offsets: { ...candidate.defaultOffsets },
+    wingDesign: candidate.wingDesign ? { ...candidate.wingDesign } : null,
+    offsets,
     visible: true
   })
-  assemblyFileStatus.textContent = 'Збірку змінено — збережіть файл'
+  assemblyFileStatus.textContent = matchingWing
+    ? `Вставку автоматично пристиковано до ${matchingWing.name} — збережіть збірку`
+    : 'Збірку змінено — збережіть файл'
   renderAssemblyPartsList()
 }
 
@@ -3832,7 +3872,14 @@ buildWingInsertButton.addEventListener('click', () => {
       cutLeft: rootProfile.map(point => ({ ...point })),
       cutRight: matingProfile.map(point => ({ ...point })),
       straightSparRods: rods.map(rod => ({ ...rod })),
-      servoChannels: [], defaultOffsets: { x: 0, y: 0, z: 0 }
+      servoChannels: [], defaultOffsets: { x: 0, y: 0, z: 0 },
+      wingDesign: {
+        type: 'transition-insert',
+        sourceWingId: wing.id,
+        sourceWingName: wing.name,
+        scalePercent: Math.round(scale * 1000) / 10,
+        sweep
+      }
     }
     foamWidthInput.value = span
     showProfileInDxfPanel('left', rootProfile, true, `${name} — X/Y біля фюзеляжу`)
@@ -3889,7 +3936,8 @@ loadImportedWingButton.addEventListener('click', () => {
     cutLeft: wing.leftPoints.map(point => ({ ...point })),
     cutRight: wing.rightPoints.map(point => ({ ...point })),
     straightSparRods: activeStraightSparRods.map(rod => ({ ...rod })),
-    servoChannels: [], defaultOffsets: { x: 0, y: 0, z: 0 }
+    servoChannels: [], defaultOffsets: { x: 0, y: 0, z: 0 },
+    wingDesign: { type: 'imported-wing', sourceWingId: wing.id, sourceWingName: wing.name }
   }
   foamWidthInput.value = wing.span
   showProfileInDxfPanel('left', wing.leftPoints, true, `${wing.name} — X/Y`)
