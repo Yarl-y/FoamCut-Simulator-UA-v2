@@ -832,6 +832,35 @@ code {
   font-size: 14px;
 }
 
+.imported-wing-library,
+.nc-wing-import {
+  margin: 12px 0;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--social-bg);
+}
+
+.imported-wing-library h3 {
+  margin: 0 0 8px;
+}
+
+.imported-wing-library > div,
+.nc-wing-import {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+}
+
+.imported-wing-library p,
+.nc-wing-import p {
+  flex-basis: 100%;
+  margin: 2px 0 0;
+  font-size: 14px;
+}
+
 .dxf-profile-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));

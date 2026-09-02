@@ -16,6 +16,7 @@ import { createDxfPolyline, createPreviewModel, recoverNcProfiles } from './nc-d
 import { createFoamCutProject, parseFoamCutProject } from './project-file.js'
 import { initializeMachineControl } from './machine-control.js'
 import { chooseEntrySide, createSafeLeadPoint, orientProfile, startProfileAtSide } from './profile-entry.js'
+import { createImportedWing, loadImportedWings, saveImportedWings } from './wing-library.js'
 import {
   builtinFuselageTemplates,
   cloneFuselageTemplate,
@@ -129,6 +130,11 @@ document.querySelector('#app').innerHTML = `
         </div>
         <button id="buildLibraryWing" type="button">Побудувати 3D-крило</button>
         <p id="profileLibraryStatus">Виберіть параметри кореневого та кінцевого профілів</p>
+        <section class="imported-wing-library">
+          <h3>Крила, відновлені з NC</h3>
+          <div><label>Збережене крило <select id="importedWingSelect"></select></label><button id="loadImportedWing" type="button" disabled>Відкрити крило</button><button id="deleteImportedWing" type="button" disabled>Видалити</button></div>
+          <p id="importedWingLibraryStatus">Відкрийте NC у вкладці «Файли та NC» і збережіть його як крило.</p>
+        </section>
         <div class="fuselage-library">
           <h3>Бібліотека фюзеляжів</h3>
           <div class="fuselage-template-toolbar">
@@ -260,6 +266,13 @@ document.querySelector('#app').innerHTML = `
       <button id="downloadNcDxfRight" disabled>Завантажити DXF A/Z</button>
       <span id="ncToDxfStatus">Відкрийте NC для відновлення профілів</span>
     </div>
+    <section class="nc-wing-import" data-workspace="files">
+      <strong>Зберегти відновлене крило в бібліотеці</strong>
+      <label>Назва <input id="ncWingName" type="text" placeholder="Моє крило"></label>
+      <label>Довжина півкрила, мм <input id="ncWingSpan" type="number" min="1" step="1" value="1000"></label>
+      <button id="saveNcWingToLibrary" type="button" disabled>Зберегти крило з NC</button>
+      <p id="ncWingImportStatus">Спочатку завантажте NC-файл.</p>
+    </section>
 
     <section id="dxfProfiles" class="dxf-profiles" data-workspace="files">
       <h2>Профілі DXF</h2>
@@ -805,6 +818,14 @@ const expandLibraryPreviewButton = document.querySelector('#expandLibraryPreview
 const downloadNcDxfLeftButton = document.querySelector('#downloadNcDxfLeft')
 const downloadNcDxfRightButton = document.querySelector('#downloadNcDxfRight')
 const ncToDxfStatus = document.querySelector('#ncToDxfStatus')
+const ncWingNameInput = document.querySelector('#ncWingName')
+const ncWingSpanInput = document.querySelector('#ncWingSpan')
+const saveNcWingToLibraryButton = document.querySelector('#saveNcWingToLibrary')
+const ncWingImportStatus = document.querySelector('#ncWingImportStatus')
+const importedWingSelect = document.querySelector('#importedWingSelect')
+const loadImportedWingButton = document.querySelector('#loadImportedWing')
+const deleteImportedWingButton = document.querySelector('#deleteImportedWing')
+const importedWingLibraryStatus = document.querySelector('#importedWingLibraryStatus')
 const dxfPointCountInput = document.querySelector('#dxfPointCount')
 const cutPassModeInput = document.querySelector('#cutPassMode')
 const leadDistanceInput = document.querySelector('#leadDistance')
@@ -915,9 +936,12 @@ const batchAssignments = new Map()
 const batchSlotAssignments = new Map()
 let currentBatchPackages = []
 let recoveredNcProfiles = null
+let recoveredNcSourceFile = ''
+let importedWings = loadImportedWings()
 let activeStraightSparRods = []
 let activeServoChannels = []
 let currentAssemblyCandidate = null
+let importedWingPreview = null
 let fuselageStations = defaultFuselageStations.map(station => ({ ...station }))
 let fuselageSectionSettings = Array.from({ length: defaultFuselageStations.length - 1 }, () => ({
   hollow: false,
@@ -1251,6 +1275,17 @@ const renderLibraryPreview = () => {
     const pointCount = 100
     let parts
     if (libraryPreviewMode === 'wing') {
+      if (importedWingPreview) {
+        parts = [previewPart({
+          kind: 'wing', name: importedWingPreview.name, span: importedWingPreview.span,
+          outerLeft: importedWingPreview.leftPoints,
+          outerRight: importedWingPreview.rightPoints,
+          offsets: { x: 0, y: 0, z: 0 },
+          rods: importedWingPreview.straightSparRods
+        })]
+        libraryPreviewStatus.textContent = `Крило з NC: ${importedWingPreview.name}; довжина ${importedWingPreview.span} мм; `
+          + `${importedWingPreview.leftPoints.length} синхронних точок`
+      } else {
       const rootChord = readPositiveLibraryNumber(rootLibraryChordInput, 'Хорда кореня')
       const tipChord = readPositiveLibraryNumber(tipLibraryChordInput, 'Хорда кінця')
       const halfSpan = readPositiveLibraryNumber(halfSpanInput, 'Розмах півкрила')
@@ -1272,6 +1307,7 @@ const renderLibraryPreview = () => {
         outerLeft: root, outerRight: tip, offsets: { x: 0, y: 0, z: 0 }
       })]
       libraryPreviewStatus.textContent = `Крило: ${rootChord} → ${tipChord} мм; піврозмах ${halfSpan} мм`
+      }
     } else {
       const totalLength = readPositiveLibraryNumber(fuselageLengthInput, 'Довжина фюзеляжу')
       const maximumWidth = readPositiveLibraryNumber(fuselageWidthInput, 'Ширина фюзеляжу')
@@ -1515,8 +1551,8 @@ const wingPreviewInputs = [
   halfSpanInput, wingSweepInput, tipTwistInput, twistAxisInput
 ]
 wingPreviewInputs.forEach(input => {
-  input.addEventListener('input', () => scheduleLibraryPreview('wing'))
-  input.addEventListener('change', () => scheduleLibraryPreview('wing'))
+  input.addEventListener('input', () => { importedWingPreview = null; scheduleLibraryPreview('wing') })
+  input.addEventListener('change', () => { importedWingPreview = null; scheduleLibraryPreview('wing') })
 })
 ;[
   fuselageLengthInput, fuselageWidthInput, fuselageHeightInput, fuselageHollowInput,
@@ -2250,6 +2286,7 @@ const readLibraryNumber = (input, label) => {
 
 buildLibraryWingButton.addEventListener('click', () => {
   try {
+    importedWingPreview = null
     activeStraightSparRods = []
     activeServoChannels = []
     const pointCount = Math.max(20, Number(dxfPointCountInput.value) || 200)
@@ -3653,6 +3690,88 @@ downloadNcButton.addEventListener('click', () => {
   URL.revokeObjectURL(blobUrl)
 })
 
+const renderImportedWingLibrary = (selectedId = importedWingSelect.value) => {
+  importedWingSelect.replaceChildren()
+  if (!importedWings.length) {
+    const option = document.createElement('option')
+    option.value = ''; option.textContent = 'Бібліотека поки порожня'
+    importedWingSelect.appendChild(option)
+    loadImportedWingButton.disabled = true
+    deleteImportedWingButton.disabled = true
+    return
+  }
+  importedWings.forEach(wing => {
+    const option = document.createElement('option')
+    option.value = wing.id
+    option.textContent = `${wing.name} — ${wing.span} мм`
+    importedWingSelect.appendChild(option)
+  })
+  if (importedWings.some(wing => wing.id === selectedId)) importedWingSelect.value = selectedId
+  loadImportedWingButton.disabled = false
+  deleteImportedWingButton.disabled = false
+}
+
+saveNcWingToLibraryButton.addEventListener('click', () => {
+  try {
+    if (!recoveredNcProfiles) throw new Error('Спочатку відкрийте NC і відновіть профілі')
+    const name = ncWingNameInput.value.trim()
+    const span = Number(ncWingSpanInput.value)
+    const wing = createImportedWing({
+      name: name || recoveredNcSourceFile || 'Крило з NC', span,
+      leftPoints: recoveredNcProfiles.leftPoints,
+      rightPoints: recoveredNcProfiles.rightPoints,
+      sourceFile: recoveredNcSourceFile,
+      recoveryMethod: recoveredNcProfiles.method,
+      straightSparRods: []
+    })
+    importedWings = saveImportedWings([...importedWings, wing])
+    renderImportedWingLibrary(wing.id)
+    ncWingImportStatus.className = 'profile-library-valid'
+    ncWingImportStatus.textContent = `Крило «${wing.name}» збережено: ${wing.span} мм, ${wing.leftPoints.length} синхронних точок.`
+    importedWingLibraryStatus.textContent = `У бібліотеці ${importedWings.length} крил(а) з NC.`
+  } catch (error) {
+    ncWingImportStatus.className = 'profile-library-error'
+    ncWingImportStatus.textContent = error.message
+  }
+})
+
+loadImportedWingButton.addEventListener('click', () => {
+  const wing = importedWings.find(item => item.id === importedWingSelect.value)
+  if (!wing) return
+  importedWingPreview = wing
+  activeStraightSparRods = wing.straightSparRods.map(rod => ({ ...rod }))
+  activeServoChannels = []
+  preparedDxfProfiles.left = { points: wing.leftPoints.map(point => ({ ...point })), source: 'wing-library' }
+  preparedDxfProfiles.right = { points: wing.rightPoints.map(point => ({ ...point })), source: 'wing-library' }
+  currentAssemblyCandidate = {
+    kind: 'wing', name: wing.name, span: wing.span,
+    outerLeft: wing.leftPoints.map(point => ({ ...point })),
+    outerRight: wing.rightPoints.map(point => ({ ...point })),
+    cutLeft: wing.leftPoints.map(point => ({ ...point })),
+    cutRight: wing.rightPoints.map(point => ({ ...point })),
+    straightSparRods: activeStraightSparRods.map(rod => ({ ...rod })),
+    servoChannels: [], defaultOffsets: { x: 0, y: 0, z: 0 }
+  }
+  foamWidthInput.value = wing.span
+  showProfileInDxfPanel('left', wing.leftPoints, true, `${wing.name} — X/Y`)
+  showProfileInDxfPanel('right', wing.rightPoints, true, `${wing.name} — A/Z`)
+  updateDxfAssignmentStatus(); updateProjectSaveAvailability(); updateAssemblyCandidateControls()
+  renderPreparedDxfSimulation(); scheduleLibraryPreview('wing')
+  importedWingLibraryStatus.className = 'profile-library-valid'
+  importedWingLibraryStatus.textContent = `Відкрито «${wing.name}». Його можна додати у збірку або використати для вставки.`
+})
+
+deleteImportedWingButton.addEventListener('click', () => {
+  const wing = importedWings.find(item => item.id === importedWingSelect.value)
+  if (!wing) return
+  importedWings = saveImportedWings(importedWings.filter(item => item.id !== wing.id))
+  if (importedWingPreview?.id === wing.id) importedWingPreview = null
+  renderImportedWingLibrary()
+  importedWingLibraryStatus.textContent = `Крило «${wing.name}» видалено з локальної бібліотеки.`
+})
+
+renderImportedWingLibrary()
+
 const downloadRecoveredDxf = side => {
   if (!recoveredNcProfiles) return
 
@@ -3687,6 +3806,10 @@ loadButton.addEventListener('click', async () => {
 activeStraightSparRods = []
 activeServoChannels = []
 recoveredNcProfiles = null
+recoveredNcSourceFile = ''
+saveNcWingToLibraryButton.disabled = true
+ncWingImportStatus.className = ''
+ncWingImportStatus.textContent = 'Пошук профілів і розмірів крила у NC...'
 downloadNcDxfLeftButton.disabled = true
 downloadNcDxfRightButton.disabled = true
 ncToDxfStatus.textContent = 'Пошук профілів у NC...'
@@ -3726,10 +3849,20 @@ if (zMatch) z = isAbsoluteMode ? Number(zMatch[1]) : z + Number(zMatch[1])
    if (leftPoints.length < 2 || rightPoints.length < 2) {
         status.textContent = 'У файлі не знайдено траєкторію 4 осей'
         ncToDxfStatus.textContent = 'Не вдалося відновити профілі з цього NC'
+        ncWingImportStatus.className = 'profile-library-error'
+        ncWingImportStatus.textContent = 'Крило не можна зберегти: у NC немає повної траєкторії X/Y/A/Z.'
         return
     }
 
     recoveredNcProfiles = recoverNcProfiles(text, leftPoints, rightPoints)
+    recoveredNcSourceFile = file.name
+    ncWingNameInput.value = file.name.replace(/\.[^.]+$/, '')
+    const embeddedBlockWidth = Number(text.match(/Block setup:[^\r\n]*\bblock\s+([-+]?\d*\.?\d+)\s*mm/i)?.[1])
+    if (Number.isFinite(embeddedBlockWidth) && embeddedBlockWidth > 0) ncWingSpanInput.value = embeddedBlockWidth
+    else if (Number(foamWidthInput.value) > 0) ncWingSpanInput.value = foamWidthInput.value
+    saveNcWingToLibraryButton.disabled = false
+    ncWingImportStatus.className = 'profile-library-valid'
+    ncWingImportStatus.textContent = `Профілі відновлено. Перевірте назву та довжину ${ncWingSpanInput.value} мм, потім збережіть крило.`
     downloadNcDxfLeftButton.disabled = false
     downloadNcDxfRightButton.disabled = false
     preparedDxfProfiles.left = { points: recoveredNcProfiles.leftPoints, source: 'nc' }
