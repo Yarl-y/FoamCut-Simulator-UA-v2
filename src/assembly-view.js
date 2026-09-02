@@ -119,17 +119,6 @@ export const renderAssemblyView = (svg, parts, camera = {}, measurement = null) 
     }
   }
 
-  for (const rod of continuousSpars.values()) {
-    if (rod.segments < 2) continue
-    const first = project({ x: rod.x, y: rod.y, z: rod.minZ })
-    const second = project({ x: rod.x, y: rod.y, z: rod.maxZ })
-    svgElement('line', {
-      x1: first[0], y1: first[1], x2: second[0], y2: second[1],
-      stroke: '#111827', 'stroke-width': Math.max(2, rod.diameter * scale),
-      'stroke-opacity': '0.32', 'stroke-linecap': 'round'
-    }, svg)
-  }
-
   for (const { part, root, tip } of geometries) {
     const partGroup = svgElement('g', {
       'data-assembly-part-id': part.id,
@@ -243,6 +232,26 @@ export const renderAssemblyView = (svg, parts, camera = {}, measurement = null) 
       'font-size': '13',
       'font-weight': '700'
     }, partGroup).textContent = part.name
+  }
+
+  let continuousSparIndex = 0
+  for (const rod of continuousSpars.values()) {
+    if (rod.segments < 2) continue
+    continuousSparIndex += 1
+    const first = project({ x: rod.x, y: rod.y, z: rod.minZ })
+    const second = project({ x: rod.x, y: rod.y, z: rod.maxZ })
+    svgElement('line', {
+      x1: first[0], y1: first[1], x2: second[0], y2: second[1],
+      stroke: '#14532d', 'stroke-width': Math.max(3, rod.diameter * scale),
+      'stroke-opacity': '0.82', 'stroke-linecap': 'round'
+    }, svg)
+    const label = svgElement('text', {
+      x: (first[0] + second[0]) / 2,
+      y: (first[1] + second[1]) / 2 - 8,
+      'text-anchor': 'middle', fill: '#14532d', 'font-size': '13', 'font-weight': '800',
+      stroke: '#ffffff', 'stroke-width': '3', 'paint-order': 'stroke'
+    }, svg)
+    label.textContent = `Наскрізна трубка ${continuousSparIndex} Ø${rod.diameter} мм`
   }
 
   if (measurement?.points?.length) {
