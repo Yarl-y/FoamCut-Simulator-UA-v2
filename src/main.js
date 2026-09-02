@@ -149,6 +149,13 @@ document.querySelector('#app').innerHTML = `
             </div>
             <button id="saveImportedWingSpars" type="button" disabled>Зберегти осі лонжеронів</button>
           </div>
+          <div class="imported-wing-insert">
+            <strong>Стрілоподібна вставка до фюзеляжу</strong>
+            <label>Довжина вставки, мм <input id="wingInsertSpan" type="number" min="1" step="1" value="150"></label>
+            <label>Збільшення профілю X/Y, % <input id="wingInsertScale" type="number" min="100" step="1" value="120"></label>
+            <label>Зміщення профілю X/Y, мм <input id="wingInsertSweep" type="number" step="1" value="0"></label>
+            <button id="buildWingInsert" type="button" disabled>Створити вставку з цього крила</button>
+          </div>
           <p id="importedWingLibraryStatus">Відкрийте NC у вкладці «Файли та NC» і збережіть його як крило.</p>
         </section>
         <div class="fuselage-library">
@@ -843,6 +850,10 @@ const loadImportedWingButton = document.querySelector('#loadImportedWing')
 const deleteImportedWingButton = document.querySelector('#deleteImportedWing')
 const importedWingLibraryStatus = document.querySelector('#importedWingLibraryStatus')
 const saveImportedWingSparsButton = document.querySelector('#saveImportedWingSpars')
+const wingInsertSpanInput = document.querySelector('#wingInsertSpan')
+const wingInsertScaleInput = document.querySelector('#wingInsertScale')
+const wingInsertSweepInput = document.querySelector('#wingInsertSweep')
+const buildWingInsertButton = document.querySelector('#buildWingInsert')
 const importedSparInputs = [1, 2].map(number => ({
   enabled: document.querySelector(`#importedSpar${number}Enabled`),
   x: document.querySelector(`#importedSpar${number}X`),
@@ -3722,6 +3733,7 @@ const renderImportedWingLibrary = (selectedId = importedWingSelect.value) => {
     loadImportedWingButton.disabled = true
     deleteImportedWingButton.disabled = true
     saveImportedWingSparsButton.disabled = true
+    buildWingInsertButton.disabled = true
     return
   }
   importedWings.forEach(wing => {
@@ -3734,6 +3746,7 @@ const renderImportedWingLibrary = (selectedId = importedWingSelect.value) => {
   loadImportedWingButton.disabled = false
   deleteImportedWingButton.disabled = false
   saveImportedWingSparsButton.disabled = false
+  buildWingInsertButton.disabled = false
 }
 
 const loadImportedWingSparInputs = () => {
@@ -3786,6 +3799,53 @@ saveImportedWingSparsButton.addEventListener('click', () => {
   } catch (error) {
     importedWingLibraryStatus.className = 'profile-library-error'
     importedWingLibraryStatus.textContent = error.message
+  }
+})
+
+buildWingInsertButton.addEventListener('click', () => {
+  try {
+    const wing = importedWings.find(item => item.id === importedWingSelect.value)
+    if (!wing) throw new Error('Спочатку виберіть збережене крило')
+    const span = readPositiveLibraryNumber(wingInsertSpanInput, 'Довжина вставки')
+    const scale = readPositiveLibraryNumber(wingInsertScaleInput, 'Збільшення профілю') / 100
+    if (scale < 1) throw new Error('Профіль X/Y вставки не може бути меншим за стиковий профіль')
+    const sweep = readLibraryNumber(wingInsertSweepInput, 'Зміщення профілю X/Y')
+    const rods = wing.straightSparRods.map(rod => ({ ...rod }))
+    const matingProfile = wing.leftPoints.map(point => ({ ...point }))
+    const bounds = contourBounds(matingProfile)
+    const anchor = rods[0] || { x: bounds.minX, y: (bounds.minY + bounds.maxY) / 2 }
+    const rootProfile = matingProfile.map(point => ({
+      x: anchor.x + (point.x - anchor.x) * scale + sweep,
+      y: anchor.y + (point.y - anchor.y) * scale
+    }))
+    const name = `${wing.name} — вставка ${Math.round(scale * 1000) / 10}%`
+
+    importedWingPreview = null
+    activeStraightSparRods = rods.map(rod => ({ ...rod }))
+    activeServoChannels = []
+    preparedDxfProfiles.left = { points: rootProfile.map(point => ({ ...point })), source: 'wing-insert' }
+    preparedDxfProfiles.right = { points: matingProfile.map(point => ({ ...point })), source: 'wing-insert' }
+    currentAssemblyCandidate = {
+      kind: 'wing', name, span,
+      outerLeft: rootProfile.map(point => ({ ...point })),
+      outerRight: matingProfile.map(point => ({ ...point })),
+      cutLeft: rootProfile.map(point => ({ ...point })),
+      cutRight: matingProfile.map(point => ({ ...point })),
+      straightSparRods: rods.map(rod => ({ ...rod })),
+      servoChannels: [], defaultOffsets: { x: 0, y: 0, z: 0 }
+    }
+    foamWidthInput.value = span
+    showProfileInDxfPanel('left', rootProfile, true, `${name} — X/Y біля фюзеляжу`)
+    showProfileInDxfPanel('right', matingProfile, true, `${wing.name} — точний стик A/Z`)
+    updateDxfAssignmentStatus()
+    updateProjectSaveAvailability()
+    updateAssemblyCandidateControls()
+    renderPreparedDxfSimulation()
+    importedWingLibraryStatus.className = 'profile-library-valid'
+    importedWingLibraryStatus.textContent = `Вставку побудовано: ${span} мм; X/Y ${Math.round(scale * 1000) / 10}%; зміщення ${sweep} мм. A/Z точно повторює корінь крила.`
+  } catch (error) {
+    importedWingLibraryStatus.className = 'profile-library-error'
+    importedWingLibraryStatus.textContent = `Вставку не створено: ${error.message}`
   }
 })
 

@@ -872,6 +872,21 @@ code {
   flex-basis: 100%;
 }
 
+.imported-wing-insert {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: end;
+  justify-content: center;
+  gap: 8px;
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border);
+}
+
+.imported-wing-insert > strong {
+  flex-basis: 100%;
+}
+
 .dxf-profile-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
