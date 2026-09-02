@@ -133,6 +133,22 @@ document.querySelector('#app').innerHTML = `
         <section class="imported-wing-library">
           <h3>Крила, відновлені з NC</h3>
           <div><label>Збережене крило <select id="importedWingSelect"></select></label><button id="loadImportedWing" type="button" disabled>Відкрити крило</button><button id="deleteImportedWing" type="button" disabled>Видалити</button></div>
+          <div class="imported-wing-spars">
+            <strong>Прямі осі лонжеронів у фізичних мм</strong>
+            <div class="spar-hole-row">
+              <label><input id="importedSpar1Enabled" type="checkbox"> Лонжерон 1</label>
+              <label>X, мм <input id="importedSpar1X" type="number" step="0.1" value="60"></label>
+              <label>Y, мм <input id="importedSpar1Y" type="number" step="0.1" value="0"></label>
+              <label>Ø, мм <input id="importedSpar1Diameter" type="number" min="0.1" step="0.1" value="10"></label>
+            </div>
+            <div class="spar-hole-row">
+              <label><input id="importedSpar2Enabled" type="checkbox"> Лонжерон 2</label>
+              <label>X, мм <input id="importedSpar2X" type="number" step="0.1" value="110"></label>
+              <label>Y, мм <input id="importedSpar2Y" type="number" step="0.1" value="0"></label>
+              <label>Ø, мм <input id="importedSpar2Diameter" type="number" min="0.1" step="0.1" value="8"></label>
+            </div>
+            <button id="saveImportedWingSpars" type="button" disabled>Зберегти осі лонжеронів</button>
+          </div>
           <p id="importedWingLibraryStatus">Відкрийте NC у вкладці «Файли та NC» і збережіть його як крило.</p>
         </section>
         <div class="fuselage-library">
@@ -826,6 +842,13 @@ const importedWingSelect = document.querySelector('#importedWingSelect')
 const loadImportedWingButton = document.querySelector('#loadImportedWing')
 const deleteImportedWingButton = document.querySelector('#deleteImportedWing')
 const importedWingLibraryStatus = document.querySelector('#importedWingLibraryStatus')
+const saveImportedWingSparsButton = document.querySelector('#saveImportedWingSpars')
+const importedSparInputs = [1, 2].map(number => ({
+  enabled: document.querySelector(`#importedSpar${number}Enabled`),
+  x: document.querySelector(`#importedSpar${number}X`),
+  y: document.querySelector(`#importedSpar${number}Y`),
+  diameter: document.querySelector(`#importedSpar${number}Diameter`)
+}))
 const dxfPointCountInput = document.querySelector('#dxfPointCount')
 const cutPassModeInput = document.querySelector('#cutPassMode')
 const leadDistanceInput = document.querySelector('#leadDistance')
@@ -3698,6 +3721,7 @@ const renderImportedWingLibrary = (selectedId = importedWingSelect.value) => {
     importedWingSelect.appendChild(option)
     loadImportedWingButton.disabled = true
     deleteImportedWingButton.disabled = true
+    saveImportedWingSparsButton.disabled = true
     return
   }
   importedWings.forEach(wing => {
@@ -3709,7 +3733,61 @@ const renderImportedWingLibrary = (selectedId = importedWingSelect.value) => {
   if (importedWings.some(wing => wing.id === selectedId)) importedWingSelect.value = selectedId
   loadImportedWingButton.disabled = false
   deleteImportedWingButton.disabled = false
+  saveImportedWingSparsButton.disabled = false
 }
+
+const loadImportedWingSparInputs = () => {
+  const wing = importedWings.find(item => item.id === importedWingSelect.value)
+  importedSparInputs.forEach((inputs, index) => {
+    const rod = wing?.straightSparRods[index]
+    inputs.enabled.checked = Boolean(rod)
+    if (rod) {
+      inputs.x.value = rod.x
+      inputs.y.value = rod.y
+      inputs.diameter.value = rod.diameter
+    }
+  })
+}
+
+const readImportedWingSpars = () => importedSparInputs.flatMap((inputs, index) => {
+  if (!inputs.enabled.checked) return []
+  const x = readLibraryNumber(inputs.x, `X лонжерона ${index + 1}`)
+  const y = readLibraryNumber(inputs.y, `Y лонжерона ${index + 1}`)
+  const diameter = readPositiveLibraryNumber(inputs.diameter, `Діаметр лонжерона ${index + 1}`)
+  return [{ x, y, diameter }]
+})
+
+importedWingSelect.addEventListener('change', loadImportedWingSparInputs)
+
+saveImportedWingSparsButton.addEventListener('click', () => {
+  try {
+    const wingIndex = importedWings.findIndex(item => item.id === importedWingSelect.value)
+    if (wingIndex < 0) throw new Error('Спочатку виберіть збережене крило')
+    const straightSparRods = readImportedWingSpars()
+    const updatedWing = {
+      ...importedWings[wingIndex],
+      straightSparRods
+    }
+    importedWings[wingIndex] = updatedWing
+    importedWings = saveImportedWings(importedWings)
+    if (importedWingPreview?.id === updatedWing.id) {
+      importedWingPreview = updatedWing
+      activeStraightSparRods = straightSparRods.map(rod => ({ ...rod }))
+      if (currentAssemblyCandidate?.kind === 'wing') {
+        currentAssemblyCandidate.straightSparRods = activeStraightSparRods.map(rod => ({ ...rod }))
+      }
+      renderPreparedDxfSimulation()
+      scheduleLibraryPreview('wing')
+    }
+    importedWingLibraryStatus.className = 'profile-library-valid'
+    importedWingLibraryStatus.textContent = straightSparRods.length
+      ? `Збережено ${straightSparRods.length} прямих осей. Вони проходять без зміни X/Y через усе крило.`
+      : 'Осі лонжеронів очищено для цього крила.'
+  } catch (error) {
+    importedWingLibraryStatus.className = 'profile-library-error'
+    importedWingLibraryStatus.textContent = error.message
+  }
+})
 
 saveNcWingToLibraryButton.addEventListener('click', () => {
   try {
@@ -3726,6 +3804,7 @@ saveNcWingToLibraryButton.addEventListener('click', () => {
     })
     importedWings = saveImportedWings([...importedWings, wing])
     renderImportedWingLibrary(wing.id)
+    loadImportedWingSparInputs()
     ncWingImportStatus.className = 'profile-library-valid'
     ncWingImportStatus.textContent = `Крило «${wing.name}» збережено: ${wing.span} мм, ${wing.leftPoints.length} синхронних точок.`
     importedWingLibraryStatus.textContent = `У бібліотеці ${importedWings.length} крил(а) з NC.`
@@ -3767,10 +3846,12 @@ deleteImportedWingButton.addEventListener('click', () => {
   importedWings = saveImportedWings(importedWings.filter(item => item.id !== wing.id))
   if (importedWingPreview?.id === wing.id) importedWingPreview = null
   renderImportedWingLibrary()
+  loadImportedWingSparInputs()
   importedWingLibraryStatus.textContent = `Крило «${wing.name}» видалено з локальної бібліотеки.`
 })
 
 renderImportedWingLibrary()
+loadImportedWingSparInputs()
 
 const downloadRecoveredDxf = side => {
   if (!recoveredNcProfiles) return
