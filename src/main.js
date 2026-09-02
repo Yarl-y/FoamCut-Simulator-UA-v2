@@ -2813,9 +2813,21 @@ const updateAssemblySvg = () => {
     assemblySelected: part.id === selectedAssemblyPartId
   }))
   const result = renderAssemblyView(assemblySvg, renderedParts, assemblyCamera, assemblyMeasurement)
+  const wingParts = assemblyParts.filter(part => part.visible && part.kind === 'wing')
+  const sparGroups = new Map()
+  wingParts.forEach(part => (part.straightSparRods || []).forEach((rod, index) => {
+    const x = rod.x + part.offsets.x
+    const y = rod.y + part.offsets.y
+    const key = `${index}:${x.toFixed(3)}:${y.toFixed(3)}:${rod.diameter.toFixed(3)}`
+    sparGroups.set(key, (sparGroups.get(key) || 0) + 1)
+  }))
+  const throughSpars = [...sparGroups.values()].filter(count => count >= 4).length
   saveAssemblyButton.disabled = assemblyParts.length === 0
   assemblyStatus.textContent = result.visibleCount
     ? `У збірці ${assemblyParts.length} деталей; показано ${result.visibleCount}. `
+      + (throughSpars
+          ? `Наскрізних співвісних лонжеронів: ${throughSpars}. `
+          : '')
       + 'Виберіть потрібну деталь для симуляції та створення NC.'
     : `У збірці ${assemblyParts.length} деталей; усі деталі приховані`
   syncAssemblySelectionUi()

@@ -99,6 +99,37 @@ export const renderAssemblyView = (svg, parts, camera = {}, measurement = null) 
     inner: { stroke: '#7c3aed', fill: '#c4b5fd' }
   }
 
+  const continuousSpars = new Map()
+  for (const { part } of geometries) {
+    if (part.kind !== 'wing') continue
+    const direction = part.side === 'left' ? -1 : 1
+    for (const rod of part.straightSparRods || []) {
+      const x = rod.x + part.offsets.x
+      const y = rod.y + part.offsets.y
+      const firstZ = part.offsets.z
+      const secondZ = direction * part.span + part.offsets.z
+      const key = `${x.toFixed(3)}:${y.toFixed(3)}:${rod.diameter.toFixed(3)}`
+      const current = continuousSpars.get(key) || {
+        x, y, diameter: rod.diameter, minZ: Infinity, maxZ: -Infinity, segments: 0
+      }
+      current.minZ = Math.min(current.minZ, firstZ, secondZ)
+      current.maxZ = Math.max(current.maxZ, firstZ, secondZ)
+      current.segments += 1
+      continuousSpars.set(key, current)
+    }
+  }
+
+  for (const rod of continuousSpars.values()) {
+    if (rod.segments < 2) continue
+    const first = project({ x: rod.x, y: rod.y, z: rod.minZ })
+    const second = project({ x: rod.x, y: rod.y, z: rod.maxZ })
+    svgElement('line', {
+      x1: first[0], y1: first[1], x2: second[0], y2: second[1],
+      stroke: '#111827', 'stroke-width': Math.max(2, rod.diameter * scale),
+      'stroke-opacity': '0.32', 'stroke-linecap': 'round'
+    }, svg)
+  }
+
   for (const { part, root, tip } of geometries) {
     const partGroup = svgElement('g', {
       'data-assembly-part-id': part.id,
