@@ -42,6 +42,34 @@ const findLongestClosedSegment = points => {
   }
 }
 
+export const detectCircularHoles = points => {
+  const candidates = []
+  for (let start = 0; start < points.length - 12; start++) {
+    for (let end = start + 12; end < Math.min(points.length, start + 96); end++) {
+      if (pointDistance(points[start], points[end]) > 0.02) continue
+      const loop = points.slice(start, end + 1)
+      const xs = loop.map(point => point.x)
+      const ys = loop.map(point => point.y)
+      const minX = Math.min(...xs); const maxX = Math.max(...xs)
+      const minY = Math.min(...ys); const maxY = Math.max(...ys)
+      const width = maxX - minX; const height = maxY - minY
+      if (width < 1 || height < 1 || width > 100 || height > 100) continue
+      const ratio = width / height
+      if (ratio < 0.85 || ratio > 1.15) continue
+      const x = (minX + maxX) / 2
+      const y = (minY + maxY) / 2
+      const diameter = (width + height) / 2
+      if (!candidates.some(hole => Math.hypot(hole.x - x, hole.y - y) < diameter * 0.2)) {
+        candidates.push({ x, y, diameter, pointCount: loop.length })
+      }
+      break
+    }
+  }
+  return candidates
+    .sort((first, second) => first.x - second.x)
+    .map(({ x, y, diameter }) => ({ x, y, diameter }))
+}
+
 export const extractEmbeddedNcProfiles = text => {
   const coordinate = '[+-]?(?:\\d+(?:\\.\\d*)?|\\.\\d+)'
   const pattern = new RegExp(

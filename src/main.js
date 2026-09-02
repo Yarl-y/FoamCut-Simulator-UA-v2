@@ -12,7 +12,7 @@ import {
   renderBatchRouteOverlay
 } from './batch-layout.js'
 import { parseDxf, renderDxfPreview, resampleDxfContour } from './dxf.js'
-import { createDxfPolyline, createPreviewModel, recoverNcProfiles } from './nc-dxf.js'
+import { createDxfPolyline, createPreviewModel, detectCircularHoles, recoverNcProfiles } from './nc-dxf.js'
 import { createFoamCutProject, parseFoamCutProject } from './project-file.js'
 import { initializeMachineControl } from './machine-control.js'
 import { chooseEntrySide, createSafeLeadPoint, orientProfile, startProfileAtSide } from './profile-entry.js'
@@ -975,6 +975,7 @@ const batchSlotAssignments = new Map()
 let currentBatchPackages = []
 let recoveredNcProfiles = null
 let recoveredNcSourceFile = ''
+let recoveredNcStraightSparRods = []
 let importedWings = loadImportedWings()
 let activeStraightSparRods = []
 let activeServoChannels = []
@@ -3943,19 +3944,24 @@ saveNcWingToLibraryButton.addEventListener('click', () => {
     if (!recoveredNcProfiles) throw new Error('Спочатку відкрийте NC і відновіть профілі')
     const name = ncWingNameInput.value.trim()
     const span = Number(ncWingSpanInput.value)
+    const existingIndex = importedWings.findIndex(item => item.sourceFile === recoveredNcSourceFile)
     const wing = createImportedWing({
+      id: existingIndex >= 0 ? importedWings[existingIndex].id : undefined,
       name: name || recoveredNcSourceFile || 'Крило з NC', span,
       leftPoints: recoveredNcProfiles.leftPoints,
       rightPoints: recoveredNcProfiles.rightPoints,
       sourceFile: recoveredNcSourceFile,
       recoveryMethod: recoveredNcProfiles.method,
-      straightSparRods: []
+      straightSparRods: recoveredNcStraightSparRods
     })
-    importedWings = saveImportedWings([...importedWings, wing])
+    if (existingIndex >= 0) importedWings[existingIndex] = wing
+    else importedWings.push(wing)
+    importedWings = saveImportedWings(importedWings)
     renderImportedWingLibrary(wing.id)
     loadImportedWingSparInputs()
     ncWingImportStatus.className = 'profile-library-valid'
-    ncWingImportStatus.textContent = `Крило «${wing.name}» збережено: ${wing.span} мм, ${wing.leftPoints.length} синхронних точок.`
+    ncWingImportStatus.textContent = `Крило «${wing.name}» ${existingIndex >= 0 ? 'оновлено' : 'збережено'}: `
+      + `${wing.span} мм, ${wing.leftPoints.length} синхронних точок, прямих лонжеронів ${wing.straightSparRods.length}.`
     importedWingLibraryStatus.textContent = `У бібліотеці ${importedWings.length} крил(а) з NC.`
   } catch (error) {
     ncWingImportStatus.className = 'profile-library-error'
@@ -4038,6 +4044,7 @@ activeStraightSparRods = []
 activeServoChannels = []
 recoveredNcProfiles = null
 recoveredNcSourceFile = ''
+recoveredNcStraightSparRods = []
 saveNcWingToLibraryButton.disabled = true
 ncWingImportStatus.className = ''
 ncWingImportStatus.textContent = 'Пошук профілів і розмірів крила у NC...'
@@ -4086,6 +4093,14 @@ if (zMatch) z = isAbsoluteMode ? Number(zMatch[1]) : z + Number(zMatch[1])
     }
 
     recoveredNcProfiles = recoverNcProfiles(text, leftPoints, rightPoints)
+    const detectedLeftHoles = detectCircularHoles(recoveredNcProfiles.leftPoints)
+    const detectedRightHoles = detectCircularHoles(recoveredNcProfiles.rightPoints)
+    recoveredNcStraightSparRods = detectedLeftHoles.filter(leftHole => (
+      detectedRightHoles.some(rightHole => (
+        Math.hypot(leftHole.x - rightHole.x, leftHole.y - rightHole.y) <= 0.5
+        && Math.abs(leftHole.diameter - rightHole.diameter) <= 0.5
+      ))
+    )).slice(0, 2)
     recoveredNcSourceFile = file.name
     ncWingNameInput.value = file.name.replace(/\.[^.]+$/, '')
     const embeddedBlockWidth = Number(text.match(/Block setup:[^\r\n]*\bblock\s+([-+]?\d*\.?\d+)\s*mm/i)?.[1])
@@ -4093,7 +4108,8 @@ if (zMatch) z = isAbsoluteMode ? Number(zMatch[1]) : z + Number(zMatch[1])
     else if (Number(foamWidthInput.value) > 0) ncWingSpanInput.value = foamWidthInput.value
     saveNcWingToLibraryButton.disabled = false
     ncWingImportStatus.className = 'profile-library-valid'
-    ncWingImportStatus.textContent = `Профілі відновлено. Перевірте назву та довжину ${ncWingSpanInput.value} мм, потім збережіть крило.`
+    ncWingImportStatus.textContent = `Профілі відновлено. Знайдено прямих отворів лонжеронів: ${recoveredNcStraightSparRods.length}. `
+      + `Перевірте назву та довжину ${ncWingSpanInput.value} мм, потім збережіть крило.`
     downloadNcDxfLeftButton.disabled = false
     downloadNcDxfRightButton.disabled = false
     preparedDxfProfiles.left = { points: recoveredNcProfiles.leftPoints, source: 'nc' }
