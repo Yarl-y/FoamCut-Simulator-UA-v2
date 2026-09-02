@@ -1210,6 +1210,16 @@ code {
   margin: 10px 0;
 }
 
+.assembly-actions label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.assembly-actions input {
+  width: 80px;
+}
+
 .assembly-file-controls,
 .assembly-orbit-controls {
   display: flex;

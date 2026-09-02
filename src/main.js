@@ -458,6 +458,7 @@ view3d.innerHTML = `
       <button id="addLeftWing" disabled>Додати ліве півкрило</button>
       <button id="addRightWing" disabled>Додати праве півкрило</button>
       <button id="addFuselagePart" disabled>Додати секцію фюзеляжу</button>
+      <label>Ширина фюзеляжу між вставками, мм <input id="assemblyFuselageWidth" type="number" min="0" step="1" value="140"></label>
     </div>
     <div class="assembly-file-controls">
       <input id="assemblyFile" type="file" accept=".json,.foamcut-assembly">
@@ -910,6 +911,7 @@ const assemblySvg = document.getElementById('assemblySvg')
 const assemblyStatus = document.getElementById('assemblyStatus')
 const assemblySelectionStatus = document.getElementById('assemblySelectionStatus')
 const assemblyPartInfo = document.getElementById('assemblyPartInfo')
+const assemblyFuselageWidthInput = document.getElementById('assemblyFuselageWidth')
 const editAssemblyFuselageButton = document.getElementById('editAssemblyFuselage')
 const measureAssemblyButton = document.getElementById('measureAssembly')
 const clearAssemblyMeasureButton = document.getElementById('clearAssemblyMeasure')
@@ -3244,12 +3246,11 @@ const addCurrentCandidateToAssembly = side => {
         && part.wingDesign?.type !== 'transition-insert'
       ))
     : null
+  const fuselageWidth = Math.max(0, Number(assemblyFuselageWidthInput.value) || 0)
+  const innerZ = direction * fuselageWidth / 2
+  if (matchingWing) matchingWing.offsets.z = innerZ + direction * candidate.span
   const offsets = matchingWing
-    ? {
-        x: matchingWing.offsets.x,
-        y: matchingWing.offsets.y,
-        z: matchingWing.offsets.z - direction * candidate.span
-      }
+    ? { x: matchingWing.offsets.x, y: matchingWing.offsets.y, z: innerZ }
     : { ...candidate.defaultOffsets }
   assemblyParts.push({
     id: nextAssemblyPartId++,
@@ -3279,6 +3280,27 @@ const addCurrentCandidateToAssembly = side => {
 addLeftWingButton.addEventListener('click', () => addCurrentCandidateToAssembly('left'))
 addRightWingButton.addEventListener('click', () => addCurrentCandidateToAssembly('right'))
 addFuselagePartButton.addEventListener('click', () => addCurrentCandidateToAssembly('fuselage'))
+assemblyFuselageWidthInput.addEventListener('input', () => {
+  const fuselageWidth = Math.max(0, Number(assemblyFuselageWidthInput.value) || 0)
+  assemblyParts.filter(part => part.wingDesign?.type === 'transition-insert').forEach(insert => {
+    const direction = insert.side === 'left' ? -1 : 1
+    const innerZ = direction * fuselageWidth / 2
+    const wing = assemblyParts.find(part => (
+      part.kind === 'wing'
+      && part.side === insert.side
+      && part.wingDesign?.type === 'imported-wing'
+      && part.wingDesign.sourceWingId === insert.wingDesign.sourceWingId
+    ))
+    insert.offsets.z = innerZ
+    if (wing) {
+      wing.offsets.x = insert.offsets.x
+      wing.offsets.y = insert.offsets.y
+      wing.offsets.z = innerZ + direction * insert.span
+    }
+  })
+  assemblyFileStatus.textContent = 'Ширину фюзеляжу змінено — збережіть збірку'
+  updateAssemblySvg()
+})
 addSelectedFuselageSectionsButton.addEventListener('click', () => {
   const selectedIndexes = [...selectedFuselageTransferSegments]
     .filter(index => index >= 0 && index < fuselageStations.length - 1)
@@ -3858,19 +3880,26 @@ buildWingInsertButton.addEventListener('click', () => {
       x: anchor.x + (point.x - anchor.x) * scale + sweep,
       y: anchor.y + (point.y - anchor.y) * scale
     }))
+    const holes = rods.map(rod => ({
+      left: createStraightSparHoleContour(rod),
+      right: createStraightSparHoleContour(rod)
+    }))
+    const cutProfiles = holes.length
+      ? insertPairedSparHoles(rootProfile, matingProfile, holes)
+      : { leftPoints: rootProfile, rightPoints: matingProfile }
     const name = `${wing.name} — вставка ${Math.round(scale * 1000) / 10}%`
 
     importedWingPreview = null
     activeStraightSparRods = rods.map(rod => ({ ...rod }))
     activeServoChannels = []
-    preparedDxfProfiles.left = { points: rootProfile.map(point => ({ ...point })), source: 'wing-insert' }
-    preparedDxfProfiles.right = { points: matingProfile.map(point => ({ ...point })), source: 'wing-insert' }
+    preparedDxfProfiles.left = { points: cutProfiles.leftPoints.map(point => ({ ...point })), source: 'wing-insert' }
+    preparedDxfProfiles.right = { points: cutProfiles.rightPoints.map(point => ({ ...point })), source: 'wing-insert' }
     currentAssemblyCandidate = {
       kind: 'wing', name, span,
       outerLeft: rootProfile.map(point => ({ ...point })),
       outerRight: matingProfile.map(point => ({ ...point })),
-      cutLeft: rootProfile.map(point => ({ ...point })),
-      cutRight: matingProfile.map(point => ({ ...point })),
+      cutLeft: cutProfiles.leftPoints.map(point => ({ ...point })),
+      cutRight: cutProfiles.rightPoints.map(point => ({ ...point })),
       straightSparRods: rods.map(rod => ({ ...rod })),
       servoChannels: [], defaultOffsets: { x: 0, y: 0, z: 0 },
       wingDesign: {
@@ -3882,14 +3911,15 @@ buildWingInsertButton.addEventListener('click', () => {
       }
     }
     foamWidthInput.value = span
-    showProfileInDxfPanel('left', rootProfile, true, `${name} — X/Y біля фюзеляжу`)
-    showProfileInDxfPanel('right', matingProfile, true, `${wing.name} — точний стик A/Z`)
+    showProfileInDxfPanel('left', cutProfiles.leftPoints, true, `${name} — X/Y біля фюзеляжу`)
+    showProfileInDxfPanel('right', cutProfiles.rightPoints, true, `${wing.name} — точний стик A/Z`)
     updateDxfAssignmentStatus()
     updateProjectSaveAvailability()
     updateAssemblyCandidateControls()
     renderPreparedDxfSimulation()
     importedWingLibraryStatus.className = 'profile-library-valid'
-    importedWingLibraryStatus.textContent = `Вставку побудовано: ${span} мм; X/Y ${Math.round(scale * 1000) / 10}%; зміщення ${sweep} мм. A/Z точно повторює корінь крила.`
+    importedWingLibraryStatus.textContent = `Вставку побудовано: ${span} мм; X/Y ${Math.round(scale * 1000) / 10}%; зміщення ${sweep} мм; `
+      + `отворів лонжеронів ${rods.length}. A/Z точно повторює корінь крила.`
   } catch (error) {
     importedWingLibraryStatus.className = 'profile-library-error'
     importedWingLibraryStatus.textContent = `Вставку не створено: ${error.message}`
