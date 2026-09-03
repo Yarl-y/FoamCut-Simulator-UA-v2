@@ -5,11 +5,11 @@ const boundsOf = points => ({
   maxY: Math.max(...points.map(point => point.y))
 })
 
-export function orientProfile(points, orientation = 'none') {
+export function orientProfile(points, orientation = 'none', pivot = null) {
   if (!points.length || orientation === 'none') return points.map(point => ({ ...point }))
   const bounds = boundsOf(points)
-  const centerX = (bounds.minX + bounds.maxX) / 2
-  const centerY = (bounds.minY + bounds.maxY) / 2
+  const centerX = pivot?.x ?? (bounds.minX + bounds.maxX) / 2
+  const centerY = pivot?.y ?? (bounds.minY + bounds.maxY) / 2
   return points.map(point => {
     const dx = point.x - centerX
     const dy = point.y - centerY
@@ -18,6 +18,23 @@ export function orientProfile(points, orientation = 'none') {
     if (orientation === 'mirrorY') return { x: point.x, y: centerY - dy }
     return { ...point }
   })
+}
+
+// Preserve correspondence through orientation and start-point changes.
+export function preparePairedProfiles(left, right, orientation, side, autoStart) {
+  if (!left.length || left.length !== right.length) throw new Error('Кількість парних точок не збігається')
+  const bounds = boundsOf([...left, ...right])
+  const pivot = { x: (bounds.minX + bounds.maxX) / 2, y: (bounds.minY + bounds.maxY) / 2 }
+  let leftPoints = orientProfile(left, orientation, pivot)
+  let rightPoints = orientProfile(right, orientation, pivot)
+  if (autoStart) {
+    const first = startProfileAtSide(leftPoints, side)[0]
+    const index = leftPoints.findIndex(point => point.x === first.x && point.y === first.y)
+    const rotate = points => [...points.slice(index), ...points.slice(0, index)]
+    leftPoints = rotate(leftPoints)
+    rightPoints = rotate(rightPoints)
+  }
+  return { leftPoints, rightPoints }
 }
 
 export function chooseEntrySide(leftPoints, rightPoints, block = {}) {

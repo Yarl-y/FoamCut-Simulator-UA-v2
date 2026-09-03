@@ -18,7 +18,7 @@
   },
   "build": {
     "appId": "ua.foamcut.simulator",
-    "productName": "FoamCut Simulator UA",
+    "productName": "Жарт CAD-CAM Studio UA",
     "asar": true,
     "directories": {
       "output": "release"
@@ -30,7 +30,7 @@
     ],
     "win": {
       "target": "portable",
-      "artifactName": "FoamCut-Simulator-UA-${version}-portable.${ext}"
+      "artifactName": "Zhart-CAD-CAM-Studio-UA-${version}-portable.${ext}"
     }
   }
 }

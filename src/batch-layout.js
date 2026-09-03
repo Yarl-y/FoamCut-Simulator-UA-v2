@@ -740,7 +740,7 @@ const formatNumber = value => (Math.abs(value) < 0.0005 ? 0 : value).toFixed(3)
 export const createBatchMach3Nc = (events, feedRate, setup = null) => {
   const lines = [
     '%',
-    '(FoamCut Simulator - batch fuselage sections)',
+    '(Zhart CAD/CAM Studio UA - batch fuselage sections)',
     '(Metric units, absolute coordinates)',
     'G21',
     'G90',

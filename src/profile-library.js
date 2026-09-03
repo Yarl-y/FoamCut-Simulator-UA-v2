@@ -444,8 +444,7 @@ const rotateContourToNearestPoint = (points, target) => {
   return [...ordered, { ...ordered[0] }]
 }
 
-const createKeyholeRoute = (boundaryPoint, holeContour) => {
-  const orderedHole = rotateContourToNearestPoint(holeContour, boundaryPoint)
+const createKeyholeRoute = (boundaryPoint, orderedHole) => {
   const connector = interpolateConnector(boundaryPoint, orderedHole[0])
   return [
     ...connector,
@@ -456,6 +455,10 @@ const createKeyholeRoute = (boundaryPoint, holeContour) => {
 }
 
 export const insertPairedSparHoles = (leftPoints, rightPoints, holes) => {
+  if (!leftPoints.length || leftPoints.length !== rightPoints.length
+    || holes.some(hole => !hole.left.length || hole.left.length !== hole.right.length)) {
+    throw new Error('Для отворів потрібні відповідні парні точки обох профілів')
+  }
   const insertions = holes.map(hole => {
     const leftCenter = hole.left.reduce((center, point) => ({
       x: center.x + point.x / hole.left.length,
@@ -476,15 +479,20 @@ export const insertPairedSparHoles = (leftPoints, rightPoints, holes) => {
   const rightResult = rightPoints.map(point => ({ ...point }))
 
   for (const hole of insertions) {
+    // One angular phase for both faces, not two independently chosen entries.
+    const orderedLeft = rotateContourToNearestPoint(hole.left, leftPoints[hole.baseIndex])
+    const holeIndex = hole.left.indexOf(orderedLeft[0])
+    const orderedRight = rotatePoints(hole.right, holeIndex)
+    orderedRight.push({ ...orderedRight[0] })
     leftResult.splice(
       hole.baseIndex + 1,
       0,
-      ...createKeyholeRoute(leftPoints[hole.baseIndex], hole.left)
+      ...createKeyholeRoute(leftPoints[hole.baseIndex], orderedLeft)
     )
     rightResult.splice(
       hole.baseIndex + 1,
       0,
-      ...createKeyholeRoute(rightPoints[hole.baseIndex], hole.right)
+      ...createKeyholeRoute(rightPoints[hole.baseIndex], orderedRight)
     )
   }
 

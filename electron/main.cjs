@@ -7,7 +7,7 @@ const createWindow = () => {
     height: 900,
     minWidth: 900,
     minHeight: 700,
-    title: 'FoamCut Simulator UA',
+    title: 'Жарт CAD/CAM Studio UA',
     backgroundColor: '#ffffff',
     webPreferences: {
       nodeIntegration: false,

@@ -21,7 +21,7 @@ import {
 } from './nc-dxf.js'
 import { createFoamCutProject, parseFoamCutProject } from './project-file.js'
 import { initializeMachineControl } from './machine-control.js'
-import { chooseEntrySide, createSafeLeadPoint, orientProfile, startProfileAtSide } from './profile-entry.js'
+import { chooseEntrySide, createSafeLeadPoint, orientProfile, startProfileAtSide, preparePairedProfiles } from './profile-entry.js'
 import { createImportedWing, loadImportedWings, saveImportedWings } from './wing-library.js'
 import {
   builtinFuselageTemplates,
@@ -46,7 +46,7 @@ import {
 
 document.querySelector('#app').innerHTML = `
   <div class="container">
-    <h1>FoamCut Simulator</h1>
+    <h1>Жарт CAD/CAM Studio UA</h1>
     <p class="app-subtitle">Симулятор піноріза — 4 осі <span class="app-build">Збірка 30.08.2026 · 9 секцій</span></p>
 
     <div class="project-controls" data-workspace="files">
@@ -549,9 +549,9 @@ view3d.innerHTML = `
     <p>Перевірка установки перед передаванням NC у Mach3.</p>
     <div id="cutWizardSteps" class="cut-wizard-steps"></div>
     <div class="cut-wizard-actions">
-      <button type="button" data-wizard-go="assembly">1. Збірка</button>
-      <button type="button" data-wizard-go="files">2. Станок і струна</button>
-      <button type="button" data-wizard-go="blocks">3. Блок і розкладка</button>
+      <button id="wizardPartStep" type="button" data-wizard-go="assembly">1. Деталь</button>
+      <button id="wizardMachineStep" type="button" data-wizard-go="files">2. Станок і струна</button>
+      <button id="wizardLayoutStep" type="button" data-wizard-go="blocks">3. Установка блока</button>
       <button id="wizardSimulate" type="button" disabled>4. Перевірити у 2D/3D</button>
       <button id="wizardDownloadNc" type="button" disabled>5. Завантажити перевірений NC</button>
       <button id="refreshCutWizard" type="button">Оновити перевірку</button>
@@ -706,7 +706,7 @@ const initializeWorkspaceTabs = () => {
   const navigation = document.createElement('nav')
   navigation.className = 'workspace-tabs'
   navigation.setAttribute('role', 'tablist')
-  navigation.setAttribute('aria-label', 'Робочі області FoamCut Simulator')
+  navigation.setAttribute('aria-label', 'Робочі області Жарт CAD/CAM Studio UA')
   const panels = document.createElement('div')
   panels.className = 'workspace-panels'
   const panelById = new Map()
@@ -1004,16 +1004,91 @@ const libraryMeasurement = { active: false, points: [], fontSize: 22 }
 const assemblyMeasurement = { active: false, points: [], fontSize: 22 }
 const assemblyParts = []
 
+const analyzeStraightSparAlignment = (leftPoints, rightPoints, rods) => {
+  if (!rods.length) return { applicable: false, valid: true, details: 'Отвори лонжеронів не задані' }
+  if (!leftPoints?.length || leftPoints.length !== rightPoints?.length) {
+    return { applicable: true, valid: false, details: 'Кількість точок X/Y та A/Z не збігається' }
+  }
+  const results = rods.map((rod, index) => {
+    const radius = rod.diameter / 2
+    const tolerance = Math.max(0.03, rod.diameter * 0.01)
+    const indices = leftPoints.map((point, pointIndex) => (
+      Math.abs(Math.hypot(point.x - rod.x, point.y - rod.y) - radius) <= tolerance ? pointIndex : -1
+    )).filter(pointIndex => pointIndex >= 0)
+    const maximumDifference = indices.length
+      ? Math.max(...indices.map(pointIndex => Math.hypot(
+          leftPoints[pointIndex].x - rightPoints[pointIndex].x,
+          leftPoints[pointIndex].y - rightPoints[pointIndex].y
+        )))
+      : Infinity
+    return {
+      number: index + 1,
+      diameter: rod.diameter,
+      points: indices.length,
+      maximumDifference,
+      valid: indices.length >= 24 && maximumDifference <= 0.002
+    }
+  })
+  return {
+    applicable: true,
+    valid: results.every(result => result.valid),
+    details: results.map(result => `№${result.number} Ø${result.diameter} мм: ${result.points} точок; `
+      + (Number.isFinite(result.maximumDifference)
+        ? `відхилення ${formatNcNumber(result.maximumDifference)} мм`
+        : 'контур не знайдено')).join('; ')
+  }
+}
+
+const generatedNcReturnsToZero = () => {
+  const moves = generatedNcText.split(/\r?\n/).filter(line => line.startsWith('G1 '))
+  return moves.length > 1 && /^G1 X0\.000 Y0\.000 A0\.000 Z0\.000$/.test(moves.at(-1))
+}
+
+const isBatchWizardMode = () => {
+  const selectedPart = assemblyParts.find(part => part.id === selectedAssemblyPartId)
+  const wingSelected = selectedPart?.kind === 'wing'
+    || ['wing-insert', 'wing-library'].includes(preparedDxfProfiles.left?.source)
+  return currentBatchPackages.length > 0
+    && assemblyParts.some(part => part.visible && part.kind === 'fuselage')
+    && !wingSelected
+}
+
 const renderCutWizard = () => {
   const sections = assemblyParts.filter(part => part.visible && part.kind === 'fuselage').length
   const compensated = blockCompensationInput.checked && Number(wireSpanInput.value) > 0
   const packagesReady = currentBatchPackages.length > 0
-  const ncReady = packagesReady && currentBatchPackages.every(item => item.validation.valid)
-  const steps = [
-    [sections > 0, 'Збірка', sections ? `${sections} секц. готово` : 'Завантажте збірку'],
+  const profilePairReady = Boolean(preparedDxfProfiles.left && preparedDxfProfiles.right
+    && preparedDxfProfiles.left.points.length === preparedDxfProfiles.right.points.length)
+  const selectedPart = assemblyParts.find(part => part.id === selectedAssemblyPartId)
+  const batchMode = isBatchWizardMode()
+  const individualValidation = preparedCuttingTrajectory ? validateMachineEnvelope(preparedCuttingTrajectory) : null
+  const setupReady = Boolean(preparedCuttingTrajectory?.blockSetup && compensated)
+  const sparCheck = analyzeStraightSparAlignment(
+    preparedDxfProfiles.left?.points,
+    preparedDxfProfiles.right?.points,
+    activeStraightSparRods
+  )
+  const returnReady = generatedNcReturnsToZero()
+  const individualReady = profilePairReady && setupReady && individualValidation?.valid
+    && sparCheck.valid && returnReady
+  const batchReady = batchMode && currentBatchPackages.every(item => item.validation.valid)
+  const ncReady = batchMode ? batchReady : individualReady
+  const partName = selectedPart?.name || currentAssemblyCandidate?.name
+    || (preparedDxfProfiles.left?.source ? 'Поточні профілі X/Y та A/Z' : '')
+  const steps = batchMode ? [
+    [sections > 0, 'Збірка секцій', `${sections} секц. готово`],
     [compensated, 'Станок і струна', compensated ? `струна ${wireSpanInput.value} мм; компенсація увімкнена` : 'Задайте струну та компенсацію'],
-    [packagesReady, 'Блок і розкладка', packagesReady ? `${currentBatchPackages.length} блок(ів)` : 'Побудуйте розкладку'],
-    [ncReady, 'Перевірка осей', ncReady ? 'усі NC у межах станка' : 'NC ще не готовий']
+    [packagesReady, 'Блоки й розкладка', `${currentBatchPackages.length} блок(ів)`],
+    [batchReady, 'Перевірка осей', batchReady ? 'усі NC у межах станка' : 'Є вихід за межі осей']
+  ] : [
+    [profilePairReady, 'Крило або вставка', profilePairReady ? `${partName}; ${preparedDxfProfiles.left.points.length} парних точок` : 'Виберіть деталь для різання'],
+    [setupReady, 'Струна й установка блока', setupReady
+      ? `${preparedCuttingTrajectory.blockSetup.wireSpan} мм = ${preparedCuttingTrajectory.blockSetup.leftGap} + ${preparedCuttingTrajectory.blockSetup.blockWidth} + ${preparedCuttingTrajectory.blockSetup.rightGap} мм`
+      : 'Увімкніть компенсацію та задайте установку'],
+    [sparCheck.valid, 'Прямі канали лонжеронів', sparCheck.details],
+    [Boolean(individualValidation?.valid && returnReady), 'Осі, підхід і повернення', !individualValidation
+      ? 'Побудуйте траєкторію'
+      : `${individualValidation.valid ? 'усі осі в межах' : individualValidation.errors.join('; ')}; ${returnReady ? 'повернення в нуль' : 'немає повернення в нуль'}`]
   ]
   cutWizardSteps.replaceChildren(...steps.map(([ready, title, detail]) => {
     const card = document.createElement('div')
@@ -1026,11 +1101,17 @@ const renderCutWizard = () => {
     return card
   }))
   const selected = currentBatchPackages.find(item => item.layout.block.id === selectedBatchBlock()?.id)
-  const ranges = selected?.validation?.ranges
+  const activeValidation = batchMode ? selected?.validation : individualValidation
+  const ranges = activeValidation?.ranges
   wizardSimulateButton.disabled = !ncReady
-  wizardDownloadNcButton.disabled = !ncReady || !selected
-  cutWizardSummary.textContent = ncReady && selected
-    ? `ГОТОВО ДО СИМУЛЯЦІЇ\nБлок: ${selected.layout.blockWidth} × ${selected.layout.blockHeight} × ${selected.layout.blockThickness} мм\nСтруна: ${selected.blockSetup?.wireSpan ?? wireSpanInput.value} мм\nУстановка: ${selected.blockSetup ? `${selected.blockSetup.leftGap} + ${selected.blockSetup.blockWidth} + ${selected.blockSetup.rightGap} мм` : 'без компенсації'}\nX: ${ranges.x.minimum.toFixed(3)}…${ranges.x.maximum.toFixed(3)} мм\nY: ${ranges.y.minimum.toFixed(3)}…${ranges.y.maximum.toFixed(3)} мм\nA: ${ranges.a.minimum.toFixed(3)}…${ranges.a.maximum.toFixed(3)} мм\nZ: ${ranges.z.minimum.toFixed(3)}…${ranges.z.maximum.toFixed(3)} мм\nНаступне: перевірка 2D/3D, потім холостий прогін Mach3 без нагрівання.`
+  wizardDownloadNcButton.disabled = !ncReady || (batchMode && !selected)
+  wizardPartStep.textContent = batchMode ? '1. Збірка секцій' : '1. Крило або вставка'
+  wizardLayoutStep.textContent = batchMode ? '3. Блоки й розкладка' : '3. Установка блока'
+  wizardLayoutStep.dataset.wizardGo = batchMode ? 'blocks' : 'files'
+  const setup = batchMode ? selected?.blockSetup : preparedCuttingTrajectory?.blockSetup
+  const sparSummary = batchMode ? 'перевіряються в траєкторіях секцій' : sparCheck.details
+  cutWizardSummary.textContent = ncReady && ranges
+    ? `ГОТОВО ДО СИМУЛЯЦІЇ — ${batchMode ? 'ПАКЕТ СЕКЦІЙ' : 'ОКРЕМА ДЕТАЛЬ'}\nДеталь: ${batchMode ? `${sections} секцій` : partName}\nСтруна: ${setup?.wireSpan ?? wireSpanInput.value} мм\nУстановка: ${setup ? `${setup.leftGap} + ${setup.blockWidth} + ${setup.rightGap} мм` : 'не визначена'}\nЛонжерони: ${sparSummary}\nX: ${ranges.x.minimum.toFixed(3)}…${ranges.x.maximum.toFixed(3)} мм\nY: ${ranges.y.minimum.toFixed(3)}…${ranges.y.maximum.toFixed(3)} мм\nA: ${ranges.a.minimum.toFixed(3)}…${ranges.a.maximum.toFixed(3)} мм\nZ: ${ranges.z.minimum.toFixed(3)}…${ranges.z.maximum.toFixed(3)} мм\nПовернення: X0 Y0 A0 Z0. Наступне: 2D/3D, потім холодний прогін без нагрівання.`
     : 'Пройдіть незавершені кроки. NC дозволяється лише після зеленої перевірки осей.'
 }
 let nextAssemblyPartId = 1
@@ -1984,7 +2065,7 @@ const getOutsidePoint = (points, point, distance) => {
   }
 }
 
-const buildBoundaryEntryRoute = (start, side, leadDistance) => {
+const buildBoundaryEntryRoute = (start, side, leadDistance, paired = false) => {
   const offsetX = Math.max(0, Number(profileLengthOffsetInput.value) || 0)
   const offsetY = Math.max(0, Number(profileHeightOffsetInput.value) || 0)
   const left = -offsetX
@@ -1999,16 +2080,16 @@ const buildBoundaryEntryRoute = (start, side, leadDistance) => {
   else if (side === 'bottom') boundary = { x: start.x, y: Math.min(bottom, start.y - leadDistance) }
   else { corner = { x: right, y: bottom }; boundary = { x: Math.max(right, start.x + leadDistance), y: start.y } }
   const route = [zero]
-  if (corner && Math.hypot(corner.x - zero.x, corner.y - zero.y) > 1e-7) route.push(corner)
-  if (Math.hypot(boundary.x - route.at(-1).x, boundary.y - route.at(-1).y) > 1e-7) route.push(boundary)
+  if (corner && (paired || Math.hypot(corner.x - zero.x, corner.y - zero.y) > 1e-7)) route.push(corner)
+  if (paired || Math.hypot(boundary.x - route.at(-1).x, boundary.y - route.at(-1).y) > 1e-7) route.push(boundary)
   return { route, boundary }
 }
 
-const buildCuttingPath = (points, passMode = cutPassModeInput.value, entrySide = 'right') => {
+const buildCuttingPath = (points, passMode = cutPassModeInput.value, entrySide = 'right', paired = false) => {
   if (points.length < 2) return points.map(point => ({ ...point }))
 
   let orderedPoints = points
-  if (passMode === 'double') {
+  if (passMode === 'double' && !paired) {
     const half = Math.floor(points.length / 2)
     const averageY = surface => surface.reduce((sum, point) => sum + point.y, 0)
       / Math.max(surface.length, 1)
@@ -2024,7 +2105,7 @@ const buildCuttingPath = (points, passMode = cutPassModeInput.value, entrySide =
   const start = orderedPoints[0]
   const splitIndex = Math.floor(orderedPoints.length / 2)
   const opposite = orderedPoints[splitIndex]
-  const { route: safeRoute, boundary: outsideStart } = buildBoundaryEntryRoute(start, entrySide, leadDistance)
+  const { route: safeRoute, boundary: outsideStart } = buildBoundaryEntryRoute(start, entrySide, leadDistance, paired)
   const approachStart = [...safeRoute, ...interpolateMove(outsideStart, start)]
   const returnToZero = [...safeRoute].reverse()
 
@@ -2115,7 +2196,7 @@ const createMach3Nc = trajectory => {
   const offsetY = readNcOffset(profileHeightOffsetInput)
   const lines = [
     '%',
-    '(FoamCut Simulator - 4 axis X/Y + A/Z)',
+    '(Zhart CAD/CAM Studio UA - 4 axis X/Y + A/Z)',
     '(Metric units, absolute coordinates)'
   ]
   if (trajectory.blockSetup) {
@@ -2241,9 +2322,15 @@ const renderPreparedDxfSimulation = () => {
     : 300
   const internalFirst = preparedDxfProfiles.left.internalFirst === true
     || preparedDxfProfiles.right.internalFirst === true
-  const effectivePassMode = internalFirst ? 'single' : cutPassModeInput.value
-  let sourceLeftPoints = orientProfile(preparedDxfProfiles.left.points, profileOrientationInput.value)
-  let sourceRightPoints = orientProfile(preparedDxfProfiles.right.points, profileOrientationInput.value)
+  const paired = Boolean(preparedDxfProfiles.left.source && preparedDxfProfiles.right.source)
+  // Splitting a composed route by its midpoint may split a hole, not a surface.
+  const effectivePassMode = internalFirst || paired ? 'single' : cutPassModeInput.value
+  const orientedPair = paired ? preparePairedProfiles(
+    preparedDxfProfiles.left.points, preparedDxfProfiles.right.points,
+    profileOrientationInput.value, 'left', false
+  ) : null
+  let sourceLeftPoints = orientedPair?.leftPoints || orientProfile(preparedDxfProfiles.left.points, profileOrientationInput.value)
+  let sourceRightPoints = orientedPair?.rightPoints || orientProfile(preparedDxfProfiles.right.points, profileOrientationInput.value)
   const requestedEntrySide = profileEntrySideInput.value
   const entrySide = requestedEntrySide === 'auto'
     ? chooseEntrySide(sourceLeftPoints, sourceRightPoints, {
@@ -2254,15 +2341,22 @@ const renderPreparedDxfSimulation = () => {
       })
     : requestedEntrySide
   if (profileAutoStartInput.checked && !internalFirst) {
-    sourceLeftPoints = startProfileAtSide(sourceLeftPoints, entrySide)
-    sourceRightPoints = startProfileAtSide(sourceRightPoints, entrySide)
+    if (paired) {
+      const ordered = preparePairedProfiles(sourceLeftPoints, sourceRightPoints, 'none', entrySide, true)
+      sourceLeftPoints = ordered.leftPoints
+      sourceRightPoints = ordered.rightPoints
+    } else {
+      sourceLeftPoints = startProfileAtSide(sourceLeftPoints, entrySide)
+      sourceRightPoints = startProfileAtSide(sourceRightPoints, entrySide)
+    }
   }
-  const faceLeftPoints = buildCuttingPath(sourceLeftPoints, effectivePassMode, entrySide)
-  const faceRightPoints = buildCuttingPath(sourceRightPoints, effectivePassMode, entrySide)
+  const faceLeftPoints = buildCuttingPath(sourceLeftPoints, effectivePassMode, entrySide, paired)
+  const faceRightPoints = buildCuttingPath(sourceRightPoints, effectivePassMode, entrySide, paired)
   const sideLabels = { right: 'справа', left: 'зліва', top: 'зверху', bottom: 'знизу' }
   const orientationLabels = { none: 'як у DXF', rotate180: 'поворот 180°', mirrorX: 'дзеркально ліворуч/праворуч', mirrorY: 'дзеркально вгору/вниз' }
   profileEntryStatus.textContent = `Застосовано до обох сторін: ${orientationLabels[profileOrientationInput.value]}; `
     + `безпечний вхід ${sideLabels[entrySide]} від X0/Y0 уздовж зовнішніх граней блока${internalFirst ? '; автоматичний старт вимкнено для складеної траєкторії порожнин' : ''}.`
+  if (paired) profileEntryStatus.textContent += ' Парна траєкторія: один прохід, відповідність точок збережено.'
 
   if (faceLeftPoints.length !== faceRightPoints.length) {
     preparedCuttingTrajectory = null
@@ -3167,9 +3261,25 @@ const cutWizardSteps = document.getElementById('cutWizardSteps')
 const cutWizardSummary = document.getElementById('cutWizardSummary')
 const wizardSimulateButton = document.getElementById('wizardSimulate')
 const wizardDownloadNcButton = document.getElementById('wizardDownloadNc')
+const wizardPartStep = document.getElementById('wizardPartStep')
+const wizardLayoutStep = document.getElementById('wizardLayoutStep')
 document.getElementById('refreshCutWizard').addEventListener('click', renderCutWizard)
-wizardSimulateButton.addEventListener('click', () => simulateBatchButton.click())
-wizardDownloadNcButton.addEventListener('click', () => downloadBatchNcButton.click())
+wizardSimulateButton.addEventListener('click', () => {
+  if (isBatchWizardMode()) {
+    simulateBatchButton.click()
+  } else {
+    renderPreparedDxfSimulation()
+    activateWorkspaceTab('simulation')
+    svg.scrollIntoView({ behavior: 'smooth', block: 'start' })
+  }
+})
+wizardDownloadNcButton.addEventListener('click', () => {
+  if (isBatchWizardMode()) {
+    downloadBatchNcButton.click()
+  } else {
+    downloadNcButton.click()
+  }
+})
 document.querySelector('.cut-wizard').addEventListener('click', event => {
   const button = event.target.closest('[data-wizard-go]')
   if (button) activateWorkspaceTab(button.dataset.wizardGo)
@@ -3177,15 +3287,21 @@ document.querySelector('.cut-wizard').addEventListener('click', event => {
 document.querySelector('[data-workspace-tab="wizard"]').addEventListener('click', () => setTimeout(renderCutWizard))
 
 const selectAssemblyPartForCutting = part => {
+  // Rebuild legacy inserts from their exterior and fixed rods, not old cut paths.
+  const cutPair = part.wingDesign?.type === 'transition-insert'
+    ? insertPairedSparHoles(part.outerLeft, part.outerRight, part.straightSparRods.map(rod => ({
+        left: createStraightSparHoleContour(rod), right: createStraightSparHoleContour(rod)
+      })))
+    : { leftPoints: part.cutLeft, rightPoints: part.cutRight }
   activeStraightSparRods = part.straightSparRods.map(rod => ({ ...rod }))
   activeServoChannels = part.servoChannels.map(channel => ({ ...channel }))
   preparedDxfProfiles.left = {
-    points: part.cutLeft.map(point => ({ ...point })),
+    points: cutPair.leftPoints.map(point => ({ ...point })),
     source: 'assembly',
     internalFirst: part.kind === 'fuselage' && part.cutLeft.length > part.outerLeft.length
   }
   preparedDxfProfiles.right = {
-    points: part.cutRight.map(point => ({ ...point })),
+    points: cutPair.rightPoints.map(point => ({ ...point })),
     source: 'assembly',
     internalFirst: part.kind === 'fuselage' && part.cutRight.length > part.outerRight.length
   }
@@ -3648,6 +3764,13 @@ const assignSelectedDxfContour = side => {
   const state = dxfSides[side]
   const contour = getSelectedDxfContour(side)
   if (!contour) return
+
+  if (preparedDxfProfiles.left?.source && preparedDxfProfiles.right?.source) {
+    // These panels preview an already paired route; independent arc-length
+    // resampling destroys matching hole/connector landmarks.
+    dxfAssignmentStatus.textContent = 'Парні профілі вже призначені. Кількість і відповідність точок збережено; вхід та поворот задавайте спільними налаштуваннями.'
+    return
+  }
 
   const pointCount = Math.max(2, Number(dxfPointCountInput.value) || 200)
   const startIndex = Number(state.startInput.value) || 0
