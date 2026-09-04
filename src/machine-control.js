@@ -2,7 +2,7 @@ import { validateVirtualProgram, VirtualFluidNC, VIRTUAL_AXES } from './virtual-
 import { calculateCalibratedSteps, createControllerPlan } from './controller-setup.js'
 import { runSafetyScenarios, sanitizeColdRunLine } from './safety-scenarios.js'
 import { analyzeMachineJob, formatMachineSetupCard } from './machine-job-setup.js'
-import { analyzeMotionDynamics } from './motion-analysis.js'
+import { analyzeMotionDynamics, groupMotionFindings } from './motion-analysis.js'
 
 const AXES = VIRTUAL_AXES
 const STATUS_AXES = ['X', 'Y', 'Z', 'A', 'B']
@@ -65,6 +65,24 @@ export function initializeMachineControl({ getNcText, getBlockSetup, onPositionC
   const installationStatus = el('machineInstallationStatus')
   const motionSummary = el('machineMotionSummary')
   const motionFindings = el('machineMotionFindings')
+  const analysisZeroKnown = el('machineAnalysisZeroKnown')
+  const analysisZeroFields = el('machineAnalysisZeroFields')
+  const analysisZeroInputs = Object.fromEntries(['X', 'Y', 'A', 'Z'].map(axis => [axis, el(`machineAnalysisZero${axis}`)]))
+  const readAnalysisZero = () => analysisZeroKnown.checked
+    ? Object.fromEntries(Object.entries(analysisZeroInputs).map(([axis, input]) => [axis, input.value.trim() === '' ? NaN : Number(input.value)]))
+    : undefined
+  const invalidateMotionAnalysis = () => {
+    analysisZeroFields.hidden = !analysisZeroKnown.checked
+    installationCard = ''
+    downloadSetup.disabled = true
+    setupReport.className = 'warning'
+    setupReport.textContent = 'Прив’язку нуля змінено — карту та аналіз потрібно оновити.'
+    motionSummary.className = 'warning'
+    motionSummary.textContent = 'Прив’язку нуля змінено — натисніть «Підготувати станок» для нового аналізу. NC та нуль контролера не змінено.'
+    motionFindings.replaceChildren()
+  }
+  analysisZeroKnown.addEventListener('change', invalidateMotionAnalysis)
+  Object.values(analysisZeroInputs).forEach(input => input.addEventListener('input', invalidateMotionAnalysis))
   const livePreview = el('machineLivePreview')
   const livePreviewStatus = el('machineLivePreviewStatus')
 
@@ -170,7 +188,8 @@ export function initializeMachineControl({ getNcText, getBlockSetup, onPositionC
 
   const renderLivePreview = () => {
     const dynamics = analyzeMotionDynamics(ncText.value, {
-      limits: getLimits(), maximumFeed: maximumFeed.value, acceleration: acceleration.value
+      limits: getLimits(), maximumFeed: maximumFeed.value, acceleration: acceleration.value,
+      workZeroMachine: readAnalysisZero()
     })
     if (!dynamics.segments.length) {
       livePreview.replaceChildren()
@@ -265,7 +284,7 @@ export function initializeMachineControl({ getNcText, getBlockSetup, onPositionC
     const complete = checks.length > 0 && checks.every(input => input.checked)
     installationStatus.className = complete ? 'machine-installation-status ready' : 'machine-installation-status'
     installationStatus.textContent = complete
-      ? 'Усі дії оператора підтверджено — можна переходити до контрольованого запуску'
+      ? 'Усі дії позначені оператором. Це не автоматичний дозвіл на різання: перевірте актуальний аналіз і фізичну установку.'
       : `Підтверджено ${checks.filter(input => input.checked).length} із ${checks.length} дій оператора`
   }
 
@@ -299,27 +318,37 @@ export function initializeMachineControl({ getNcText, getBlockSetup, onPositionC
     setupReport.className = report.safe ? 'ready' : 'warning'
     downloadSetup.disabled = false
     const dynamics = analyzeMotionDynamics(ncText.value, {
-      limits: getLimits(), maximumFeed: maximumFeed.value, acceleration: acceleration.value
+      limits: getLimits(), maximumFeed: maximumFeed.value, acceleration: acceleration.value,
+      workZeroMachine: readAnalysisZero()
     })
-    motionSummary.className = dynamics.safe ? 'ready' : 'warning'
+    motionSummary.className = dynamics.dangerCount ? 'danger' : dynamics.warningCount ? 'warning' : 'ready'
+    installationCard += '\n\nМежі карти вище — модель 0…хід у робочих координатах. '
+      + (dynamics.machineZeroKnown
+        ? 'Додатковий аналіз машинних меж виконано з указаною прив’язкою нуля.'
+        : 'Прив’язка робочого нуля невідома: фізичні межі станка не підтверджено.')
+      + ` Небезпек аналізу: ${dynamics.dangerCount}; попереджень: ${dynamics.warningCount}.`
+    setupReport.textContent = installationCard
     motionSummary.textContent = dynamics.findings.length
       ? `Проаналізовано ${dynamics.segments.length} рухів: небезпек ${dynamics.dangerCount}, попереджень ${dynamics.warningCount}; найбільша F${dynamics.maximumProgramFeed}.`
       : `Проаналізовано ${dynamics.segments.length} рухів: різких або небезпечних переходів не знайдено; найбільша F${dynamics.maximumProgramFeed}.`
-    const shownFindings = dynamics.findings.slice(0, 150)
+    const groupedFindings = groupMotionFindings(dynamics.findings)
+    const shownFindings = groupedFindings
     motionFindings.replaceChildren(...shownFindings.map(item => {
       const row = document.createElement('tr')
       row.dataset.severity = item.severity
-      const values = [item.severity === 'danger' ? 'НЕБЕЗПЕКА' : 'УВАГА', item.lineNumber, item.type, item.message]
+      const numericLines = item.lines.filter(Number.isFinite)
+      const lineSummary = numericLines.length ? `${Math.min(...numericLines)}…${Math.max(...numericLines)}` : '—'
+      const values = [item.severity === 'danger' ? 'НЕБЕЗПЕКА' : 'УВАГА', lineSummary, `${item.type} (${item.count})`, item.message]
       values.forEach(value => { const cell = document.createElement('td'); cell.textContent = value; row.appendChild(cell) })
+      const details = document.createElement('details')
+      const summary = document.createElement('summary')
+      summary.textContent = 'Усі спрацювання'
+      const list = document.createElement('pre')
+      list.textContent = item.messages.join('\n')
+      details.append(summary, list)
+      row.lastElementChild.append(details)
       return row
     }))
-    if (dynamics.findings.length > shownFindings.length) {
-      const row = document.createElement('tr')
-      const cell = document.createElement('td')
-      cell.colSpan = 4
-      cell.textContent = `Показано перші ${shownFindings.length} із ${dynamics.findings.length} зауважень`
-      row.appendChild(cell); motionFindings.appendChild(row)
-    }
     log(report.safe ? 'Карту встановлення підготовлено' : 'Карта встановлення містить небезпечні межі', report.safe ? 'success' : 'error')
     return { report, dynamics }
   }

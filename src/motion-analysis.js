@@ -11,9 +11,13 @@ export function analyzeMotionDynamics(source, options = {}) {
   const accelerationLimit = Math.max(1, Number(options.acceleration) || 100)
   const limits = options.limits || {}
   const nearLimitDistance = Math.max(1, Number(options.nearLimitDistance) || 10)
+  const machineZeroKnown = AXES.every(axis => typeof options.workZeroMachine?.[axis] === 'number'
+    && Number.isFinite(options.workZeroMachine[axis]))
   const position = Object.fromEntries(AXES.map(axis => [axis, 0]))
   const segments = []
   const findings = []
+  if (!machineZeroKnown) findings.push({ severity: 'warning', lineNumber: '—', type: 'Прив’язка нуля',
+    message: 'Машинне положення робочого нуля невідоме. Фізичний запас до меж не перевірено; межі 0…хід нижче — лише модель симулятора.' })
   let absolute = true
   let feed = Math.min(300, maximumFeed)
 
@@ -43,8 +47,12 @@ export function analyzeMotionDynamics(source, options = {}) {
     if (feed > maximumFeed) findings.push({ severity: 'danger', lineNumber: segment.lineNumber, type: 'Швидкість', message: `F${feed} перевищує дозволені F${maximumFeed}` })
     AXES.forEach(axis => {
       const limit = Math.max(0, Number(limits[axis]) || 0)
-      const clearance = limit ? Math.min(to[axis], limit - to[axis]) : Infinity
-      if (clearance >= 0 && clearance <= nearLimitDistance) findings.push({ severity: 'warning', lineNumber: segment.lineNumber, type: `Межа ${axis}`, message: `${axis}=${to[axis].toFixed(3)} мм, запас лише ${clearance.toFixed(3)} мм` })
+      const coordinate = to[axis] + (machineZeroKnown ? options.workZeroMachine[axis] : 0)
+      const clearance = limit ? Math.min(coordinate, limit - coordinate) : Infinity
+      const type = `${machineZeroKnown ? 'Машинна межа' : 'Межа моделі'} ${axis}`
+      const message = `${axis}: робоча ${to[axis].toFixed(3)} мм; ${machineZeroKnown ? 'машинна' : 'модельна'} ${coordinate.toFixed(3)} мм; запас ${clearance.toFixed(3)} мм`
+      if (clearance < 0) findings.push({ severity: 'danger', lineNumber: segment.lineNumber, type, clearance, message })
+      else if (clearance <= nearLimitDistance) findings.push({ severity: 'warning', lineNumber: segment.lineNumber, type, clearance, message })
     })
   })
 
@@ -67,6 +75,7 @@ export function analyzeMotionDynamics(source, options = {}) {
   }
 
   return {
+    machineZeroKnown,
     segments,
     findings,
     safe: !findings.some(item => item.severity === 'danger'),
@@ -74,4 +83,21 @@ export function analyzeMotionDynamics(source, options = {}) {
     dangerCount: findings.filter(item => item.severity === 'danger').length,
     maximumProgramFeed: Math.max(0, ...segments.map(segment => segment.feed))
   }
+}
+
+export function groupMotionFindings(findings) {
+  const groups = new Map()
+  for (const item of findings) {
+    const key = `${item.severity}:${item.type}`
+    if (!groups.has(key)) groups.set(key, { ...item, count: 0, lines: [], messages: [] })
+    const group = groups.get(key)
+    group.count++
+    group.lines.push(item.lineNumber)
+    group.messages.push(`Рядок ${item.lineNumber}: ${item.message}`)
+    if (Number.isFinite(item.clearance) && (!Number.isFinite(group.clearance) || item.clearance < group.clearance)) {
+      group.clearance = item.clearance
+      group.message = item.message
+    }
+  }
+  return [...groups.values()]
 }

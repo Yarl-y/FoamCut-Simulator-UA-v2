@@ -633,6 +633,21 @@ view3d.innerHTML = `
         <div><button id="machinePrepareSetup" type="button">Підготувати станок</button><button id="machineDownloadSetup" type="button" disabled>Зберегти карту TXT</button></div>
       </div>
       <pre id="machineSetupReport">Завантажте NC і натисніть «Підготувати станок».</pre>
+      <details class="machine-at-workshop-guide" open>
+        <summary>Що зробити біля станка</summary>
+        <div class="machine-at-workshop-guide__body">
+          <p><strong>Вдома:</strong> працюємо лише в симуляції. Не позначаємо фізичні перевірки, яких не виконували біля станка.</p>
+          <ol>
+            <li>Вимкнути нагрів струни. Перевірити кріплення блока й вільний простір для кареток.</li>
+            <li>У Mach3 виконати <strong>Ref All Home</strong>. Якщо координати обнулилися без руху до домашніх датчиків — зупинитися: машинна прив’язка недостовірна.</li>
+            <li>Підвести холодну струну до контрольного кута блока та встановити робочий нуль <strong>X/Y/A/Z</strong>.</li>
+            <li>Увімкнути <strong>Machine Coord's</strong> лише для відображення. Записати машинні X/Y/A/Z; кнопки обнулення не натискати.</li>
+            <li>Внести записані числа нижче, повторити «Підготувати станок» і перевірити фізичні запаси до кінцевиків.</li>
+            <li>Перевірити E-stop і кожен кінцевик, виконати повний холодний прогін. Нагрів дозволяти лише після всіх перевірок.</li>
+          </ol>
+          <p class="machine-at-workshop-guide__note">Кнопка Machine Coord's не рухає станок — вона тільки перемикає показ координат. Після запису натисніть її ще раз, щоб повернути робочі координати.</p>
+        </div>
+      </details>
       <div class="machine-installation-checks">
         <label><input type="checkbox" data-install-check="block"> Блок установлено й закріплено</label>
         <label><input type="checkbox" data-install-check="wire"> Холодну струну підведено до контрольного кута</label>
@@ -643,6 +658,11 @@ view3d.innerHTML = `
       <p id="machineInstallationStatus" class="machine-installation-status">Підготовку ще не виконано</p>
       <div class="machine-motion-analysis">
         <h3>Аналіз швидкості, прискорення та різких рухів</h3>
+        <label><input id="machineAnalysisZeroKnown" type="checkbox"> Положення робочого нуля в машинних координатах відоме</label>
+        <div id="machineAnalysisZeroFields" hidden>
+          ${['X', 'Y', 'A', 'Z'].map(axis => `<label>${axis}, мм <input id="machineAnalysisZero${axis}" type="number" step="0.1" placeholder="Не задано"></label>`).join('')}
+        </div>
+        <small>Лише для аналізу: машинна координата = робоча + положення робочого нуля. Машинні межі цієї моделі: 0…хід. Ці поля не змінюють NC, нуль Mach3 чи керування станком.</small>
         <p id="machineMotionSummary">Аналіз буде виконано разом із картою встановлення.</p>
         <div class="machine-motion-scroll"><table><thead><tr><th>Рівень</th><th>Рядок NC</th><th>Тип</th><th>Пояснення</th></tr></thead><tbody id="machineMotionFindings"></tbody></table></div>
       </div>
@@ -1032,7 +1052,7 @@ const analyzeStraightSparAlignment = (leftPoints, rightPoints, rods) => {
   return {
     applicable: true,
     valid: results.every(result => result.valid),
-    details: results.map(result => `№${result.number} Ø${result.diameter} мм: ${result.points} точок; `
+    details: results.map(result => `№${result.number} Ø${formatNcNumber(result.diameter)} мм: ${result.points} точок; `
       + (Number.isFinite(result.maximumDifference)
         ? `відхилення ${formatNcNumber(result.maximumDifference)} мм`
         : 'контур не знайдено')).join('; ')

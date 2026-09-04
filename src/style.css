@@ -1557,7 +1557,15 @@ code {
 .machine-motion-analysis h3 { margin: 0 0 8px; }
 .machine-motion-analysis > p { padding: 9px; border-radius: 7px; background: #f8fafc; }
 .machine-motion-analysis > p.ready { color: #166534; background: #dcfce7; }
-.machine-motion-analysis > p.warning { color: #991b1b; background: #fee2e2; font-weight: 700; }
+.machine-motion-analysis > p.warning { color: #854d0e; background: #fef3c7; font-weight: 700; }
+.machine-motion-analysis > p.danger { color: #991b1b; background: #fee2e2; font-weight: 700; }
+.machine-motion-analysis details pre { white-space: pre-wrap; overflow-wrap: anywhere; }
+.machine-at-workshop-guide { margin: 12px 0; border: 1px solid #9bb8d1; border-radius: 8px; background: #f4f9fd; }
+.machine-at-workshop-guide summary { padding: 12px 14px; cursor: pointer; font-weight: 700; color: #174f78; }
+.machine-at-workshop-guide__body { padding: 0 16px 14px; }
+.machine-at-workshop-guide__body ol { margin: 10px 0; padding-left: 24px; }
+.machine-at-workshop-guide__body li { margin: 7px 0; }
+.machine-at-workshop-guide__note { margin-bottom: 0; padding: 9px 11px; border-left: 4px solid #2d78ad; background: #e7f2fa; }
 .machine-motion-scroll { max-height: 320px; overflow: auto; }
 .machine-motion-analysis table { width: 100%; border-collapse: collapse; font-size: 12px; }
 .machine-motion-analysis th, .machine-motion-analysis td { padding: 7px; border-bottom: 1px solid var(--border); text-align: left; }
