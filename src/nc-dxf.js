@@ -1,5 +1,47 @@
 const pointDistance = (first, second) => Math.hypot(first.x - second.x, first.y - second.y)
 
+const NC_NUMBER = '[+-]?(?:\\d+(?:\\.\\d*)?|\\.\\d+)'
+
+export const parseNcTrajectories = text => {
+  const leftPoints = []
+  const rightPoints = []
+  const warnings = []
+  let x = 0; let y = 0; let a = 0; let z = 0
+  let absolute = true
+  let scale = 1
+  let modalMotion = null
+  let arcSeen = false
+
+  for (const [index, sourceLine] of String(text || '').split(/\r?\n/).entries()) {
+    const line = sourceLine.replace(/\([^)]*\)/g, '').split(';', 1)[0].trim()
+    if (!line) continue
+    const gCodes = [...line.matchAll(/G\s*(\d+(?:\.\d+)?)/gi)].map(match => Number(match[1]))
+    if (gCodes.includes(90)) absolute = true
+    if (gCodes.includes(91)) absolute = false
+    if (gCodes.includes(20)) scale = 25.4
+    if (gCodes.includes(21)) scale = 1
+
+    const explicitMotion = gCodes.filter(code => [0, 1, 2, 3].includes(code)).at(-1)
+    if (explicitMotion !== undefined) modalMotion = explicitMotion
+    // Coordinate-setting and canned-cycle lines are not cutting moves.
+    if (gCodes.some(code => [10, 28, 30, 52, 53, 54, 55, 56, 57, 58, 59, 92].includes(Math.trunc(code)))) continue
+    if (modalMotion === null) continue
+
+    const read = axis => line.match(new RegExp(`${axis}\\s*(${NC_NUMBER})`, 'i'))
+    const values = { X: read('X'), Y: read('Y'), A: read('A'), Z: read('Z') }
+    if (!Object.values(values).some(Boolean)) continue
+    const update = (current, match) => match ? (absolute ? Number(match[1]) * scale : current + Number(match[1]) * scale) : current
+    x = update(x, values.X); y = update(y, values.Y)
+    a = update(a, values.A); z = update(z, values.Z)
+    leftPoints.push({ x, y })
+    rightPoints.push({ x: a, y: z })
+    if (modalMotion === 2 || modalMotion === 3) arcSeen = true
+  }
+
+  if (arcSeen) warnings.push('Дуги G2/G3 передано хордами між кінцевими точками; перед роботою перевірте форму.')
+  return { leftPoints, rightPoints, units: 'мм', warnings }
+}
+
 const stripDuplicateEnd = points => {
   if (points.length > 2 && pointDistance(points[0], points.at(-1)) <= 0.001) {
     return points.slice(0, -1)
@@ -178,6 +220,35 @@ export const createDxfPolyline = (points, layer, closed = true) => {
 
   lines.push('0', 'SEQEND', '8', layer)
   lines.push('0', 'ENDSEC', '0', 'EOF')
+  return `${lines.join('\r\n')}\r\n`
+}
+
+export const createPairedDxf = (leftPoints, rightPoints, leftClosed = true, rightClosed = true) => {
+  if (leftPoints.length < 2 || rightPoints.length < 2) throw new Error('Недостатньо точок для парного DXF')
+  const leftMaxX = Math.max(...leftPoints.map(point => point.x))
+  const rightMinX = Math.min(...rightPoints.map(point => point.x))
+  const width = Math.max(1, leftMaxX - Math.min(...leftPoints.map(point => point.x)))
+  const offset = leftMaxX - rightMinX + Math.max(20, width * 0.15)
+  const shiftedRight = rightPoints.map(point => ({ x: point.x + offset, y: point.y }))
+  const entities = (points, layer, closed) => {
+    const clean = closed ? stripDuplicateEnd(points) : points
+    const rows = ['0', 'POLYLINE', '8', layer, '66', '1', '70', closed ? '1' : '0', '10', '0', '20', '0', '30', '0']
+    clean.forEach(point => rows.push('0', 'VERTEX', '8', layer, '10', dxfNumber(point.x), '20', dxfNumber(point.y), '30', '0', '70', '0'))
+    rows.push('0', 'SEQEND', '8', layer)
+    return rows
+  }
+  const all = [...leftPoints, ...shiftedRight]
+  const xs = all.map(point => point.x); const ys = all.map(point => point.y)
+  const lines = [
+    '0', 'SECTION', '2', 'HEADER', '9', '$ACADVER', '1', 'AC1009',
+    '9', '$EXTMIN', '10', dxfNumber(Math.min(...xs)), '20', dxfNumber(Math.min(...ys)), '30', '0',
+    '9', '$EXTMAX', '10', dxfNumber(Math.max(...xs)), '20', dxfNumber(Math.max(...ys)), '30', '0',
+    '9', '$MEASUREMENT', '70', '1', '0', 'ENDSEC',
+    '0', 'SECTION', '2', 'ENTITIES',
+    ...entities(leftPoints, 'XY_PROFILE', leftClosed),
+    ...entities(shiftedRight, 'AZ_PROFILE', rightClosed),
+    '0', 'ENDSEC', '0', 'EOF'
+  ]
   return `${lines.join('\r\n')}\r\n`
 }
 

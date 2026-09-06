@@ -4,7 +4,7 @@ import { readFileSync } from 'node:fs'
 import vm from 'node:vm'
 import { createStraightSparHoleContour, insertPairedSparHoles } from '../src/profile-library.js'
 import { preparePairedProfiles } from '../src/profile-entry.js'
-import { recoverNcProfiles, removeInteriorCutLoops, detectCircularHoles } from '../src/nc-dxf.js'
+import { createPairedDxf, parseNcTrajectories, recoverNcProfiles, removeInteriorCutLoops, detectCircularHoles } from '../src/nc-dxf.js'
 import { validateVirtualProgram } from '../src/virtual-fluidnc.js'
 
 const near = (a, b) => assert.ok(Math.abs(a - b) < 1e-8, `${a} != ${b}`)
@@ -13,6 +13,23 @@ const right = [{ x: 80, y: 10 }, { x: 280, y: 10 }, { x: 280, y: 60 }, { x: 80, 
 const rods = [{ x: 150, y: 30, diameter: 13 }, { x: 230, y: 35, diameter: 21 }]
 const holes = rods.map(rod => ({ left: createStraightSparHoleContour(rod), right: createStraightSparHoleContour(rod) }))
 const pair = insertPairedSparHoles(left, right, holes)
+
+test('NC to DXF parser handles modal, relative and inch moves but ignores G92', () => {
+  const parsed = parseNcTrajectories('G20 G90\nG1 X1 Y2 A3 Z4\nG91\nX1 Y-1 A.5 Z-.5\nG92 X0 Y0 A0 Z0')
+  ;[[25.4, 50.8], [50.8, 25.4]].forEach(([x, y], index) => {
+    near(parsed.leftPoints[index].x, x); near(parsed.leftPoints[index].y, y)
+  })
+  ;[[76.2, 101.6], [88.9, 88.9]].forEach(([x, y], index) => {
+    near(parsed.rightPoints[index].x, x); near(parsed.rightPoints[index].y, y)
+  })
+})
+
+test('paired DXF contains separate XY and AZ layers', () => {
+  const dxf = createPairedDxf(left, right)
+  assert.match(dxf, /XY_PROFILE/)
+  assert.match(dxf, /AZ_PROFILE/)
+  assert.equal((dxf.match(/\r\nPOLYLINE\r\n/g) || []).length, 2)
+})
 
 test('every point on each bore has identical coordinates and diameter on both faces', () => {
   assert.equal(pair.leftPoints.length, pair.rightPoints.length)

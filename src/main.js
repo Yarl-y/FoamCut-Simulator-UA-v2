@@ -14,10 +14,12 @@ import {
 import { parseDxf, renderDxfPreview, resampleDxfContour } from './dxf.js'
 import {
   createDxfPolyline,
+  createPairedDxf,
   createPreviewModel,
   detectCircularHoles,
   recoverNcProfiles,
-  removeInteriorCutLoops
+  removeInteriorCutLoops,
+  parseNcTrajectories
 } from './nc-dxf.js'
 import { createFoamCutProject, parseFoamCutProject } from './project-file.js'
 import { initializeMachineControl } from './machine-control.js'
@@ -293,6 +295,7 @@ document.querySelector('#app').innerHTML = `
     <div class="nc-to-dxf-controls" data-workspace="files">
       <button id="downloadNcDxfLeft" disabled>Завантажити DXF X/Y</button>
       <button id="downloadNcDxfRight" disabled>Завантажити DXF A/Z</button>
+      <button id="downloadNcDxfPair" disabled>Завантажити обидва профілі DXF</button>
       <span id="ncToDxfStatus">Відкрийте NC для відновлення профілів</span>
     </div>
     <section class="nc-wing-import" data-workspace="files">
@@ -868,6 +871,7 @@ const fitLibraryPreviewButton = document.querySelector('#fitLibraryPreview')
 const expandLibraryPreviewButton = document.querySelector('#expandLibraryPreview')
 const downloadNcDxfLeftButton = document.querySelector('#downloadNcDxfLeft')
 const downloadNcDxfRightButton = document.querySelector('#downloadNcDxfRight')
+const downloadNcDxfPairButton = document.querySelector('#downloadNcDxfPair')
 const ncToDxfStatus = document.querySelector('#ncToDxfStatus')
 const ncWingNameInput = document.querySelector('#ncWingName')
 const ncWingSpanInput = document.querySelector('#ncWingSpan')
@@ -4177,8 +4181,28 @@ const downloadRecoveredDxf = side => {
   setTimeout(() => URL.revokeObjectURL(blobUrl), 1000)
 }
 
+const downloadRecoveredDxfPair = () => {
+  if (!recoveredNcProfiles) return
+  const dxfText = createPairedDxf(
+    recoveredNcProfiles.leftPoints,
+    recoveredNcProfiles.rightPoints,
+    recoveredNcProfiles.leftClosed,
+    recoveredNcProfiles.rightClosed
+  )
+  const safeBaseName = (recoveredNcSourceFile || 'profiles').replace(/\.[^.]+$/, '').replace(/[^\p{L}\p{N}_-]+/gu, '_')
+  const blobUrl = URL.createObjectURL(new Blob([dxfText], { type: 'application/dxf' }))
+  const downloadLink = document.createElement('a')
+  downloadLink.href = blobUrl
+  downloadLink.download = `${safeBaseName}_XY_AZ.dxf`
+  document.body.appendChild(downloadLink)
+  downloadLink.click()
+  downloadLink.remove()
+  setTimeout(() => URL.revokeObjectURL(blobUrl), 1000)
+}
+
 downloadNcDxfLeftButton.addEventListener('click', () => downloadRecoveredDxf('left'))
 downloadNcDxfRightButton.addEventListener('click', () => downloadRecoveredDxf('right'))
+downloadNcDxfPairButton.addEventListener('click', downloadRecoveredDxfPair)
 
 loadButton.addEventListener('click', async () => {
   const file = fileInput.files[0]
@@ -4199,40 +4223,10 @@ ncWingImportStatus.className = ''
 ncWingImportStatus.textContent = 'Пошук профілів і розмірів крила у NC...'
 downloadNcDxfLeftButton.disabled = true
 downloadNcDxfRightButton.disabled = true
+downloadNcDxfPairButton.disabled = true
 ncToDxfStatus.textContent = 'Пошук профілів у NC...'
-const leftPoints = []
-const rightPoints = []
-
-let x = 0
-let y = 0
-let a = 0
-let z = 0
-let isAbsoluteMode = true
-
-const coordinatePattern = '[+-]?(?:\\d+(?:\\.\\d*)?|\\.\\d+)'
-
-for (const line of text.split(/\r?\n/)) {
-    const cleanLine = line.replace(/\([^)]*\)/g, '').split(';', 1)[0]
-    const distanceModes = [...cleanLine.matchAll(/G\s*0?9([01])(?![\d.])/gi)]
-
-    if (distanceModes.length > 0) {
-        isAbsoluteMode = distanceModes.at(-1)[1] === '0'
-    }
-
-    const xMatch = cleanLine.match(new RegExp(`X\\s*(${coordinatePattern})`, 'i'))
-    const yMatch = cleanLine.match(new RegExp(`Y\\s*(${coordinatePattern})`, 'i'))
-    const aMatch = cleanLine.match(new RegExp(`A\\s*(${coordinatePattern})`, 'i'))
-    const zMatch = cleanLine.match(new RegExp(`Z\\s*(${coordinatePattern})`, 'i'))
-
-  if (xMatch) x = isAbsoluteMode ? Number(xMatch[1]) : x + Number(xMatch[1])
-if (yMatch) y = isAbsoluteMode ? Number(yMatch[1]) : y + Number(yMatch[1])
-if (aMatch) a = isAbsoluteMode ? Number(aMatch[1]) : a + Number(aMatch[1])
-if (zMatch) z = isAbsoluteMode ? Number(zMatch[1]) : z + Number(zMatch[1])
-    if (xMatch || yMatch || aMatch || zMatch) {
-        leftPoints.push({ x, y })
-        rightPoints.push({ x: a, y: z })
-    }
-}
+const parsedNc = parseNcTrajectories(text)
+const { leftPoints, rightPoints } = parsedNc
    if (leftPoints.length < 2 || rightPoints.length < 2) {
         status.textContent = 'У файлі не знайдено траєкторію 4 осей'
         ncToDxfStatus.textContent = 'Не вдалося відновити профілі з цього NC'
@@ -4261,6 +4255,7 @@ if (zMatch) z = isAbsoluteMode ? Number(zMatch[1]) : z + Number(zMatch[1])
       + `Перевірте назву та довжину ${ncWingSpanInput.value} мм, потім збережіть крило.`
     downloadNcDxfLeftButton.disabled = false
     downloadNcDxfRightButton.disabled = false
+    downloadNcDxfPairButton.disabled = false
     preparedDxfProfiles.left = { points: recoveredNcProfiles.leftPoints, source: 'nc' }
     preparedDxfProfiles.right = { points: recoveredNcProfiles.rightPoints, source: 'nc' }
     preparedCuttingTrajectory = null
@@ -4286,6 +4281,7 @@ if (zMatch) z = isAbsoluteMode ? Number(zMatch[1]) : z + Number(zMatch[1])
       full: 'Службових даних немає: DXF міститиме повну траєкторію NC'
     }
     ncToDxfStatus.textContent = recoveryMessage[recoveredNcProfiles.method]
+      + (parsedNc.warnings.length ? ` Увага: ${parsedNc.warnings.join(' ')}` : '')
 
     renderSimulation(
       leftPoints,
