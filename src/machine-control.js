@@ -4,7 +4,7 @@ import { runSafetyScenarios, sanitizeColdRunLine } from './safety-scenarios.js'
 import { analyzeMachineJob, formatMachineSetupCard } from './machine-job-setup.js'
 import { analyzeMotionDynamics, groupMotionFindings } from './motion-analysis.js'
 import { assessOperatorState, buildOperatorSignals, buildOperatorSteps, formatOperatorReport } from './operator-assistant.js'
-import { assessWire, createResumePlan, estimateCutTime, formatCompletedRun, prioritizeWarnings, recommendHeat } from './operator-advanced.js'
+import { assessWire, createResumePlan, estimateCutTime, formatCompletedRun, prioritizeWarnings, recommendHeat, simulationDelayMs } from './operator-advanced.js'
 
 const AXES = VIRTUAL_AXES
 const STATUS_AXES = ['X', 'Y', 'Z', 'A', 'B']
@@ -692,6 +692,10 @@ export function initializeMachineControl({ getNcText, getBlockSetup, onPositionC
       const validation = runValidation()
       if (!validation.valid) throw new Error(validation.errors.join('; '))
       const lines = prepareProgram()
+      const simulationTiming = new Map(analyzeMotionDynamics(ncText.value, {
+        limits: getLimits(), maximumFeed: maximumFeed.value, acceleration: acceleration.value,
+        workZeroMachine: readAnalysisZero()
+      }).segments.map(segment => [segment.lineNumber, segment.durationSeconds]))
       const token = ++jobToken
       jobStartedAt = new Date(); completedLineCount = 0; totalLineCount = lines.length
       running = true; paused = false; pause.disabled = false; stop.disabled = false; run.disabled = true; setState('Виконується')
@@ -702,7 +706,8 @@ export function initializeMachineControl({ getNcText, getBlockSetup, onPositionC
         const response = await send(lines[index].command)
         if (response !== 'ok') throw new Error(response)
         completedLineCount = index + 1
-        if (mode.value === 'simulation') await new Promise(resolve => setTimeout(resolve, 45))
+        if (mode.value === 'simulation') await new Promise(resolve => setTimeout(resolve,
+          simulationDelayMs(simulationTiming.get(lines[index].lineNumber))))
       }
       if (token === jobToken) {
         setState('Готовий'); onJobStateChange?.('complete'); setInstallationCheck('dryrun', true)

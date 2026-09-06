@@ -32,3 +32,10 @@ test('grouping retains all details and worst clearance', () => {
   assert.equal(group.messages.length, 3)
   assert.deepEqual(group.lines, [2, 3, 4])
 })
+
+test('rounding-size segment does not create a false 149 degree reversal', () => {
+  const result = analyzeMotionDynamics('G90\nF300\nG1 X222.260 Y13.001 A222.260 Z13.001\nG1 X222.259 Y13.000 A222.259 Z13.000\nG1 X222.401 Y13.036 A222.401 Z13.036', {
+    limits: { X: 600, Y: 600, A: 600, Z: 600 }, maximumFeed: 1000, acceleration: 100
+  })
+  assert.equal(result.findings.filter(item => item.type === 'Розворот').length, 0)
+})

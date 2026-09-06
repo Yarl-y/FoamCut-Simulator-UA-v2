@@ -1,4 +1,5 @@
 const AXES = ['X', 'Y', 'A', 'Z']
+const MIN_DIRECTION_SEGMENT_MM = 0.01
 
 const cleanLine = line => String(line).replace(/\([^)]*\)/g, '').replace(/;.*$/, '').trim().toUpperCase()
 const valueOf = (line, letter) => {
@@ -61,6 +62,9 @@ export function analyzeMotionDynamics(source, options = {}) {
     const current = segments[index]
     const previousLength = Math.hypot(...AXES.map(axis => previous.delta[axis]))
     const currentLength = Math.hypot(...AXES.map(axis => current.delta[axis]))
+    // Sub-hundredth millimetre steps commonly appear after NC rounding. Their
+    // direction is numerically unstable and must not create a false reversal.
+    if (previousLength < MIN_DIRECTION_SEGMENT_MM || currentLength < MIN_DIRECTION_SEGMENT_MM) continue
     const dot = AXES.reduce((sum, axis) => sum + previous.delta[axis] * current.delta[axis], 0)
     const cosine = Math.max(-1, Math.min(1, dot / Math.max(previousLength * currentLength, 1e-9)))
     const turnAngle = Math.acos(cosine) * 180 / Math.PI

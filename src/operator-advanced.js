@@ -12,6 +12,10 @@ export const estimateCutTime = (segments = [], options = {}) => {
   return { motionSeconds, serviceSeconds, totalSeconds: motionSeconds + serviceSeconds, label: formatDuration(motionSeconds + serviceSeconds) }
 }
 
+export const simulationDelayMs = (durationSeconds, speedMultiplier = 20) => Math.round(Math.max(4, Math.min(250,
+  Math.max(0, Number(durationSeconds) || 0) * 1000 / Math.max(1, Number(speedMultiplier) || 20)
+)))
+
 export const prioritizeWarnings = findings => [...(findings || [])]
   .map(item => ({ ...item, priority: item.severity === 'danger' ? 3 : Number.isFinite(item.clearance) && item.clearance <= 2 ? 2 : /прискорення|розворот/i.test(item.type) ? 2 : 1 }))
   .sort((a, b) => b.priority - a.priority || (a.lineNumber || 0) - (b.lineNumber || 0))

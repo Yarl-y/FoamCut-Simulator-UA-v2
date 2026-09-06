@@ -1,11 +1,17 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { assessWire, createResumePlan, estimateCutTime, formatCompletedRun, prioritizeWarnings, recommendHeat } from '../src/operator-advanced.js'
+import { assessWire, createResumePlan, estimateCutTime, formatCompletedRun, prioritizeWarnings, recommendHeat, simulationDelayMs } from '../src/operator-advanced.js'
 
 test('cut time includes motion and service delay', () => {
   const result = estimateCutTime([{ durationSeconds: 10 }, { durationSeconds: 20 }], { warmupSeconds: 5, commandDelaySeconds: 1 })
   assert.equal(result.totalSeconds, 37)
   assert.equal(result.label, '37 с')
+})
+
+test('simulation delay follows motion time and stays responsive', () => {
+  assert.equal(simulationDelayMs(0.001), 4)
+  assert.equal(simulationDelayMs(2), 100)
+  assert.equal(simulationDelayMs(100), 250)
 })
 
 test('danger and low-clearance warnings are prioritized', () => {
