@@ -702,7 +702,13 @@ view3d.innerHTML = `
         </article>
         <article><h3>5. Доповідь після проходу</h3><pre id="operatorRunReport">Прохід ще не виконувався.</pre><button id="operatorRunReportDownload" disabled>Зберегти підсумок</button></article>
         <article><h3>6. Відновлення після паузи</h3><pre id="operatorResumePlan">План з’явиться після паузи або зупинки.</pre><button id="operatorResumePlanDownload" disabled>Зберегти план</button></article>
-        <article><h3>7. Голосові повідомлення</h3><label><input id="operatorVoiceEnabled" type="checkbox"> Озвучувати «Увага», «Стоп» і завершення</label><p>Голос лише повідомляє — він не керує станком.</p></article>
+        <article><h3>7. Голосові повідомлення</h3>
+          <label><input id="operatorVoiceEnabled" type="checkbox"> Озвучувати «Увага», «Стоп» і завершення</label>
+          <label>Голос <select id="operatorVoiceSelect"><option value="">Системний голос</option></select></label>
+          <label>Швидкість <input id="operatorVoiceRate" type="range" min="0.7" max="1.3" step="0.05" value="0.95"> <output id="operatorVoiceRateValue">0,95×</output></label>
+          <button id="operatorVoiceTest" type="button">Послухати голос</button>
+          <p id="operatorVoiceStatus">Голос лише повідомляє — він не керує станком.</p>
+        </article>
       </div>
     </section>
     <div class="machine-diagnostics">

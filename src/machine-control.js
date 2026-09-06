@@ -115,6 +115,11 @@ export function initializeMachineControl({ getNcText, getBlockSetup, onPositionC
   const resumePlan = el('operatorResumePlan')
   const resumePlanDownload = el('operatorResumePlanDownload')
   const voiceEnabled = el('operatorVoiceEnabled')
+  const voiceSelect = el('operatorVoiceSelect')
+  const voiceRate = el('operatorVoiceRate')
+  const voiceRateValue = el('operatorVoiceRateValue')
+  const voiceTest = el('operatorVoiceTest')
+  const voiceStatus = el('operatorVoiceStatus')
 
   let port = null
   let reader = null
@@ -195,12 +200,36 @@ export function initializeMachineControl({ getNcText, getBlockSetup, onPositionC
     wire: assessWire({ mode: wireMode.value, continuity: wireContinuity.checked, tensionPercent: wireTension.value })
   })
 
-  const speak = message => {
-    if (!voiceEnabled.checked || !('speechSynthesis' in window)) return
+  const speak = (message, force = false) => {
+    if ((!voiceEnabled.checked && !force) || !('speechSynthesis' in window)) return
     window.speechSynthesis.cancel()
     const utterance = new SpeechSynthesisUtterance(message)
-    utterance.lang = 'uk-UA'
+    const voices = window.speechSynthesis.getVoices()
+    const selected = voices.find(voice => voice.voiceURI === voiceSelect.value)
+    if (selected) utterance.voice = selected
+    utterance.lang = selected?.lang || 'uk-UA'
+    utterance.rate = Number(voiceRate.value) || 0.95
     window.speechSynthesis.speak(utterance)
+  }
+
+  const loadVoices = () => {
+    if (!('speechSynthesis' in window)) {
+      voiceSelect.disabled = true; voiceTest.disabled = true
+      voiceStatus.textContent = 'Системне озвучення у цьому середовищі недоступне.'
+      return
+    }
+    const voices = window.speechSynthesis.getVoices()
+    const saved = localStorage.getItem('hurt-voice-uri') || ''
+    voiceSelect.replaceChildren(new Option('Системний голос', ''), ...voices.map(voice => new Option(
+      `${voice.name} — ${voice.lang}${voice.default ? ' (основний)' : ''}`, voice.voiceURI
+    )))
+    const preferred = voices.find(voice => voice.voiceURI === saved)
+      || voices.find(voice => /^uk/i.test(voice.lang))
+      || voices.find(voice => /^ru/i.test(voice.lang))
+    voiceSelect.value = preferred?.voiceURI || ''
+    voiceStatus.textContent = voices.length
+      ? `Доступно голосів: ${voices.length}. Вибрано: ${preferred?.name || 'системний'}.`
+      : 'Windows ще завантажує список голосів.'
   }
 
   const renderAssistant = () => {
@@ -801,6 +830,16 @@ export function initializeMachineControl({ getNcText, getBlockSetup, onPositionC
   ;[heatMaterial, heatThickness, wireDiameter, jogFeed].forEach(input => input.addEventListener('input', refreshHeatAdvice))
   runReportDownload.addEventListener('click', () => saveText(runReportText, `hurt-run-${new Date().toISOString().replace(/[:.]/g, '-')}.txt`))
   resumePlanDownload.addEventListener('click', () => saveText(resumePlanText, `hurt-resume-plan-${new Date().toISOString().replace(/[:.]/g, '-')}.txt`))
+  voiceSelect.addEventListener('change', () => {
+    localStorage.setItem('hurt-voice-uri', voiceSelect.value)
+    const selected = window.speechSynthesis?.getVoices().find(voice => voice.voiceURI === voiceSelect.value)
+    voiceStatus.textContent = `Вибрано: ${selected?.name || 'системний голос'}.`
+  })
+  voiceRate.addEventListener('input', () => {
+    voiceRateValue.textContent = `${Number(voiceRate.value).toLocaleString('uk-UA')}×`
+    localStorage.setItem('hurt-voice-rate', voiceRate.value)
+  })
+  voiceTest.addEventListener('click', () => speak('Помічник оператора ГУРТ на зв’язку. Голос налаштовано.', true))
   assistantDownload.addEventListener('click', () => {
     renderAssistant()
     const report = formatOperatorReport({
@@ -902,5 +941,10 @@ export function initializeMachineControl({ getNcText, getBlockSetup, onPositionC
   refreshWire()
   refreshHeatAdvice()
   refreshAdvancedAnalysis()
+  const savedVoiceRate = Number(localStorage.getItem('hurt-voice-rate'))
+  if (savedVoiceRate >= 0.7 && savedVoiceRate <= 1.3) voiceRate.value = savedVoiceRate
+  voiceRate.dispatchEvent(new Event('input'))
+  loadVoices()
+  if ('speechSynthesis' in window) window.speechSynthesis.addEventListener?.('voiceschanged', loadVoices)
   mode.dispatchEvent(new Event('change'))
 }
