@@ -253,7 +253,9 @@ export function initializeMachineControl({ getNcText, getBlockSetup, onPositionC
     }))
     if (previousLevel && previousLevel !== latestAssessment.level) {
       addJournal('ГУРТ', `Стан помічника: ${latestAssessment.label}. ${latestAssessment.reason}`)
-      if (latestAssessment.level !== 'normal') speak(`${latestAssessment.label}. ${latestAssessment.reason}`)
+      speak(latestAssessment.level === 'normal'
+        ? 'Усі перевірки виконано. Усе готово, можна їхати.'
+        : `${latestAssessment.label}. ${latestAssessment.reason}`)
     }
   }
 
