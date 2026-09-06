@@ -3,7 +3,7 @@ import { calculateCalibratedSteps, createControllerPlan } from './controller-set
 import { runSafetyScenarios, sanitizeColdRunLine } from './safety-scenarios.js'
 import { analyzeMachineJob, formatMachineSetupCard } from './machine-job-setup.js'
 import { analyzeMotionDynamics, groupMotionFindings } from './motion-analysis.js'
-import { assessOperatorState, formatOperatorReport } from './operator-assistant.js'
+import { assessOperatorState, buildOperatorSignals, buildOperatorSteps, formatOperatorReport } from './operator-assistant.js'
 
 const AXES = VIRTUAL_AXES
 const STATUS_AXES = ['X', 'Y', 'Z', 'A', 'B']
@@ -90,6 +90,8 @@ export function initializeMachineControl({ getNcText, getBlockSetup, onPositionC
   const assistantBadge = el('operatorAssistantBadge')
   const assistantReason = el('operatorAssistantReason')
   const assistantAction = el('operatorAssistantAction')
+  const assistantSignals = el('operatorAssistantSignals')
+  const assistantSteps = el('operatorAssistantSteps')
   const assistantDownload = el('operatorAssistantDownload')
 
   let port = null
@@ -164,11 +166,27 @@ export function initializeMachineControl({ getNcText, getBlockSetup, onPositionC
   })
 
   const renderAssistant = () => {
-    latestAssessment = assessOperatorState(getAssistantContext())
+    const context = getAssistantContext()
+    const previousLevel = latestAssessment?.level
+    latestAssessment = assessOperatorState(context)
     assistantRoot.dataset.level = latestAssessment.level
     assistantBadge.textContent = latestAssessment.label
     assistantReason.textContent = latestAssessment.reason
     assistantAction.textContent = latestAssessment.action
+    assistantSignals.replaceChildren(...buildOperatorSignals(context).map(signal => {
+      const item = document.createElement('div')
+      item.dataset.state = signal.state
+      const label = document.createElement('b'); label.textContent = signal.label
+      const value = document.createElement('span'); value.textContent = signal.value
+      item.append(label, value)
+      return item
+    }))
+    assistantSteps.replaceChildren(...buildOperatorSteps(context).map(step => {
+      const item = document.createElement('li'); item.textContent = step; return item
+    }))
+    if (previousLevel && previousLevel !== latestAssessment.level) {
+      addJournal('ГУРТ', `Стан помічника: ${latestAssessment.label}. ${latestAssessment.reason}`)
+    }
   }
 
   const renderSetupStatus = () => {

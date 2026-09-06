@@ -32,6 +32,56 @@ export const assessOperatorState = context => {
   }
 }
 
+export const buildOperatorSignals = context => {
+  const checks = context.installationChecks || {}
+  const checkValues = Object.values(checks)
+  const checkedCount = checkValues.filter(Boolean).length
+  const analysis = context.dynamics
+  return [
+    {
+      id: 'connection', label: 'Зв’язок',
+      state: context.simulation ? 'attention' : context.connected ? 'normal' : 'stop',
+      value: context.simulation ? 'Симуляція' : context.connected ? 'Контролер підключено' : 'Немає зв’язку'
+    },
+    {
+      id: 'nc', label: 'NC-програма',
+      state: !context.hasNc ? 'attention' : context.validation?.valid === false ? 'stop' : context.validation?.valid ? 'normal' : 'attention',
+      value: !context.hasNc ? 'Не завантажено' : context.validation?.valid === false ? 'Є помилки' : context.validation?.valid ? 'Перевірено' : 'Очікує перевірки'
+    },
+    {
+      id: 'zero', label: 'Машинний нуль',
+      state: context.machineZeroKnown ? 'normal' : 'attention',
+      value: context.machineZeroKnown ? 'Прив’язка відома' : 'Прив’язка невідома'
+    },
+    {
+      id: 'checks', label: 'Дії оператора',
+      state: checkValues.length > 0 && checkedCount === checkValues.length ? 'normal' : 'attention',
+      value: `${checkedCount} із ${checkValues.length}`
+    },
+    {
+      id: 'analysis', label: 'Аналіз рухів',
+      state: !analysis ? 'attention' : analysis.dangerCount ? 'stop' : analysis.warningCount ? 'attention' : 'normal',
+      value: !analysis ? 'Не виконано' : analysis.dangerCount ? `Небезпек: ${analysis.dangerCount}` : analysis.warningCount ? `Попереджень: ${analysis.warningCount}` : 'Без зауважень'
+    }
+  ]
+}
+
+export const buildOperatorSteps = context => {
+  const steps = []
+  if (!context.hasNc) steps.push('Завантажити NC-програму.')
+  else if (!context.validation) steps.push('Перевірити NC-програму.')
+  else if (!context.validation.valid) steps.push('Виправити помилки NC та виконати перевірку повторно.')
+  if (!context.dynamics) steps.push('Підготувати карту встановлення й виконати аналіз рухів.')
+  else if (context.dynamics.dangerCount) steps.push('Усунути всі небезпеки, зазначені в аналізі рухів.')
+  else if (context.dynamics.warningCount) steps.push('Переглянути попередження аналізу та підтвердити допустимість кожного.')
+  if (!context.machineZeroKnown) steps.push('Біля станка виконати homing і внести машинні координати робочого нуля.')
+  const missing = Object.entries(context.installationChecks || {}).filter(([, done]) => !done)
+  if (missing.length) steps.push(`Завершити фізичні дії оператора: ${missing.length}.`)
+  if (context.simulation) steps.push('Для реальної роботи підключити контролер; симуляція не підтверджує стан обладнання.')
+  if (!steps.length) steps.push(context.running ? 'Спостерігати за виконанням і тримати E-stop доступним.' : 'Виконати контрольований запуск за технологічною картою.')
+  return steps
+}
+
 export const formatOperatorReport = ({ assessment, context, positions, journal }) => [
   'ПОМІЧНИК ОПЕРАТОРА ГУРТ',
   `Час: ${new Date().toLocaleString('uk-UA')}`,

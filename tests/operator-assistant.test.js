@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { assessOperatorState } from '../src/operator-assistant.js'
+import { assessOperatorState, buildOperatorSignals, buildOperatorSteps } from '../src/operator-assistant.js'
 
 const ready = {
   connected: true, simulation: false, alarm: false, running: false, hasNc: true,
@@ -21,4 +21,14 @@ test('assistant fails closed on alarm, lost link or invalid NC', () => {
   assert.equal(assessOperatorState({ ...ready, alarm: true }).level, 'stop')
   assert.equal(assessOperatorState({ ...ready, running: true, connected: false }).level, 'stop')
   assert.equal(assessOperatorState({ ...ready, validation: { valid: false } }).level, 'stop')
+})
+
+test('assistant exposes five readable signals and ordered next steps', () => {
+  const context = { ...ready, simulation: true, machineZeroKnown: false, dynamics: null }
+  const signals = buildOperatorSignals(context)
+  assert.deepEqual(signals.map(signal => signal.id), ['connection', 'nc', 'zero', 'checks', 'analysis'])
+  assert.equal(signals.find(signal => signal.id === 'zero').state, 'attention')
+  const steps = buildOperatorSteps(context)
+  assert.match(steps[0], /карту встановлення/i)
+  assert.ok(steps.some(step => /homing/i.test(step)))
 })

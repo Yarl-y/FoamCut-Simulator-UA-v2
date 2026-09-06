@@ -676,7 +676,9 @@ view3d.innerHTML = `
         <strong id="operatorAssistantBadge">УВАГА</strong>
       </div>
       <p id="operatorAssistantReason">Очікую дані контролера та перевірок.</p>
+      <div id="operatorAssistantSignals" class="operator-assistant__signals" aria-label="Контрольовані показники"></div>
       <div class="operator-assistant__action"><b>Що робити оператору:</b> <span id="operatorAssistantAction">Завантажте NC і виконайте перевірку.</span></div>
+      <ol id="operatorAssistantSteps" class="operator-assistant__steps"></ol>
       <button id="operatorAssistantDownload" type="button">Зберегти доповідь ГУРТ</button>
     </section>
     <div class="machine-diagnostics">
