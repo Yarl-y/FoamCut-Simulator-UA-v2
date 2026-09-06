@@ -668,6 +668,8 @@ view3d.innerHTML = `
         <small>Лише для аналізу: машинна координата = робоча + положення робочого нуля. Машинні межі цієї моделі: 0…хід. Ці поля не змінюють NC, нуль Mach3 чи керування станком.</small>
         <p id="machineMotionSummary">Аналіз буде виконано разом із картою встановлення.</p>
         <div class="machine-motion-scroll"><table><thead><tr><th>Рівень</th><th>Рядок NC</th><th>Тип</th><th>Пояснення</th></tr></thead><tbody id="machineMotionFindings"></tbody></table></div>
+        <label class="machine-warning-ack"><input id="machineWarningsAcknowledged" type="checkbox" disabled> Я розгорнув групи та переглянув усі попередження цього аналізу</label>
+        <small>Це лише запис про перегляд. Підтвердження не усуває попереджень і не дозволяє реальне різання.</small>
       </div>
     </section>
     <section class="operator-assistant" id="machineOperatorAssistant" data-level="attention">

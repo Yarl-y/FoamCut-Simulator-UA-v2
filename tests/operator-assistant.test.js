@@ -32,3 +32,10 @@ test('assistant exposes five readable signals and ordered next steps', () => {
   assert.match(steps[0], /карту встановлення/i)
   assert.ok(steps.some(step => /homing/i.test(step)))
 })
+
+test('reviewed warnings no longer block normal state but dangers always stop', () => {
+  const warningContext = { ...ready, dynamics: { dangerCount: 0, warningCount: 7 }, warningsAcknowledged: true }
+  assert.equal(assessOperatorState(warningContext).level, 'normal')
+  assert.equal(buildOperatorSignals(warningContext).find(signal => signal.id === 'analysis').value, 'Переглянуто: 7')
+  assert.equal(assessOperatorState({ ...warningContext, dynamics: { dangerCount: 1, warningCount: 0 } }).level, 'stop')
+})

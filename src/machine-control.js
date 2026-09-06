@@ -69,6 +69,7 @@ export function initializeMachineControl({ getNcText, getBlockSetup, onPositionC
   const analysisZeroKnown = el('machineAnalysisZeroKnown')
   const analysisZeroFields = el('machineAnalysisZeroFields')
   const analysisZeroInputs = Object.fromEntries(['X', 'Y', 'A', 'Z'].map(axis => [axis, el(`machineAnalysisZero${axis}`)]))
+  const warningsAcknowledged = el('machineWarningsAcknowledged')
   const readAnalysisZero = () => analysisZeroKnown.checked
     ? Object.fromEntries(Object.entries(analysisZeroInputs).map(([axis, input]) => [axis, input.value.trim() === '' ? NaN : Number(input.value)]))
     : undefined
@@ -81,6 +82,10 @@ export function initializeMachineControl({ getNcText, getBlockSetup, onPositionC
     motionSummary.className = 'warning'
     motionSummary.textContent = 'Прив’язку нуля змінено — натисніть «Підготувати станок» для нового аналізу. NC та нуль контролера не змінено.'
     motionFindings.replaceChildren()
+    latestDynamics = null
+    warningsAcknowledged.checked = false
+    warningsAcknowledged.disabled = true
+    renderAssistant()
   }
   analysisZeroKnown.addEventListener('change', invalidateMotionAnalysis)
   Object.values(analysisZeroInputs).forEach(input => input.addEventListener('input', invalidateMotionAnalysis))
@@ -161,6 +166,7 @@ export function initializeMachineControl({ getNcText, getBlockSetup, onPositionC
     hasNc: Boolean(ncText.value.trim()),
     validation: latestValidation,
     dynamics: latestDynamics,
+    warningsAcknowledged: warningsAcknowledged.checked,
     machineZeroKnown: analysisZeroKnown.checked,
     installationChecks: getInstallationChecks()
   })
@@ -360,6 +366,8 @@ export function initializeMachineControl({ getNcText, getBlockSetup, onPositionC
     zeroConfirmed = false
     latestValidation = null
     latestDynamics = null
+    warningsAcknowledged.checked = false
+    warningsAcknowledged.disabled = true
     renderAssistant()
   }
 
@@ -379,6 +387,8 @@ export function initializeMachineControl({ getNcText, getBlockSetup, onPositionC
       workZeroMachine: readAnalysisZero()
     })
     latestDynamics = dynamics
+    warningsAcknowledged.checked = false
+    warningsAcknowledged.disabled = dynamics.dangerCount > 0 || dynamics.warningCount === 0
     motionSummary.className = dynamics.dangerCount ? 'danger' : dynamics.warningCount ? 'warning' : 'ready'
     installationCard += '\n\nМежі карти вище — модель 0…хід у робочих координатах. '
       + (dynamics.machineZeroKnown
@@ -676,6 +686,12 @@ export function initializeMachineControl({ getNcText, getBlockSetup, onPositionC
     URL.revokeObjectURL(url)
   })
   root.querySelectorAll('[data-install-check]').forEach(input => input.addEventListener('change', renderInstallationStatus))
+  warningsAcknowledged.addEventListener('change', () => {
+    addJournal('ГУРТ', warningsAcknowledged.checked
+      ? `Оператор підтвердив перегляд ${latestDynamics?.warningCount || 0} попереджень`
+      : 'Підтвердження перегляду попереджень скасовано')
+    renderAssistant()
+  })
   assistantDownload.addEventListener('click', () => {
     renderAssistant()
     const report = formatOperatorReport({

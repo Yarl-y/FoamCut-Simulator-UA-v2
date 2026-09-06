@@ -16,7 +16,7 @@ export const assessOperatorState = context => {
   else if (!context.connected) warnings.push('Контролер не підключено')
   if (!context.hasNc) warnings.push('NC ще не завантажено')
   if (context.hasNc && !context.validation) warnings.push('NC ще не перевірено')
-  if (context.dynamics?.warningCount > 0) warnings.push(`Попереджень аналізу: ${context.dynamics.warningCount}`)
+  if (context.dynamics?.warningCount > 0 && !context.warningsAcknowledged) warnings.push(`Не переглянуто попереджень аналізу: ${context.dynamics.warningCount}`)
   if (!context.machineZeroKnown) warnings.push('Прив’язка робочого нуля до машинних координат невідома')
   if (missingChecks.length) warnings.push(`Не підтверджено дій оператора: ${missingChecks.length}`)
   if (warnings.length) return {
@@ -60,8 +60,9 @@ export const buildOperatorSignals = context => {
     },
     {
       id: 'analysis', label: 'Аналіз рухів',
-      state: !analysis ? 'attention' : analysis.dangerCount ? 'stop' : analysis.warningCount ? 'attention' : 'normal',
-      value: !analysis ? 'Не виконано' : analysis.dangerCount ? `Небезпек: ${analysis.dangerCount}` : analysis.warningCount ? `Попереджень: ${analysis.warningCount}` : 'Без зауважень'
+      state: !analysis ? 'attention' : analysis.dangerCount ? 'stop' : analysis.warningCount && !context.warningsAcknowledged ? 'attention' : 'normal',
+      value: !analysis ? 'Не виконано' : analysis.dangerCount ? `Небезпек: ${analysis.dangerCount}` : analysis.warningCount
+        ? `Переглянуто: ${analysis.warningCount}` : 'Без зауважень'
     }
   ]
 }
@@ -73,7 +74,7 @@ export const buildOperatorSteps = context => {
   else if (!context.validation.valid) steps.push('Виправити помилки NC та виконати перевірку повторно.')
   if (!context.dynamics) steps.push('Підготувати карту встановлення й виконати аналіз рухів.')
   else if (context.dynamics.dangerCount) steps.push('Усунути всі небезпеки, зазначені в аналізі рухів.')
-  else if (context.dynamics.warningCount) steps.push('Переглянути попередження аналізу та підтвердити допустимість кожного.')
+  else if (context.dynamics.warningCount && !context.warningsAcknowledged) steps.push('Розгорнути групи попереджень, переглянути всі спрацювання та підтвердити їх розгляд.')
   if (!context.machineZeroKnown) steps.push('Біля станка виконати homing і внести машинні координати робочого нуля.')
   const missing = Object.entries(context.installationChecks || {}).filter(([, done]) => !done)
   if (missing.length) steps.push(`Завершити фізичні дії оператора: ${missing.length}.`)
