@@ -709,6 +709,17 @@ view3d.innerHTML = `
           <button id="operatorVoiceTest" type="button">Послухати голос</button>
           <p id="operatorVoiceStatus">Голос лише повідомляє — він не керує станком.</p>
         </article>
+        <article class="operator-ai"><h3>8. Розумний помічник ГУРТ</h3>
+          <p id="operatorAiStatus">Перевіряю локальний AI…</p>
+          <label>Модель <select id="operatorAiModel"><option value="">Модель ще не знайдена</option></select></label>
+          <label>Запитання оператору
+            <textarea id="operatorAiQuestion" rows="3" placeholder="Наприклад: поясни головне попередження простими словами"></textarea>
+          </label>
+          <button id="operatorAiAsk" type="button" disabled>Запитати помічника</button>
+          <button id="operatorAiSpeak" type="button" disabled>Озвучити відповідь</button>
+          <p class="operator-ai__guard">AI лише пояснює результати перевірок і не керує станком.</p>
+          <pre id="operatorAiAnswer">Тут з’явиться відповідь локального помічника.</pre>
+        </article>
       </div>
     </section>
     <div class="machine-diagnostics">

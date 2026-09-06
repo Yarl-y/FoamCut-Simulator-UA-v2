@@ -120,6 +120,12 @@ export function initializeMachineControl({ getNcText, getBlockSetup, onPositionC
   const voiceRateValue = el('operatorVoiceRateValue')
   const voiceTest = el('operatorVoiceTest')
   const voiceStatus = el('operatorVoiceStatus')
+  const aiStatus = el('operatorAiStatus')
+  const aiModel = el('operatorAiModel')
+  const aiQuestion = el('operatorAiQuestion')
+  const aiAsk = el('operatorAiAsk')
+  const aiSpeak = el('operatorAiSpeak')
+  const aiAnswer = el('operatorAiAnswer')
   const RHVOICE_URI = 'rhvoice:volodymyr'
 
   let port = null
@@ -242,6 +248,27 @@ export function initializeMachineControl({ getNcText, getBlockSetup, onPositionC
     voiceStatus.textContent = voices.length
       ? `Доступно голосів: ${voices.length}. Вибрано: ${preferred?.name || 'системний'}.`
       : 'Windows ще завантажує список голосів.'
+  }
+
+  const loadAiModels = async () => {
+    if (!window.hurtAi) {
+      aiStatus.textContent = 'Локальний AI доступний лише у desktop EXE.'
+      return
+    }
+    const result = await window.hurtAi.models()
+    if (!result.available) {
+      aiStatus.textContent = 'Ollama не запущена. Встановимо рушій і модель на комп’ютері станка.'
+      return
+    }
+    if (!result.models.length) {
+      aiStatus.textContent = 'Ollama працює, але локальну модель ще не завантажено.'
+      return
+    }
+    const savedModel = localStorage.getItem('hurt-ai-model') || ''
+    aiModel.replaceChildren(...result.models.map(name => new Option(name, name)))
+    aiModel.value = result.models.includes(savedModel) ? savedModel : result.models[0]
+    aiAsk.disabled = false
+    aiStatus.textContent = `Локальний AI готовий. Доступно моделей: ${result.models.length}.`
   }
 
   const renderAssistant = () => {
@@ -854,6 +881,22 @@ export function initializeMachineControl({ getNcText, getBlockSetup, onPositionC
     localStorage.setItem('hurt-voice-rate', voiceRate.value)
   })
   voiceTest.addEventListener('click', () => speak('Помічник оператора ГУРТ на зв’язку. Голос налаштовано.', true))
+  aiModel.addEventListener('change', () => localStorage.setItem('hurt-ai-model', aiModel.value))
+  aiAsk.addEventListener('click', async () => {
+    aiAsk.disabled = true; aiSpeak.disabled = true
+    aiAnswer.textContent = 'Помічник думає…'
+    const signals = buildOperatorSignals(getAssistantContext()).map(item => `${item.label}: ${item.value}`).join('\n')
+    const steps = buildOperatorSteps(getAssistantContext()).map((item, index) => `${index + 1}. ${item}`).join('\n')
+    const context = `Детермінований стан: ${latestAssessment.label}\nПричина: ${latestAssessment.reason}\nДія: ${latestAssessment.action}\n${signals}\nКроки:\n${steps}`
+    try {
+      const answer = await window.hurtAi.ask(aiModel.value, aiQuestion.value, context)
+      aiAnswer.textContent = answer || 'Модель не повернула відповіді.'
+      aiSpeak.disabled = !answer
+    } catch (error) {
+      aiAnswer.textContent = `Не вдалося отримати відповідь: ${error.message}`
+    } finally { aiAsk.disabled = false }
+  })
+  aiSpeak.addEventListener('click', () => speak(aiAnswer.textContent, true))
   assistantDownload.addEventListener('click', () => {
     renderAssistant()
     const report = formatOperatorReport({
@@ -959,6 +1002,7 @@ export function initializeMachineControl({ getNcText, getBlockSetup, onPositionC
   if (savedVoiceRate >= 0.7 && savedVoiceRate <= 1.3) voiceRate.value = savedVoiceRate
   voiceRate.dispatchEvent(new Event('input'))
   loadVoices()
+  loadAiModels()
   if ('speechSynthesis' in window) window.speechSynthesis.addEventListener?.('voiceschanged', loadVoices)
   mode.dispatchEvent(new Event('change'))
 }
