@@ -3,6 +3,7 @@ import { calculateCalibratedSteps, createControllerPlan } from './controller-set
 import { runSafetyScenarios, sanitizeColdRunLine } from './safety-scenarios.js'
 import { analyzeMachineJob, formatMachineSetupCard } from './machine-job-setup.js'
 import { analyzeMotionDynamics, groupMotionFindings } from './motion-analysis.js'
+import { assessOperatorState, formatOperatorReport } from './operator-assistant.js'
 
 const AXES = VIRTUAL_AXES
 const STATUS_AXES = ['X', 'Y', 'Z', 'A', 'B']
@@ -85,6 +86,11 @@ export function initializeMachineControl({ getNcText, getBlockSetup, onPositionC
   Object.values(analysisZeroInputs).forEach(input => input.addEventListener('input', invalidateMotionAnalysis))
   const livePreview = el('machineLivePreview')
   const livePreviewStatus = el('machineLivePreviewStatus')
+  const assistantRoot = el('machineOperatorAssistant')
+  const assistantBadge = el('operatorAssistantBadge')
+  const assistantReason = el('operatorAssistantReason')
+  const assistantAction = el('operatorAssistantAction')
+  const assistantDownload = el('operatorAssistantDownload')
 
   let port = null
   let reader = null
@@ -102,6 +108,9 @@ export function initializeMachineControl({ getNcText, getBlockSetup, onPositionC
   const journal = []
   let installationCard = ''
   let livePreviewProjection = null
+  let latestValidation = null
+  let latestDynamics = null
+  let latestAssessment = null
 
   const getProfile = () => ({
     limits: getLimits(),
@@ -138,6 +147,29 @@ export function initializeMachineControl({ getNcText, getBlockSetup, onPositionC
   const getSetupChecks = () => Object.fromEntries(
     [...root.querySelectorAll('[data-setup-check]')].map(input => [input.dataset.setupCheck, input.checked])
   )
+  const getInstallationChecks = () => Object.fromEntries(
+    [...root.querySelectorAll('[data-install-check]')].map(input => [input.dataset.installCheck, input.checked])
+  )
+
+  const getAssistantContext = () => ({
+    connected: mode.value === 'simulation' || Boolean(port),
+    simulation: mode.value === 'simulation',
+    alarm: virtualController.alarm || /alarm|помилка/i.test(machineState.textContent),
+    running,
+    hasNc: Boolean(ncText.value.trim()),
+    validation: latestValidation,
+    dynamics: latestDynamics,
+    machineZeroKnown: analysisZeroKnown.checked,
+    installationChecks: getInstallationChecks()
+  })
+
+  const renderAssistant = () => {
+    latestAssessment = assessOperatorState(getAssistantContext())
+    assistantRoot.dataset.level = latestAssessment.level
+    assistantBadge.textContent = latestAssessment.label
+    assistantReason.textContent = latestAssessment.reason
+    assistantAction.textContent = latestAssessment.action
+  }
 
   const renderSetupStatus = () => {
     const checks = getSetupChecks()
@@ -163,6 +195,7 @@ export function initializeMachineControl({ getNcText, getBlockSetup, onPositionC
   const setState = state => {
     machineState.textContent = state
     machineState.dataset.state = state.toLowerCase()
+    renderAssistant()
   }
 
   const svgNode = (tag, attributes = {}) => {
@@ -276,6 +309,8 @@ export function initializeMachineControl({ getNcText, getBlockSetup, onPositionC
       ...report.errors.map(value => `ПОМИЛКА: ${value}`),
       ...report.warnings.map(value => `УВАГА: ${value}`)
     ].join('\n')
+    latestValidation = report
+    renderAssistant()
     return report
   }
 
@@ -286,6 +321,7 @@ export function initializeMachineControl({ getNcText, getBlockSetup, onPositionC
     installationStatus.textContent = complete
       ? 'Усі дії позначені оператором. Це не автоматичний дозвіл на різання: перевірте актуальний аналіз і фізичну установку.'
       : `Підтверджено ${checks.filter(input => input.checked).length} із ${checks.length} дій оператора`
+    renderAssistant()
   }
 
   const setInstallationCheck = (name, checked) => {
@@ -304,6 +340,9 @@ export function initializeMachineControl({ getNcText, getBlockSetup, onPositionC
     motionFindings.replaceChildren()
     ;['block', 'wire', 'zero', 'dryrun'].forEach(name => setInstallationCheck(name, false))
     zeroConfirmed = false
+    latestValidation = null
+    latestDynamics = null
+    renderAssistant()
   }
 
   const buildInstallationCard = () => {
@@ -321,6 +360,7 @@ export function initializeMachineControl({ getNcText, getBlockSetup, onPositionC
       limits: getLimits(), maximumFeed: maximumFeed.value, acceleration: acceleration.value,
       workZeroMachine: readAnalysisZero()
     })
+    latestDynamics = dynamics
     motionSummary.className = dynamics.dangerCount ? 'danger' : dynamics.warningCount ? 'warning' : 'ready'
     installationCard += '\n\nМежі карти вище — модель 0…хід у робочих координатах. '
       + (dynamics.machineZeroKnown
@@ -350,6 +390,7 @@ export function initializeMachineControl({ getNcText, getBlockSetup, onPositionC
       return row
     }))
     log(report.safe ? 'Карту встановлення підготовлено' : 'Карта встановлення містить небезпечні межі', report.safe ? 'success' : 'error')
+    renderAssistant()
     return { report, dynamics }
   }
 
@@ -617,6 +658,22 @@ export function initializeMachineControl({ getNcText, getBlockSetup, onPositionC
     URL.revokeObjectURL(url)
   })
   root.querySelectorAll('[data-install-check]').forEach(input => input.addEventListener('change', renderInstallationStatus))
+  assistantDownload.addEventListener('click', () => {
+    renderAssistant()
+    const report = formatOperatorReport({
+      assessment: latestAssessment,
+      context: getAssistantContext(),
+      positions,
+      journal
+    })
+    const url = URL.createObjectURL(new Blob([report], { type: 'text/plain;charset=utf-8' }))
+    const link = document.createElement('a')
+    link.href = url
+    link.download = `hurt-operator-report-${new Date().toISOString().replace(/[:.]/g, '-')}.txt`
+    link.click()
+    URL.revokeObjectURL(url)
+    addJournal('ГУРТ', `Збережено доповідь: ${latestAssessment.label}`)
+  })
   downloadJournal.addEventListener('click', () => {
     const payload = {
       format: 'FoamCut Simulator execution journal', version: 1,

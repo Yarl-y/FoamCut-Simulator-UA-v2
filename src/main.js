@@ -670,6 +670,15 @@ view3d.innerHTML = `
         <div class="machine-motion-scroll"><table><thead><tr><th>Рівень</th><th>Рядок NC</th><th>Тип</th><th>Пояснення</th></tr></thead><tbody id="machineMotionFindings"></tbody></table></div>
       </div>
     </section>
+    <section class="operator-assistant" id="machineOperatorAssistant" data-level="attention">
+      <div class="operator-assistant__header">
+        <div><h2>Помічник оператора ГУРТ</h2><small>Пояснює стан і радить наступну дію; не замінює апаратний захист.</small></div>
+        <strong id="operatorAssistantBadge">УВАГА</strong>
+      </div>
+      <p id="operatorAssistantReason">Очікую дані контролера та перевірок.</p>
+      <div class="operator-assistant__action"><b>Що робити оператору:</b> <span id="operatorAssistantAction">Завантажте NC і виконайте перевірку.</span></div>
+      <button id="operatorAssistantDownload" type="button">Зберегти доповідь ГУРТ</button>
+    </section>
     <div class="machine-diagnostics">
       <h3>Діагностика контролера</h3>
       <p id="machineControllerMessage">Увімкнено безпечний режим симуляції</p>
