@@ -120,6 +120,7 @@ export function initializeMachineControl({ getNcText, getBlockSetup, onPositionC
   const voiceRateValue = el('operatorVoiceRateValue')
   const voiceTest = el('operatorVoiceTest')
   const voiceStatus = el('operatorVoiceStatus')
+  const RHVOICE_URI = 'rhvoice:volodymyr'
 
   let port = null
   let reader = null
@@ -202,6 +203,13 @@ export function initializeMachineControl({ getNcText, getBlockSetup, onPositionC
 
   const speak = (message, force = false) => {
     if ((!voiceEnabled.checked && !force) || !('speechSynthesis' in window)) return
+    if (voiceSelect.value === RHVOICE_URI && window.hurtSpeech) {
+      window.speechSynthesis.cancel()
+      window.hurtSpeech.speak(message, Number(voiceRate.value) || 0.95).catch(() => {
+        voiceStatus.textContent = 'Не вдалося запустити Volodymyr. Перезапустіть застосунок.'
+      })
+      return
+    }
     window.speechSynthesis.cancel()
     const utterance = new SpeechSynthesisUtterance(message)
     const voices = window.speechSynthesis.getVoices()
@@ -212,18 +220,22 @@ export function initializeMachineControl({ getNcText, getBlockSetup, onPositionC
     window.speechSynthesis.speak(utterance)
   }
 
-  const loadVoices = () => {
+  const loadVoices = async () => {
     if (!('speechSynthesis' in window)) {
       voiceSelect.disabled = true; voiceTest.disabled = true
       voiceStatus.textContent = 'Системне озвучення у цьому середовищі недоступне.'
       return
     }
     const voices = window.speechSynthesis.getVoices()
+    const hasRhVoice = Boolean(await window.hurtSpeech?.isAvailable?.().catch(() => false))
     const saved = localStorage.getItem('hurt-voice-uri') || ''
-    voiceSelect.replaceChildren(new Option('Системний голос', ''), ...voices.map(voice => new Option(
+    const rhVoiceOption = hasRhVoice ? [new Option('Volodymyr — український (RHVoice)', RHVOICE_URI)] : []
+    voiceSelect.replaceChildren(new Option('Системний голос', ''), ...rhVoiceOption, ...voices.map(voice => new Option(
       `${voice.name} — ${voice.lang}${voice.default ? ' (основний)' : ''}`, voice.voiceURI
     )))
-    const preferred = voices.find(voice => voice.voiceURI === saved)
+    const preferred = saved === RHVOICE_URI && hasRhVoice ? { voiceURI: RHVOICE_URI, name: 'Volodymyr' }
+      : hasRhVoice ? { voiceURI: RHVOICE_URI, name: 'Volodymyr' }
+      : voices.find(voice => voice.voiceURI === saved)
       || voices.find(voice => /^uk/i.test(voice.lang))
       || voices.find(voice => /^ru/i.test(voice.lang))
     voiceSelect.value = preferred?.voiceURI || ''
@@ -835,7 +847,7 @@ export function initializeMachineControl({ getNcText, getBlockSetup, onPositionC
   voiceSelect.addEventListener('change', () => {
     localStorage.setItem('hurt-voice-uri', voiceSelect.value)
     const selected = window.speechSynthesis?.getVoices().find(voice => voice.voiceURI === voiceSelect.value)
-    voiceStatus.textContent = `Вибрано: ${selected?.name || 'системний голос'}.`
+    voiceStatus.textContent = `Вибрано: ${voiceSelect.value === RHVOICE_URI ? 'Volodymyr — український' : selected?.name || 'системний голос'}.`
   })
   voiceRate.addEventListener('input', () => {
     voiceRateValue.textContent = `${Number(voiceRate.value).toLocaleString('uk-UA')}×`
