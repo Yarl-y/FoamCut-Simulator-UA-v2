@@ -6,6 +6,7 @@ export const assessOperatorState = context => {
   if (context.running && !context.connected) stopReasons.push('Під час виконання втрачено зв’язок')
   if (context.validation?.valid === false) stopReasons.push('NC не пройшов перевірку')
   if (context.dynamics?.dangerCount > 0) stopReasons.push(`Аналіз знайшов небезпек: ${context.dynamics.dangerCount}`)
+  if (context.wire?.level === 'stop') stopReasons.push(context.wire.label)
   if (stopReasons.length) return {
     level: 'stop', label: 'СТОП', reason: stopReasons.join('. '),
     action: 'Не запускайте або негайно зупиніть рух. Усуньте причину, повторіть перевірку та холодний прогін.'
@@ -19,6 +20,7 @@ export const assessOperatorState = context => {
   if (context.dynamics?.warningCount > 0 && !context.warningsAcknowledged) warnings.push(`Не переглянуто попереджень аналізу: ${context.dynamics.warningCount}`)
   if (!context.machineZeroKnown) warnings.push('Прив’язка робочого нуля до машинних координат невідома')
   if (missingChecks.length) warnings.push(`Не підтверджено дій оператора: ${missingChecks.length}`)
+  if (context.wire?.level === 'attention') warnings.push(context.wire.label)
   if (warnings.length) return {
     level: 'attention', label: 'УВАГА', reason: warnings.join('. '),
     action: context.simulation
@@ -63,6 +65,10 @@ export const buildOperatorSignals = context => {
       state: !analysis ? 'attention' : analysis.dangerCount ? 'stop' : analysis.warningCount && !context.warningsAcknowledged ? 'attention' : 'normal',
       value: !analysis ? 'Не виконано' : analysis.dangerCount ? `Небезпек: ${analysis.dangerCount}` : analysis.warningCount
         ? `Переглянуто: ${analysis.warningCount}` : 'Без зауважень'
+    },
+    {
+      id: 'wire', label: 'Струна', state: context.wire?.level || 'attention',
+      value: context.wire?.label || 'Немає даних'
     }
   ]
 }
@@ -79,6 +85,8 @@ export const buildOperatorSteps = context => {
   const missing = Object.entries(context.installationChecks || {}).filter(([, done]) => !done)
   if (missing.length) steps.push(`Завершити фізичні дії оператора: ${missing.length}.`)
   if (context.simulation) steps.push('Для реальної роботи підключити контролер; симуляція не підтверджує стан обладнання.')
+  if (context.wire?.level === 'stop') steps.unshift(context.wire.action)
+  else if (context.wire?.level === 'attention') steps.push(context.wire.action)
   if (!steps.length) steps.push(context.running ? 'Спостерігати за виконанням і тримати E-stop доступним.' : 'Виконати контрольований запуск за технологічною картою.')
   return steps
 }

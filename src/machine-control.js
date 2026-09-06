@@ -4,6 +4,7 @@ import { runSafetyScenarios, sanitizeColdRunLine } from './safety-scenarios.js'
 import { analyzeMachineJob, formatMachineSetupCard } from './machine-job-setup.js'
 import { analyzeMotionDynamics, groupMotionFindings } from './motion-analysis.js'
 import { assessOperatorState, buildOperatorSignals, buildOperatorSteps, formatOperatorReport } from './operator-assistant.js'
+import { assessWire, createResumePlan, estimateCutTime, formatCompletedRun, prioritizeWarnings, recommendHeat } from './operator-advanced.js'
 
 const AXES = VIRTUAL_AXES
 const STATUS_AXES = ['X', 'Y', 'Z', 'A', 'B']
@@ -86,6 +87,7 @@ export function initializeMachineControl({ getNcText, getBlockSetup, onPositionC
     warningsAcknowledged.checked = false
     warningsAcknowledged.disabled = true
     renderAssistant()
+    refreshAdvancedAnalysis()
   }
   analysisZeroKnown.addEventListener('change', invalidateMotionAnalysis)
   Object.values(analysisZeroInputs).forEach(input => input.addEventListener('input', invalidateMotionAnalysis))
@@ -98,6 +100,21 @@ export function initializeMachineControl({ getNcText, getBlockSetup, onPositionC
   const assistantSignals = el('operatorAssistantSignals')
   const assistantSteps = el('operatorAssistantSteps')
   const assistantDownload = el('operatorAssistantDownload')
+  const prioritySummary = el('operatorPrioritySummary')
+  const timeEstimate = el('operatorTimeEstimate')
+  const wireMode = el('operatorWireMode')
+  const wireContinuity = el('operatorWireContinuity')
+  const wireTension = el('operatorWireTension')
+  const wireStatus = el('operatorWireStatus')
+  const heatMaterial = el('operatorHeatMaterial')
+  const heatThickness = el('operatorHeatThickness')
+  const wireDiameter = el('operatorWireDiameter')
+  const heatAdvice = el('operatorHeatAdvice')
+  const runReport = el('operatorRunReport')
+  const runReportDownload = el('operatorRunReportDownload')
+  const resumePlan = el('operatorResumePlan')
+  const resumePlanDownload = el('operatorResumePlanDownload')
+  const voiceEnabled = el('operatorVoiceEnabled')
 
   let port = null
   let reader = null
@@ -118,6 +135,12 @@ export function initializeMachineControl({ getNcText, getBlockSetup, onPositionC
   let latestValidation = null
   let latestDynamics = null
   let latestAssessment = null
+  let lastShownEntry = null
+  let completedLineCount = 0
+  let totalLineCount = 0
+  let jobStartedAt = null
+  let runReportText = ''
+  let resumePlanText = ''
 
   const getProfile = () => ({
     limits: getLimits(),
@@ -168,8 +191,17 @@ export function initializeMachineControl({ getNcText, getBlockSetup, onPositionC
     dynamics: latestDynamics,
     warningsAcknowledged: warningsAcknowledged.checked,
     machineZeroKnown: analysisZeroKnown.checked,
-    installationChecks: getInstallationChecks()
+    installationChecks: getInstallationChecks(),
+    wire: assessWire({ mode: wireMode.value, continuity: wireContinuity.checked, tensionPercent: wireTension.value })
   })
+
+  const speak = message => {
+    if (!voiceEnabled.checked || !('speechSynthesis' in window)) return
+    window.speechSynthesis.cancel()
+    const utterance = new SpeechSynthesisUtterance(message)
+    utterance.lang = 'uk-UA'
+    window.speechSynthesis.speak(utterance)
+  }
 
   const renderAssistant = () => {
     const context = getAssistantContext()
@@ -192,7 +224,63 @@ export function initializeMachineControl({ getNcText, getBlockSetup, onPositionC
     }))
     if (previousLevel && previousLevel !== latestAssessment.level) {
       addJournal('ГУРТ', `Стан помічника: ${latestAssessment.label}. ${latestAssessment.reason}`)
+      if (latestAssessment.level !== 'normal') speak(`${latestAssessment.label}. ${latestAssessment.reason}`)
     }
+  }
+
+  const refreshWire = () => {
+    const simulated = wireMode.value === 'simulation'
+    wireContinuity.disabled = !simulated
+    wireTension.disabled = !simulated
+    const result = assessWire({ mode: wireMode.value, continuity: wireContinuity.checked, tensionPercent: wireTension.value })
+    wireStatus.textContent = `${result.label}. ${result.action}`
+    wireStatus.dataset.level = result.level
+    renderAssistant()
+  }
+
+  const refreshHeatAdvice = () => {
+    const result = recommendHeat({ material: heatMaterial.value, thickness: heatThickness.value, feed: jogFeed.value, wireDiameter: wireDiameter.value })
+    heatAdvice.textContent = `Орієнтир ${result.minimum}–${result.maximum}${result.unit}. ${result.note} Автоматичне керування нагрівом заблоковане.`
+  }
+
+  const refreshAdvancedAnalysis = () => {
+    if (!latestDynamics) {
+      prioritySummary.textContent = 'Виконайте аналіз рухів.'
+      timeEstimate.textContent = 'NC ще не проаналізовано.'
+      return
+    }
+    const priority = prioritizeWarnings(latestDynamics.findings)
+    const urgent = priority.filter(item => item.priority >= 2)
+    prioritySummary.textContent = priority.length
+      ? `Усього ${priority.length}; першочергових ${urgent.length}. ${urgent[0] ? `Почніть із рядка ${urgent[0].lineNumber}: ${urgent[0].type}.` : 'Критичних груп немає.'}`
+      : 'Попереджень немає.'
+    const estimate = estimateCutTime(latestDynamics.segments, { commandDelaySeconds: mode.value === 'simulation' ? 0 : 0.03 })
+    timeEstimate.textContent = `Орієнтовно ${estimate.label}; рух ${Math.round(estimate.motionSeconds)} с, службові затримки ${Math.round(estimate.serviceSeconds)} с.`
+  }
+
+  const saveText = (text, fileName) => {
+    if (!text) return
+    const url = URL.createObjectURL(new Blob([text], { type: 'text/plain;charset=utf-8' }))
+    const link = document.createElement('a'); link.href = url; link.download = fileName; link.click(); URL.revokeObjectURL(url)
+  }
+
+  const finishRunReport = result => {
+    if (!jobStartedAt) return
+    const finishedAt = new Date()
+    runReportText = formatCompletedRun({
+      result, startedAt: jobStartedAt.toLocaleString('uk-UA'), finishedAt: finishedAt.toLocaleString('uk-UA'),
+      elapsedSeconds: (finishedAt - jobStartedAt) / 1000, completedLines: completedLineCount, totalLines: totalLineCount,
+      warningCount: latestDynamics?.warningCount, dangerCount: latestDynamics?.dangerCount, positions
+    })
+    runReport.textContent = runReportText
+    runReportDownload.disabled = false
+  }
+
+  const captureResumePlan = () => {
+    const plan = createResumePlan({ lineNumber: lastShownEntry?.lineNumber, command: lastShownEntry?.command, positions })
+    resumePlanText = `${plan.title}\n${plan.text}`
+    resumePlan.textContent = resumePlanText
+    resumePlanDownload.disabled = false
   }
 
   const renderSetupStatus = () => {
@@ -311,6 +399,8 @@ export function initializeMachineControl({ getNcText, getBlockSetup, onPositionC
   }
 
   const showCurrentLine = (entry, index, total) => {
+    lastShownEntry = entry
+    completedLineCount = Math.max(0, index)
     currentLine.textContent = entry ? `${entry.lineNumber}: ${entry.command}` : '—'
     renderProgram(prepareProgram(), index)
     progress.value = Math.max(0, index + 1)
@@ -369,6 +459,7 @@ export function initializeMachineControl({ getNcText, getBlockSetup, onPositionC
     warningsAcknowledged.checked = false
     warningsAcknowledged.disabled = true
     renderAssistant()
+    refreshAdvancedAnalysis()
   }
 
   const buildInstallationCard = () => {
@@ -389,6 +480,7 @@ export function initializeMachineControl({ getNcText, getBlockSetup, onPositionC
     latestDynamics = dynamics
     warningsAcknowledged.checked = false
     warningsAcknowledged.disabled = dynamics.dangerCount > 0 || dynamics.warningCount === 0
+    refreshAdvancedAnalysis()
     motionSummary.className = dynamics.dangerCount ? 'danger' : dynamics.warningCount ? 'warning' : 'ready'
     installationCard += '\n\nМежі карти вище — модель 0…хід у робочих координатах. '
       + (dynamics.machineZeroKnown
@@ -601,6 +693,7 @@ export function initializeMachineControl({ getNcText, getBlockSetup, onPositionC
       if (!validation.valid) throw new Error(validation.errors.join('; '))
       const lines = prepareProgram()
       const token = ++jobToken
+      jobStartedAt = new Date(); completedLineCount = 0; totalLineCount = lines.length
       running = true; paused = false; pause.disabled = false; stop.disabled = false; run.disabled = true; setState('Виконується')
       onJobStateChange?.('running')
       for (let index = 0; index < lines.length && token === jobToken; index += 1) {
@@ -608,13 +701,16 @@ export function initializeMachineControl({ getNcText, getBlockSetup, onPositionC
         showCurrentLine(lines[index], index, lines.length)
         const response = await send(lines[index].command)
         if (response !== 'ok') throw new Error(response)
+        completedLineCount = index + 1
         if (mode.value === 'simulation') await new Promise(resolve => setTimeout(resolve, 45))
       }
       if (token === jobToken) {
         setState('Готовий'); onJobStateChange?.('complete'); setInstallationCheck('dryrun', true)
         log('Холодний прогін NC виконано без помилок', 'success')
+        finishRunReport('Завершено без помилок')
+        speak('Холодний прогін завершено без помилок')
       }
-    } catch (error) { setInstallationCheck('dryrun', false); setState(virtualController.alarm ? 'Alarm' : 'Помилка'); onJobStateChange?.('error'); log(error.message, 'error') }
+    } catch (error) { setInstallationCheck('dryrun', false); setState(virtualController.alarm ? 'Alarm' : 'Помилка'); onJobStateChange?.('error'); log(error.message, 'error'); finishRunReport(`Помилка: ${error.message}`) }
     finally { running = false; paused = false; pause.disabled = true; stop.disabled = true; run.disabled = false; pause.textContent = 'Пауза' }
   })
 
@@ -625,12 +721,14 @@ export function initializeMachineControl({ getNcText, getBlockSetup, onPositionC
     setState(paused ? 'Пауза' : 'Виконується')
     pause.textContent = paused ? 'Продовжити' : 'Пауза'
     onJobStateChange?.(paused ? 'paused' : 'running')
+    if (paused) captureResumePlan()
   })
   stop.addEventListener('click', async () => {
     jobToken += 1; running = false; paused = false
     try { await writeRaw('!'); await writeRaw('\x18') } catch {}
     setState('Зупинено'); log('Завдання зупинено оператором', 'error')
     setInstallationCheck('dryrun', false)
+    captureResumePlan(); finishRunReport('Зупинено оператором')
     onJobStateChange?.('stopped')
   })
   reset.addEventListener('click', async () => {
@@ -692,6 +790,12 @@ export function initializeMachineControl({ getNcText, getBlockSetup, onPositionC
       : 'Підтвердження перегляду попереджень скасовано')
     renderAssistant()
   })
+  wireMode.addEventListener('change', refreshWire)
+  wireContinuity.addEventListener('change', refreshWire)
+  wireTension.addEventListener('input', refreshWire)
+  ;[heatMaterial, heatThickness, wireDiameter, jogFeed].forEach(input => input.addEventListener('input', refreshHeatAdvice))
+  runReportDownload.addEventListener('click', () => saveText(runReportText, `hurt-run-${new Date().toISOString().replace(/[:.]/g, '-')}.txt`))
+  resumePlanDownload.addEventListener('click', () => saveText(resumePlanText, `hurt-resume-plan-${new Date().toISOString().replace(/[:.]/g, '-')}.txt`))
   assistantDownload.addEventListener('click', () => {
     renderAssistant()
     const report = formatOperatorReport({
@@ -790,5 +894,8 @@ export function initializeMachineControl({ getNcText, getBlockSetup, onPositionC
   renderPositions()
   renderProgram([])
   renderLivePreview()
+  refreshWire()
+  refreshHeatAdvice()
+  refreshAdvancedAnalysis()
   mode.dispatchEvent(new Event('change'))
 }

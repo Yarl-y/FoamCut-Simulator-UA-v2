@@ -683,6 +683,28 @@ view3d.innerHTML = `
       <ol id="operatorAssistantSteps" class="operator-assistant__steps"></ol>
       <button id="operatorAssistantDownload" type="button">Зберегти доповідь ГУРТ</button>
     </section>
+    <section class="operator-tools">
+      <h2>Розширений контроль ГУРТ</h2>
+      <div class="operator-tools__grid">
+        <article><h3>1. Важливість попереджень</h3><p id="operatorPrioritySummary">Виконайте аналіз рухів.</p></article>
+        <article><h3>2. Прогноз часу</h3><p id="operatorTimeEstimate">NC ще не проаналізовано.</p></article>
+        <article><h3>3. Контроль струни</h3>
+          <label>Джерело <select id="operatorWireMode"><option value="none">Датчика немає</option><option value="simulation">Симуляція датчика</option></select></label>
+          <label><input id="operatorWireContinuity" type="checkbox" checked disabled> Струна ціла</label>
+          <label>Натяг, % <input id="operatorWireTension" type="number" min="0" max="150" value="100" disabled></label>
+          <p id="operatorWireStatus">Датчик не підключено.</p>
+        </article>
+        <article><h3>4. Порадник нагріву</h3>
+          <label>Матеріал <select id="operatorHeatMaterial"><option value="eps">EPS</option><option value="xps">XPS</option><option value="epp">EPP</option></select></label>
+          <label>Товщина, мм <input id="operatorHeatThickness" type="number" min="1" value="100"></label>
+          <label>Діаметр струни, мм <input id="operatorWireDiameter" type="number" min="0.05" step="0.05" value="0.3"></label>
+          <p id="operatorHeatAdvice"></p>
+        </article>
+        <article><h3>5. Доповідь після проходу</h3><pre id="operatorRunReport">Прохід ще не виконувався.</pre><button id="operatorRunReportDownload" disabled>Зберегти підсумок</button></article>
+        <article><h3>6. Відновлення після паузи</h3><pre id="operatorResumePlan">План з’явиться після паузи або зупинки.</pre><button id="operatorResumePlanDownload" disabled>Зберегти план</button></article>
+        <article><h3>7. Голосові повідомлення</h3><label><input id="operatorVoiceEnabled" type="checkbox"> Озвучувати «Увага», «Стоп» і завершення</label><p>Голос лише повідомляє — він не керує станком.</p></article>
+      </div>
+    </section>
     <div class="machine-diagnostics">
       <h3>Діагностика контролера</h3>
       <p id="machineControllerMessage">Увімкнено безпечний режим симуляції</p>

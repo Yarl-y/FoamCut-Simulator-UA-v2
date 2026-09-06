@@ -23,10 +23,10 @@ test('assistant fails closed on alarm, lost link or invalid NC', () => {
   assert.equal(assessOperatorState({ ...ready, validation: { valid: false } }).level, 'stop')
 })
 
-test('assistant exposes five readable signals and ordered next steps', () => {
+test('assistant exposes readable signals and ordered next steps', () => {
   const context = { ...ready, simulation: true, machineZeroKnown: false, dynamics: null }
   const signals = buildOperatorSignals(context)
-  assert.deepEqual(signals.map(signal => signal.id), ['connection', 'nc', 'zero', 'checks', 'analysis'])
+  assert.deepEqual(signals.map(signal => signal.id), ['connection', 'nc', 'zero', 'checks', 'analysis', 'wire'])
   assert.equal(signals.find(signal => signal.id === 'zero').state, 'attention')
   const steps = buildOperatorSteps(context)
   assert.match(steps[0], /карту встановлення/i)
