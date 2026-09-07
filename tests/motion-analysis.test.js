@@ -52,3 +52,17 @@ test('AI context separates and prioritizes NC findings with line numbers', () =>
   assert.ok(text.indexOf('НЕБЕЗПЕКА') < text.indexOf('УВАГА'))
   assert.match(text, /рядки 15/)
 })
+
+test('explicit service reversal stays visible but is not a danger', () => {
+  const result = analyzeMotionDynamics('G90\nG1 X10 Y0 A10 Z0\n(Контрольоване повернення по входу)\nG1 X0 Y0 A0 Z0', { limits })
+  assert.equal(result.dangerCount, 0)
+  assert.equal(result.advisories.length, 1)
+  assert.equal(result.advisories[0].type, 'Контрольоване повернення')
+  assert.match(formatMotionFindingsForAi(result), /СЛУЖБОВИЙ РУХ/)
+})
+
+test('unmarked reversal remains a danger', () => {
+  const result = analyzeMotionDynamics('G90\nG1 X10 Y0 A10 Z0\nG1 X0 Y0 A0 Z0', { limits })
+  assert.equal(result.dangerCount, 1)
+  assert.equal(result.advisories.length, 0)
+})

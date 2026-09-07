@@ -17,12 +17,16 @@ export function analyzeMotionDynamics(source, options = {}) {
   const position = Object.fromEntries(AXES.map(axis => [axis, 0]))
   const segments = []
   const findings = []
+  const advisories = []
   if (!machineZeroKnown) findings.push({ severity: 'warning', lineNumber: '—', type: 'Прив’язка нуля',
     message: 'Машинне положення робочого нуля невідоме. Фізичний запас до меж не перевірено; межі 0…хід нижче — лише модель симулятора.' })
   let absolute = true
   let feed = Math.min(300, maximumFeed)
+  let nextMovementRole = ''
 
   String(source || '').split(/\r?\n/).forEach((raw, rawIndex) => {
+    if (/\(\s*Безпечний вихід у коридор\s*\)/i.test(raw)) nextMovementRole = 'Безпечний вихід у коридор'
+    else if (/\(\s*Контрольоване повернення по входу\s*\)/i.test(raw)) nextMovementRole = 'Контрольоване повернення'
     const line = cleanLine(raw)
     if (!line) return
     if (/\bG90\b/.test(line)) absolute = true
@@ -41,7 +45,9 @@ export function analyzeMotionDynamics(source, options = {}) {
     if (distance <= 1e-9) { Object.assign(position, to); return }
     const durationSeconds = distance / Math.max(feed, 1) * 60
     const velocity = Object.fromEntries(AXES.map(axis => [axis, delta[axis] / Math.max(durationSeconds, 1e-9)]))
-    const segment = { lineNumber: rawIndex + 1, command: line, from, to, delta, distance, feed, durationSeconds, velocity }
+    const movementRole = nextMovementRole
+    nextMovementRole = ''
+    const segment = { lineNumber: rawIndex + 1, command: line, from, to, delta, distance, feed, durationSeconds, velocity, movementRole }
     segments.push(segment)
     Object.assign(position, to)
 
@@ -73,7 +79,8 @@ export function analyzeMotionDynamics(source, options = {}) {
     const requiredAcceleration = velocityChange / transitionSeconds
     current.turnAngle = turnAngle
     current.requiredAcceleration = requiredAcceleration
-    if (turnAngle >= 135) findings.push({ severity: 'danger', lineNumber: current.lineNumber, type: 'Розворот', message: `Зміна напрямку ${turnAngle.toFixed(1)}° без проміжної плавної точки` })
+    if (turnAngle >= 135 && current.movementRole) advisories.push({ severity: 'info', lineNumber: current.lineNumber, type: current.movementRole, message: `Позначений службовий рух; зміна напрямку ${turnAngle.toFixed(1)}°` })
+    else if (turnAngle >= 135) findings.push({ severity: 'danger', lineNumber: current.lineNumber, type: 'Розворот', message: `Зміна напрямку ${turnAngle.toFixed(1)}° без проміжної плавної точки` })
     else if (turnAngle >= 90) findings.push({ severity: 'warning', lineNumber: current.lineNumber, type: 'Гострий кут', message: `Зміна напрямку ${turnAngle.toFixed(1)}°` })
     if (requiredAcceleration > accelerationLimit) findings.push({ severity: 'warning', lineNumber: current.lineNumber, type: 'Прискорення', message: `Орієнтовно ${requiredAcceleration.toFixed(1)} мм/с² при дозволених ${accelerationLimit}` })
   }
@@ -82,6 +89,7 @@ export function analyzeMotionDynamics(source, options = {}) {
     machineZeroKnown,
     segments,
     findings,
+    advisories,
     safe: !findings.some(item => item.severity === 'danger'),
     warningCount: findings.filter(item => item.severity === 'warning').length,
     dangerCount: findings.filter(item => item.severity === 'danger').length,
@@ -108,7 +116,7 @@ export function groupMotionFindings(findings) {
 
 export function formatMotionFindingsForAi(analysis, limit = 12) {
   if (!analysis) return 'Аналіз NC ще не виконано.'
-  if (!analysis.findings?.length) return 'Попереджень і небезпек аналізу NC не знайдено.'
+  if (!analysis.findings?.length && !analysis.advisories?.length) return 'Попереджень і небезпек аналізу NC не знайдено.'
   const severityWeight = { danger: 2, warning: 1 }
   const groups = groupMotionFindings(analysis.findings).sort((left, right) =>
     (severityWeight[right.severity] || 0) - (severityWeight[left.severity] || 0)
@@ -118,5 +126,6 @@ export function formatMotionFindingsForAi(analysis, limit = 12) {
     const lines = [...new Set(group.lines)].slice(0, 5).join(', ')
     return `${group.severity === 'danger' ? 'НЕБЕЗПЕКА' : 'УВАГА'} — ${group.type}; спрацювань ${group.count}; рядки ${lines}; ${group.message}`
   })
-  return `Підсумок: небезпек ${analysis.dangerCount}, попереджень ${analysis.warningCount}, найбільша подача F${analysis.maximumProgramFeed}.\n${rows.join('\n')}`
+  const serviceRows = (analysis.advisories || []).slice(0, limit).map(item => `СЛУЖБОВИЙ РУХ — ${item.type}; рядок ${item.lineNumber}; ${item.message}`)
+  return `Підсумок: небезпек ${analysis.dangerCount}, попереджень ${analysis.warningCount}, службових рухів ${(analysis.advisories || []).length}, найбільша подача F${analysis.maximumProgramFeed}.\n${[...rows, ...serviceRows].join('\n')}`
 }

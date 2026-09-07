@@ -719,7 +719,22 @@ export const createBatchCutRoute = layout => {
     addMove(portalLeft, portalRight, `Секція ${sectionNumber(item)}: ${item.part.name}${item.rotated ? ', поворот 90°' : ''}`)
     addMove(leftCut[0], rightCut[0], 'Вхід у деталь')
     for (let index = 1; index < leftCut.length; index += 1) {
-      addMove(leftCut[index], rightCut[index])
+      let comment = ''
+      if ((item.innerLeft || item.innerRight) && index >= 2) {
+        const previousDelta = [
+          leftCut[index - 1].x - leftCut[index - 2].x, leftCut[index - 1].y - leftCut[index - 2].y,
+          rightCut[index - 1].x - rightCut[index - 2].x, rightCut[index - 1].y - rightCut[index - 2].y
+        ]
+        const currentDelta = [
+          leftCut[index].x - leftCut[index - 1].x, leftCut[index].y - leftCut[index - 1].y,
+          rightCut[index].x - rightCut[index - 1].x, rightCut[index].y - rightCut[index - 1].y
+        ]
+        const lengths = [Math.hypot(...previousDelta), Math.hypot(...currentDelta)]
+        const cosine = previousDelta.reduce((sum, value, axis) => sum + value * currentDelta[axis], 0) / Math.max(lengths[0] * lengths[1], 1e-9)
+        const angle = Math.acos(Math.max(-1, Math.min(1, cosine))) * 180 / Math.PI
+        if (angle >= 170) comment = 'Контрольоване повернення по входу'
+      }
+      addMove(leftCut[index], rightCut[index], comment)
     }
     addMove(leftCut[0], rightCut[0], 'Замикання контуру')
     addMove(portalLeft, portalRight, 'Безпечний вихід у коридор')

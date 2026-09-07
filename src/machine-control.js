@@ -590,17 +590,17 @@ export function initializeMachineControl({ getNcText, getBlockSetup, onPositionC
         : 'Прив’язка робочого нуля невідома: фізичні межі станка не підтверджено.')
       + ` Небезпек аналізу: ${dynamics.dangerCount}; попереджень: ${dynamics.warningCount}.`
     setupReport.textContent = installationCard
-    motionSummary.textContent = dynamics.findings.length
-      ? `Проаналізовано ${dynamics.segments.length} рухів: небезпек ${dynamics.dangerCount}, попереджень ${dynamics.warningCount}; найбільша F${dynamics.maximumProgramFeed}.`
+    motionSummary.textContent = dynamics.findings.length || dynamics.advisories.length
+      ? `Проаналізовано ${dynamics.segments.length} рухів: небезпек ${dynamics.dangerCount}, попереджень ${dynamics.warningCount}, службових ${dynamics.advisories.length}; найбільша F${dynamics.maximumProgramFeed}.`
       : `Проаналізовано ${dynamics.segments.length} рухів: різких або небезпечних переходів не знайдено; найбільша F${dynamics.maximumProgramFeed}.`
-    const groupedFindings = groupMotionFindings(dynamics.findings)
+    const groupedFindings = [...groupMotionFindings(dynamics.findings), ...groupMotionFindings(dynamics.advisories)]
     const shownFindings = groupedFindings
     motionFindings.replaceChildren(...shownFindings.map(item => {
       const row = document.createElement('tr')
       row.dataset.severity = item.severity
       const numericLines = item.lines.filter(Number.isFinite)
       const lineSummary = numericLines.length ? `${Math.min(...numericLines)}…${Math.max(...numericLines)}` : '—'
-      const values = [item.severity === 'danger' ? 'НЕБЕЗПЕКА' : 'УВАГА', lineSummary, `${item.type} (${item.count})`, item.message]
+      const values = [item.severity === 'danger' ? 'НЕБЕЗПЕКА' : item.severity === 'info' ? 'СЛУЖБОВИЙ' : 'УВАГА', lineSummary, `${item.type} (${item.count})`, item.message]
       values.forEach(value => { const cell = document.createElement('td'); cell.textContent = value; row.appendChild(cell) })
       const details = document.createElement('details')
       const summary = document.createElement('summary')
