@@ -5,6 +5,7 @@ import { analyzeMachineJob, formatMachineSetupCard } from './machine-job-setup.j
 import { analyzeMotionDynamics, groupMotionFindings } from './motion-analysis.js'
 import { assessOperatorState, buildOperatorSignals, buildOperatorSteps, formatOperatorReport } from './operator-assistant.js'
 import { assessWire, createResumePlan, estimateCutTime, formatCompletedRun, prioritizeWarnings, recommendHeat, simulationDelayMs } from './operator-advanced.js'
+import { formatExperienceForAi, loadExperiences, normalizeExperience, saveExperiences } from './experience-journal.js'
 
 const AXES = VIRTUAL_AXES
 const STATUS_AXES = ['X', 'Y', 'Z', 'A', 'B']
@@ -126,6 +127,16 @@ export function initializeMachineControl({ getNcText, getBlockSetup, onPositionC
   const aiAsk = el('operatorAiAsk')
   const aiSpeak = el('operatorAiSpeak')
   const aiAnswer = el('operatorAiAnswer')
+  const experienceMaterial = el('operatorExperienceMaterial')
+  const experienceThickness = el('operatorExperienceThickness')
+  const experienceWire = el('operatorExperienceWire')
+  const experienceFeed = el('operatorExperienceFeed')
+  const experienceHeat = el('operatorExperienceHeat')
+  const experienceResult = el('operatorExperienceResult')
+  const experienceNote = el('operatorExperienceNote')
+  const experienceAdd = el('operatorExperienceAdd')
+  const experienceExport = el('operatorExperienceExport')
+  const experienceList = el('operatorExperienceList')
   const RHVOICE_URI = 'rhvoice:volodymyr'
 
   let port = null
@@ -153,6 +164,23 @@ export function initializeMachineControl({ getNcText, getBlockSetup, onPositionC
   let jobStartedAt = null
   let runReportText = ''
   let resumePlanText = ''
+  let experiences = loadExperiences(localStorage)
+
+  const renderExperiences = () => {
+    experienceList.replaceChildren(...experiences.map(entry => {
+      const item = document.createElement('li')
+      const text = document.createElement('span')
+      text.textContent = `${new Date(entry.createdAt).toLocaleDateString('uk-UA')}: ${entry.material}, ${entry.thicknessMm ?? '?'} мм, струна ${entry.wireDiameterMm ?? '?'} мм, F${entry.feed ?? '?'}, нагрів ${entry.heatPercent ?? '?'}% — ${entry.result}${entry.note ? `. ${entry.note}` : ''}`
+      const remove = document.createElement('button')
+      remove.type = 'button'; remove.textContent = 'Видалити'; remove.dataset.experienceRemove = entry.id
+      item.append(text, remove)
+      return item
+    }))
+    if (!experiences.length) {
+      const empty = document.createElement('li'); empty.textContent = 'Записів ще немає.'; experienceList.appendChild(empty)
+    }
+    experienceExport.disabled = !experiences.length
+  }
 
   const getProfile = () => ({
     limits: getLimits(),
@@ -887,7 +915,7 @@ export function initializeMachineControl({ getNcText, getBlockSetup, onPositionC
     aiAnswer.textContent = 'Помічник думає…'
     const signals = buildOperatorSignals(getAssistantContext()).map(item => `${item.label}: ${item.value}`).join('\n')
     const steps = buildOperatorSteps(getAssistantContext()).map((item, index) => `${index + 1}. ${item}`).join('\n')
-    const context = `Детермінований стан: ${latestAssessment.label}\nПричина: ${latestAssessment.reason}\nДія: ${latestAssessment.action}\n${signals}\nКроки:\n${steps}`
+    const context = `Детермінований стан: ${latestAssessment.label}\nПричина: ${latestAssessment.reason}\nДія: ${latestAssessment.action}\n${signals}\nКроки:\n${steps}\n\nЖУРНАЛ ДОСВІДУ ГУРТ:\n${formatExperienceForAi(experiences)}`
     try {
       const answer = await window.hurtAi.ask(aiModel.value, aiQuestion.value, context)
       aiAnswer.textContent = answer || 'Модель не повернула відповіді.'
@@ -897,6 +925,34 @@ export function initializeMachineControl({ getNcText, getBlockSetup, onPositionC
     } finally { aiAsk.disabled = false }
   })
   aiSpeak.addEventListener('click', () => speak(aiAnswer.textContent, true))
+  experienceAdd.addEventListener('click', () => {
+    const note = experienceNote.value.trim()
+    const entry = normalizeExperience({
+      material: experienceMaterial.value,
+      thicknessMm: experienceThickness.value,
+      wireDiameterMm: experienceWire.value,
+      feed: experienceFeed.value,
+      heatPercent: experienceHeat.value,
+      result: experienceResult.value,
+      note
+    })
+    if (!entry.thicknessMm || !entry.wireDiameterMm || !entry.feed || entry.heatPercent === null) {
+      experienceNote.setCustomValidity('Заповніть товщину, струну, швидкість і нагрів.')
+      experienceNote.reportValidity(); return
+    }
+    experienceNote.setCustomValidity('')
+    experiences = saveExperiences(localStorage, [entry, ...experiences])
+    experienceNote.value = ''
+    renderExperiences()
+    addJournal('Досвід', `Збережено: ${entry.material}, ${entry.thicknessMm} мм, ${entry.result}`)
+  })
+  experienceList.addEventListener('click', event => {
+    const id = event.target.dataset.experienceRemove
+    if (!id) return
+    experiences = saveExperiences(localStorage, experiences.filter(entry => entry.id !== id))
+    renderExperiences()
+  })
+  experienceExport.addEventListener('click', () => saveText(`${JSON.stringify({ version: 1, exportedAt: new Date().toISOString(), experiences }, null, 2)}\n`, `hurt-experience-${new Date().toISOString().slice(0, 10)}.json`))
   assistantDownload.addEventListener('click', () => {
     renderAssistant()
     const report = formatOperatorReport({
@@ -1003,6 +1059,7 @@ export function initializeMachineControl({ getNcText, getBlockSetup, onPositionC
   voiceRate.dispatchEvent(new Event('input'))
   loadVoices()
   loadAiModels()
+  renderExperiences()
   if ('speechSynthesis' in window) window.speechSynthesis.addEventListener?.('voiceschanged', loadVoices)
   mode.dispatchEvent(new Event('change'))
 }

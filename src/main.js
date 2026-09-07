@@ -720,6 +720,22 @@ view3d.innerHTML = `
           <p class="operator-ai__guard">AI лише пояснює результати перевірок і не керує станком.</p>
           <pre id="operatorAiAnswer">Тут з’явиться відповідь локального помічника.</pre>
         </article>
+        <article class="operator-experience"><h3>9. Журнал досвіду ГУРТ</h3>
+          <p>Записуйте фактичний результат пробного або робочого різу. Цей досвід буде доступний локальному AI.</p>
+          <div class="operator-experience__fields">
+            <label>Матеріал <select id="operatorExperienceMaterial"><option>EPS</option><option>XPS</option><option>EPP</option><option>Інше</option></select></label>
+            <label>Товщина, мм <input id="operatorExperienceThickness" type="number" min="1" value="100"></label>
+            <label>Струна, мм <input id="operatorExperienceWire" type="number" min="0.05" step="0.05" value="0.3"></label>
+            <label>Швидкість F <input id="operatorExperienceFeed" type="number" min="1" value="300"></label>
+            <label>Нагрів, % <input id="operatorExperienceHeat" type="number" min="0" max="100" value="40"></label>
+            <label>Результат <select id="operatorExperienceResult"><option>Добре</option><option>Потребує корекції</option><option>Невдало</option></select></label>
+          </div>
+          <label>Примітка оператора <textarea id="operatorExperienceNote" rows="2" maxlength="500" placeholder="Наприклад: чистий зріз, без хвилі; наступного разу залишити ці параметри"></textarea></label>
+          <button id="operatorExperienceAdd" type="button">Додати досвід</button>
+          <button id="operatorExperienceExport" type="button" disabled>Зберегти копію журналу</button>
+          <ol id="operatorExperienceList" class="operator-experience__list"></ol>
+          <p class="operator-ai__guard">Запис оператора є довідкою, а не автоматичним дозволом на різання.</p>
+        </article>
       </div>
     </section>
     <div class="machine-diagnostics">
