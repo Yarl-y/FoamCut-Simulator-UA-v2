@@ -105,3 +105,18 @@ export function groupMotionFindings(findings) {
   }
   return [...groups.values()]
 }
+
+export function formatMotionFindingsForAi(analysis, limit = 12) {
+  if (!analysis) return 'Аналіз NC ще не виконано.'
+  if (!analysis.findings?.length) return 'Попереджень і небезпек аналізу NC не знайдено.'
+  const severityWeight = { danger: 2, warning: 1 }
+  const groups = groupMotionFindings(analysis.findings).sort((left, right) =>
+    (severityWeight[right.severity] || 0) - (severityWeight[left.severity] || 0)
+    || (Number(left.clearance) || Infinity) - (Number(right.clearance) || Infinity)
+    || right.count - left.count)
+  const rows = groups.slice(0, limit).map(group => {
+    const lines = [...new Set(group.lines)].slice(0, 5).join(', ')
+    return `${group.severity === 'danger' ? 'НЕБЕЗПЕКА' : 'УВАГА'} — ${group.type}; спрацювань ${group.count}; рядки ${lines}; ${group.message}`
+  })
+  return `Підсумок: небезпек ${analysis.dangerCount}, попереджень ${analysis.warningCount}, найбільша подача F${analysis.maximumProgramFeed}.\n${rows.join('\n')}`
+}

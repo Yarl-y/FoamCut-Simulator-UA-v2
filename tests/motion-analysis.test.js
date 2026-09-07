@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { analyzeMotionDynamics, groupMotionFindings } from '../src/motion-analysis.js'
+import { analyzeMotionDynamics, formatMotionFindingsForAi, groupMotionFindings } from '../src/motion-analysis.js'
 
 const limits = { X: 600, Y: 600, A: 600, Z: 600 }
 const program = 'G90\nF300\nG1 X5 Y5 A5 Z5\nG1 X0 Y0 A0 Z0'
@@ -38,4 +38,17 @@ test('rounding-size segment does not create a false 149 degree reversal', () => 
     limits: { X: 600, Y: 600, A: 600, Z: 600 }, maximumFeed: 1000, acceleration: 100
   })
   assert.equal(result.findings.filter(item => item.type === 'Розворот').length, 0)
+})
+
+test('AI context separates and prioritizes NC findings with line numbers', () => {
+  const text = formatMotionFindingsForAi({
+    dangerCount: 1, warningCount: 1, maximumProgramFeed: 300,
+    findings: [
+      { severity: 'warning', type: 'Гострий кут', lineNumber: 20, message: 'Зміна напрямку 90°' },
+      { severity: 'danger', type: 'Межа моделі X', lineNumber: 15, message: 'Запас -2 мм', clearance: -2 }
+    ]
+  })
+  assert.match(text, /небезпек 1, попереджень 1/)
+  assert.ok(text.indexOf('НЕБЕЗПЕКА') < text.indexOf('УВАГА'))
+  assert.match(text, /рядки 15/)
 })

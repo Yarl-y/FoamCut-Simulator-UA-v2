@@ -2,7 +2,7 @@ import { validateVirtualProgram, VirtualFluidNC, VIRTUAL_AXES } from './virtual-
 import { calculateCalibratedSteps, createControllerPlan } from './controller-setup.js'
 import { runSafetyScenarios, sanitizeColdRunLine } from './safety-scenarios.js'
 import { analyzeMachineJob, formatMachineSetupCard } from './machine-job-setup.js'
-import { analyzeMotionDynamics, groupMotionFindings } from './motion-analysis.js'
+import { analyzeMotionDynamics, formatMotionFindingsForAi, groupMotionFindings } from './motion-analysis.js'
 import { assessOperatorState, buildOperatorSignals, buildOperatorSteps, formatOperatorReport } from './operator-assistant.js'
 import { assessWire, createResumePlan, estimateCutTime, formatCompletedRun, prioritizeWarnings, recommendHeat, simulationDelayMs } from './operator-advanced.js'
 import { formatExperienceForAi, loadExperiences, normalizeExperience, saveExperiences } from './experience-journal.js'
@@ -919,7 +919,12 @@ export function initializeMachineControl({ getNcText, getBlockSetup, onPositionC
     aiAnswer.textContent = 'Помічник думає…'
     const signals = buildOperatorSignals(getAssistantContext()).map(item => `${item.label}: ${item.value}`).join('\n')
     const steps = buildOperatorSteps(getAssistantContext()).map((item, index) => `${index + 1}. ${item}`).join('\n')
-    const context = `Детермінований стан: ${latestAssessment.label}\nПричина: ${latestAssessment.reason}\nДія: ${latestAssessment.action}\n${signals}\nКроки:\n${steps}\n\nЖУРНАЛ ДОСВІДУ ГУРТ:\n${formatExperienceForAi(experiences)}`
+    const context = [
+      `ЗАГАЛЬНИЙ ДЕТЕРМІНОВАНИЙ СТАН: ${latestAssessment.label}\nПричина: ${latestAssessment.reason}\nРекомендована дія: ${latestAssessment.action}`,
+      `ПОПЕРЕДЖЕННЯ САМЕ ЦЬОГО NC-ФАЙЛУ:\n${formatMotionFindingsForAi(latestDynamics)}`,
+      `СТАН ОБЛАДНАННЯ ТА ПЕРЕВІРОК:\n${signals}\nКроки оператора:\n${steps}`,
+      `ЖУРНАЛ ДОСВІДУ ГУРТ:\n${formatExperienceForAi(experiences)}`
+    ].join('\n\n')
     try {
       const answer = await window.hurtAi.ask(aiModel.value, aiQuestion.value, context)
       aiAnswer.textContent = answer || 'Модель не повернула відповіді.'
