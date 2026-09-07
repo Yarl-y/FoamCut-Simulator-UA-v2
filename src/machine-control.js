@@ -239,9 +239,10 @@ export function initializeMachineControl({ getNcText, getBlockSetup, onPositionC
     if ((!voiceEnabled.checked && !force) || !('speechSynthesis' in window)) return
     if (voiceSelect.value === RHVOICE_URI && window.hurtSpeech) {
       window.speechSynthesis.cancel()
-      window.hurtSpeech.speak(message, Number(voiceRate.value) || 0.95).catch(() => {
-        voiceStatus.textContent = 'Не вдалося запустити Volodymyr. Перезапустіть застосунок.'
-      })
+      voiceStatus.textContent = 'Volodymyr говорить…'
+      window.hurtSpeech.speak(message, Number(voiceRate.value) || 0.95)
+        .then(() => { voiceStatus.textContent = 'Volodymyr на зв’язку. Озвучення працює.' })
+        .catch(() => { voiceStatus.textContent = 'Не вдалося запустити Volodymyr. Перезапустіть застосунок.' })
       return
     }
     window.speechSynthesis.cancel()
@@ -251,6 +252,9 @@ export function initializeMachineControl({ getNcText, getBlockSetup, onPositionC
     if (selected) utterance.voice = selected
     utterance.lang = selected?.lang || 'uk-UA'
     utterance.rate = Number(voiceRate.value) || 0.95
+    utterance.onstart = () => { voiceStatus.textContent = 'Голос говорить…' }
+    utterance.onend = () => { voiceStatus.textContent = 'Голос на зв’язку. Озвучення працює.' }
+    utterance.onerror = () => { voiceStatus.textContent = 'Не вдалося озвучити повідомлення.' }
     window.speechSynthesis.speak(utterance)
   }
 
