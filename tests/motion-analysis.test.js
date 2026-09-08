@@ -45,8 +45,16 @@ test('nearly stationary wire end is reported as a burn-through risk', () => {
   const result = analyzeMotionDynamics('G90\nF300\nG1 X20 Y0 A0.5 Z0', { limits })
   const risk = result.findings.find(item => item.type === 'Ризик пропалу')
   assert.equal(result.burnThroughRiskCount, 1)
+  assert.equal(risk.severity, 'danger')
   assert.equal(risk.lineNumber, 3)
   assert.match(risk.message, /X\/Y 20\.000 мм, A\/Z 0\.500 мм \(2\.5%\)/)
+})
+
+test('large wire-end speed difference is a warning before the stop zone', () => {
+  const result = analyzeMotionDynamics('G90\nG1 X20 Y0 A4 Z0', { limits })
+  const risk = result.findings.find(item => item.type === 'Ризик пропалу')
+  assert.equal(risk.severity, 'warning')
+  assert.match(risk.message, /20\.0%/)
 })
 
 test('balanced movement of both wire ends has no burn-through warning', () => {

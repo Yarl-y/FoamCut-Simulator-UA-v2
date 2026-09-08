@@ -1,7 +1,8 @@
 const AXES = ['X', 'Y', 'A', 'Z']
 const MIN_DIRECTION_SEGMENT_MM = 0.01
 const MIN_SYNCHRONY_SEGMENT_MM = 1
-const BURN_THROUGH_RATIO = 0.05
+const BURN_THROUGH_DANGER_RATIO = 0.05
+const BURN_THROUGH_WARNING_RATIO = 0.25
 
 const cleanLine = line => String(line).replace(/\([^)]*\)/g, '').replace(/;.*$/, '').trim().toUpperCase()
 const valueOf = (line, letter) => {
@@ -61,9 +62,10 @@ export function analyzeMotionDynamics(source, options = {}) {
     Object.assign(position, to)
 
     if (feed > maximumFeed) findings.push({ severity: 'danger', lineNumber: segment.lineNumber, type: 'Швидкість', message: `F${feed} перевищує дозволені F${maximumFeed}` })
-    if (longerSideDistance >= MIN_SYNCHRONY_SEGMENT_MM && synchronyRatio <= BURN_THROUGH_RATIO) {
-      findings.push({ severity: 'warning', lineNumber: segment.lineNumber, type: 'Ризик пропалу', synchronyRatio,
-        message: `Кінець ${slowerSide} майже стоїть: X/Y ${leftDistance.toFixed(3)} мм, A/Z ${rightDistance.toFixed(3)} мм (${(synchronyRatio * 100).toFixed(1)}%). Перевірте нагрів або розподіл точок траєкторії пробним різом.` })
+    if (longerSideDistance >= MIN_SYNCHRONY_SEGMENT_MM && synchronyRatio < BURN_THROUGH_WARNING_RATIO) {
+      const isDanger = synchronyRatio <= BURN_THROUGH_DANGER_RATIO
+      findings.push({ severity: isDanger ? 'danger' : 'warning', lineNumber: segment.lineNumber, type: 'Ризик пропалу', synchronyRatio,
+        message: `Кінець ${slowerSide} ${isDanger ? 'практично стоїть' : 'рухається значно повільніше'}: X/Y ${leftDistance.toFixed(3)} мм, A/Z ${rightDistance.toFixed(3)} мм (${(synchronyRatio * 100).toFixed(1)}%). ${isDanger ? 'Не починайте різ без виправлення або окремої перевірки.' : 'Перевірте нагрів або розподіл точок траєкторії пробним різом.'}` })
     }
     AXES.forEach(axis => {
       const limit = Math.max(0, Number(limits[axis]) || 0)
