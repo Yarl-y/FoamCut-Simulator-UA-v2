@@ -69,7 +69,7 @@ test('unmarked reversal remains a danger', () => {
 })
 
 test('batch route labels a controlled return around a spar hole in a solid section', () => {
-  const cut = [{ x: 10, y: 20 }, { x: 20, y: 20 }, { x: 10, y: 20 }, { x: 10, y: 30 }]
+  const cut = [{ x: 10, y: 20 }, { x: 20, y: 20 }, { x: 10.54, y: 23.26 }, { x: 10, y: 30 }]
   const item = {
     row: 0, column: 0, index: 0, innerLeft: null, innerRight: null,
     cutLeft: cut, cutRight: cut.map(point => ({ ...point })),

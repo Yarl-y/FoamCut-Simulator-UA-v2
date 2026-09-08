@@ -720,7 +720,8 @@ export const createBatchCutRoute = layout => {
     addMove(leftCut[0], rightCut[0], 'Вхід у деталь')
     for (let index = 1; index < leftCut.length; index += 1) {
       let comment = ''
-      const hasKnownInternalRoute = item.innerLeft || item.innerRight || item.part.straightSparRods?.length
+      const hasSparHoleRoute = Boolean(item.part.straightSparRods?.length)
+      const hasKnownInternalRoute = item.innerLeft || item.innerRight || hasSparHoleRoute
       if (hasKnownInternalRoute && index >= 2) {
         const previousDelta = [
           leftCut[index - 1].x - leftCut[index - 2].x, leftCut[index - 1].y - leftCut[index - 2].y,
@@ -733,7 +734,8 @@ export const createBatchCutRoute = layout => {
         const lengths = [Math.hypot(...previousDelta), Math.hypot(...currentDelta)]
         const cosine = previousDelta.reduce((sum, value, axis) => sum + value * currentDelta[axis], 0) / Math.max(lengths[0] * lengths[1], 1e-9)
         const angle = Math.acos(Math.max(-1, Math.min(1, cosine))) * 180 / Math.PI
-        if (angle >= 170) comment = 'Контрольоване повернення по входу'
+        const controlledReturnThreshold = hasSparHoleRoute ? 135 : 170
+        if (angle >= controlledReturnThreshold) comment = 'Контрольоване повернення по входу'
       }
       addMove(leftCut[index], rightCut[index], comment)
     }
