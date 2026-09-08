@@ -17,8 +17,12 @@ test('experience journal normalizes, saves and loads safe values', () => {
 })
 
 test('experience journal creates compact AI context', () => {
-  const text = formatExperienceForAi([normalizeExperience({ material: 'EPS', thicknessMm: 80, wireDiameterMm: 0.3, feed: 250, heatPercent: 40, result: 'Добре' })])
+  const text = formatExperienceForAi([normalizeExperience({ material: 'EPS', thicknessMm: 80, wireDiameterMm: 0.3, feed: 250, heatPercent: 40,
+    largeKerfMm: 0.8, smallKerfMm: 1.2, synchronyPercent: 20, result: 'Добре' })])
   assert.match(text, /EPS, 80 мм/)
   assert.match(text, /F250/)
+  assert.match(text, /великий контур 0\.8 мм/)
+  assert.match(text, /малий контур 1\.2 мм/)
+  assert.match(text, /синхронність 20%/)
   assert.match(formatExperienceForAi([]), /ще не записано/)
 })

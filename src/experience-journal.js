@@ -11,6 +11,9 @@ export const normalizeExperience = (entry = {}) => ({
   wireDiameterMm: finiteNumber(entry.wireDiameterMm),
   feed: finiteNumber(entry.feed),
   heatPercent: finiteNumber(entry.heatPercent),
+  largeKerfMm: finiteNumber(entry.largeKerfMm),
+  smallKerfMm: finiteNumber(entry.smallKerfMm),
+  synchronyPercent: finiteNumber(entry.synchronyPercent),
   result: ['Добре', 'Потребує корекції', 'Невдало'].includes(entry.result) ? entry.result : 'Добре',
   note: cleanText(entry.note)
 })
@@ -33,6 +36,9 @@ export const formatExperienceForAi = (entries, limit = 10) => {
   return entries.slice(0, limit).map((entry, index) => [
     `${index + 1}. ${entry.createdAt.slice(0, 10)} — ${entry.material}, ${entry.thicknessMm ?? '?'} мм`,
     `струна ${entry.wireDiameterMm ?? '?'} мм, F${entry.feed ?? '?'}, нагрів ${entry.heatPercent ?? '?'}%, результат: ${entry.result}`,
+    entry.largeKerfMm !== null || entry.smallKerfMm !== null
+      ? `пропал: великий контур ${entry.largeKerfMm ?? '?'} мм, малий контур ${entry.smallKerfMm ?? '?'} мм, синхронність ${entry.synchronyPercent ?? '?'}%`
+      : '',
     entry.note ? `примітка: ${entry.note}` : ''
   ].filter(Boolean).join('; ')).join('\n')
 }

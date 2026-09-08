@@ -132,6 +132,9 @@ export function initializeMachineControl({ getNcText, getBlockSetup, onPositionC
   const experienceWire = el('operatorExperienceWire')
   const experienceFeed = el('operatorExperienceFeed')
   const experienceHeat = el('operatorExperienceHeat')
+  const experienceLargeKerf = el('operatorExperienceLargeKerf')
+  const experienceSmallKerf = el('operatorExperienceSmallKerf')
+  const experienceSynchrony = el('operatorExperienceSynchrony')
   const experienceResult = el('operatorExperienceResult')
   const experienceNote = el('operatorExperienceNote')
   const experienceAdd = el('operatorExperienceAdd')
@@ -170,7 +173,10 @@ export function initializeMachineControl({ getNcText, getBlockSetup, onPositionC
     experienceList.replaceChildren(...experiences.map(entry => {
       const item = document.createElement('li')
       const text = document.createElement('span')
-      text.textContent = `${new Date(entry.createdAt).toLocaleDateString('uk-UA')}: ${entry.material}, ${entry.thicknessMm ?? '?'} мм, струна ${entry.wireDiameterMm ?? '?'} мм, F${entry.feed ?? '?'}, нагрів ${entry.heatPercent ?? '?'}% — ${entry.result}${entry.note ? `. ${entry.note}` : ''}`
+      const kerf = entry.largeKerfMm !== null || entry.smallKerfMm !== null
+        ? `, пропал великий ${entry.largeKerfMm ?? '?'} мм / малий ${entry.smallKerfMm ?? '?'} мм, синхронність ${entry.synchronyPercent ?? '?'}%`
+        : ''
+      text.textContent = `${new Date(entry.createdAt).toLocaleDateString('uk-UA')}: ${entry.material}, ${entry.thicknessMm ?? '?'} мм, струна ${entry.wireDiameterMm ?? '?'} мм, F${entry.feed ?? '?'}, нагрів ${entry.heatPercent ?? '?'}%${kerf} — ${entry.result}${entry.note ? `. ${entry.note}` : ''}`
       const remove = document.createElement('button')
       remove.type = 'button'; remove.textContent = 'Видалити'; remove.dataset.experienceRemove = entry.id
       item.append(text, remove)
@@ -942,6 +948,9 @@ export function initializeMachineControl({ getNcText, getBlockSetup, onPositionC
       wireDiameterMm: experienceWire.value,
       feed: experienceFeed.value,
       heatPercent: experienceHeat.value,
+      largeKerfMm: experienceLargeKerf.value,
+      smallKerfMm: experienceSmallKerf.value,
+      synchronyPercent: experienceSynchrony.value,
       result: experienceResult.value,
       note
     })
@@ -961,7 +970,7 @@ export function initializeMachineControl({ getNcText, getBlockSetup, onPositionC
     experiences = saveExperiences(localStorage, experiences.filter(entry => entry.id !== id))
     renderExperiences()
   })
-  experienceExport.addEventListener('click', () => saveText(`${JSON.stringify({ version: 1, exportedAt: new Date().toISOString(), experiences }, null, 2)}\n`, `hurt-experience-${new Date().toISOString().slice(0, 10)}.json`))
+  experienceExport.addEventListener('click', () => saveText(`${JSON.stringify({ version: 2, exportedAt: new Date().toISOString(), experiences }, null, 2)}\n`, `hurt-experience-${new Date().toISOString().slice(0, 10)}.json`))
   assistantDownload.addEventListener('click', () => {
     renderAssistant()
     const report = formatOperatorReport({

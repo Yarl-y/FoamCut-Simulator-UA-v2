@@ -728,6 +728,9 @@ view3d.innerHTML = `
             <label>Струна, мм <input id="operatorExperienceWire" type="number" min="0.05" step="0.05" value="0.3"></label>
             <label>Швидкість F <input id="operatorExperienceFeed" type="number" min="1" value="300"></label>
             <label>Нагрів, % <input id="operatorExperienceHeat" type="number" min="0" max="100" value="40"></label>
+            <label>Пропал великого, мм <input id="operatorExperienceLargeKerf" type="number" min="0" max="10" step="0.1" value="0.8"></label>
+            <label>Пропал малого, мм <input id="operatorExperienceSmallKerf" type="number" min="0" max="10" step="0.1" value="1.2"></label>
+            <label>Синхронність, % <input id="operatorExperienceSynchrony" type="number" min="0" max="100" step="0.1" placeholder="Наприклад, 20"></label>
             <label>Результат <select id="operatorExperienceResult"><option>Добре</option><option>Потребує корекції</option><option>Невдало</option></select></label>
           </div>
           <label>Примітка оператора <textarea id="operatorExperienceNote" rows="2" maxlength="500" placeholder="Наприклад: чистий зріз, без хвилі; наступного разу залишити ці параметри"></textarea></label>
