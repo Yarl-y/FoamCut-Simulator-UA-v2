@@ -41,6 +41,20 @@ test('rounding-size segment does not create a false 149 degree reversal', () => 
   assert.equal(result.findings.filter(item => item.type === 'Розворот').length, 0)
 })
 
+test('nearly stationary wire end is reported as a burn-through risk', () => {
+  const result = analyzeMotionDynamics('G90\nF300\nG1 X20 Y0 A0.5 Z0', { limits })
+  const risk = result.findings.find(item => item.type === 'Ризик пропалу')
+  assert.equal(result.burnThroughRiskCount, 1)
+  assert.equal(risk.lineNumber, 3)
+  assert.match(risk.message, /X\/Y 20\.000 мм, A\/Z 0\.500 мм \(2\.5%\)/)
+})
+
+test('balanced movement of both wire ends has no burn-through warning', () => {
+  const result = analyzeMotionDynamics('G90\nG1 X20 Y0 A18 Z0', { limits })
+  assert.equal(result.burnThroughRiskCount, 0)
+  assert.ok(!result.findings.some(item => item.type === 'Ризик пропалу'))
+})
+
 test('AI context separates and prioritizes NC findings with line numbers', () => {
   const text = formatMotionFindingsForAi({
     dangerCount: 1, warningCount: 1, maximumProgramFeed: 300,

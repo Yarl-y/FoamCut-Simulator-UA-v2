@@ -591,7 +591,7 @@ export function initializeMachineControl({ getNcText, getBlockSetup, onPositionC
       + ` Небезпек аналізу: ${dynamics.dangerCount}; попереджень: ${dynamics.warningCount}.`
     setupReport.textContent = installationCard
     motionSummary.textContent = dynamics.findings.length || dynamics.advisories.length
-      ? `Проаналізовано ${dynamics.segments.length} рухів: небезпек ${dynamics.dangerCount}, попереджень ${dynamics.warningCount}, службових ${dynamics.advisories.length}; найбільша F${dynamics.maximumProgramFeed}.`
+      ? `Проаналізовано ${dynamics.segments.length} рухів: небезпек ${dynamics.dangerCount}, попереджень ${dynamics.warningCount}, службових ${dynamics.advisories.length}, ризиків пропалу ${dynamics.burnThroughRiskCount}; найбільша F${dynamics.maximumProgramFeed}.`
       : `Проаналізовано ${dynamics.segments.length} рухів: різких або небезпечних переходів не знайдено; найбільша F${dynamics.maximumProgramFeed}.`
     const groupedFindings = [...groupMotionFindings(dynamics.findings), ...groupMotionFindings(dynamics.advisories)]
     const shownFindings = groupedFindings

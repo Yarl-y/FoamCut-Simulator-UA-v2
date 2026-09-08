@@ -1,5 +1,7 @@
 const AXES = ['X', 'Y', 'A', 'Z']
 const MIN_DIRECTION_SEGMENT_MM = 0.01
+const MIN_SYNCHRONY_SEGMENT_MM = 1
+const BURN_THROUGH_RATIO = 0.05
 
 const cleanLine = line => String(line).replace(/\([^)]*\)/g, '').replace(/;.*$/, '').trim().toUpperCase()
 const valueOf = (line, letter) => {
@@ -47,11 +49,22 @@ export function analyzeMotionDynamics(source, options = {}) {
     const velocity = Object.fromEntries(AXES.map(axis => [axis, delta[axis] / Math.max(durationSeconds, 1e-9)]))
     const movementRole = nextMovementRole
     nextMovementRole = ''
-    const segment = { lineNumber: rawIndex + 1, command: line, from, to, delta, distance, feed, durationSeconds, velocity, movementRole }
+    const leftDistance = Math.hypot(delta.X, delta.Y)
+    const rightDistance = Math.hypot(delta.A, delta.Z)
+    const longerSideDistance = Math.max(leftDistance, rightDistance)
+    const shorterSideDistance = Math.min(leftDistance, rightDistance)
+    const synchronyRatio = longerSideDistance > 1e-9 ? shorterSideDistance / longerSideDistance : 1
+    const slowerSide = leftDistance <= rightDistance ? 'X/Y' : 'A/Z'
+    const segment = { lineNumber: rawIndex + 1, command: line, from, to, delta, distance, feed, durationSeconds, velocity,
+      movementRole, leftDistance, rightDistance, synchronyRatio, slowerSide }
     segments.push(segment)
     Object.assign(position, to)
 
     if (feed > maximumFeed) findings.push({ severity: 'danger', lineNumber: segment.lineNumber, type: 'Швидкість', message: `F${feed} перевищує дозволені F${maximumFeed}` })
+    if (longerSideDistance >= MIN_SYNCHRONY_SEGMENT_MM && synchronyRatio <= BURN_THROUGH_RATIO) {
+      findings.push({ severity: 'warning', lineNumber: segment.lineNumber, type: 'Ризик пропалу', synchronyRatio,
+        message: `Кінець ${slowerSide} майже стоїть: X/Y ${leftDistance.toFixed(3)} мм, A/Z ${rightDistance.toFixed(3)} мм (${(synchronyRatio * 100).toFixed(1)}%). Перевірте нагрів або розподіл точок траєкторії пробним різом.` })
+    }
     AXES.forEach(axis => {
       const limit = Math.max(0, Number(limits[axis]) || 0)
       const coordinate = to[axis] + (machineZeroKnown ? options.workZeroMachine[axis] : 0)
@@ -93,7 +106,11 @@ export function analyzeMotionDynamics(source, options = {}) {
     safe: !findings.some(item => item.severity === 'danger'),
     warningCount: findings.filter(item => item.severity === 'warning').length,
     dangerCount: findings.filter(item => item.severity === 'danger').length,
-    maximumProgramFeed: Math.max(0, ...segments.map(segment => segment.feed))
+    maximumProgramFeed: Math.max(0, ...segments.map(segment => segment.feed)),
+    burnThroughRiskCount: findings.filter(item => item.type === 'Ризик пропалу').length,
+    worstSynchronyRatio: Math.min(1, ...segments
+      .filter(segment => Math.max(segment.leftDistance, segment.rightDistance) >= MIN_SYNCHRONY_SEGMENT_MM)
+      .map(segment => segment.synchronyRatio))
   }
 }
 
@@ -127,5 +144,5 @@ export function formatMotionFindingsForAi(analysis, limit = 12) {
     return `${group.severity === 'danger' ? 'НЕБЕЗПЕКА' : 'УВАГА'} — ${group.type}; спрацювань ${group.count}; рядки ${lines}; ${group.message}`
   })
   const serviceRows = (analysis.advisories || []).slice(0, limit).map(item => `СЛУЖБОВИЙ РУХ — ${item.type}; рядок ${item.lineNumber}; ${item.message}`)
-  return `Підсумок: небезпек ${analysis.dangerCount}, попереджень ${analysis.warningCount}, службових рухів ${(analysis.advisories || []).length}, найбільша подача F${analysis.maximumProgramFeed}.\n${[...rows, ...serviceRows].join('\n')}`
+  return `Підсумок: небезпек ${analysis.dangerCount}, попереджень ${analysis.warningCount}, службових рухів ${(analysis.advisories || []).length}, ризиків пропалу ${analysis.burnThroughRiskCount || 0}, найбільша подача F${analysis.maximumProgramFeed}.\n${[...rows, ...serviceRows].join('\n')}`
 }
