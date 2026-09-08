@@ -1,6 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { analyzeMotionDynamics, formatMotionFindingsForAi, groupMotionFindings } from '../src/motion-analysis.js'
+import { createBatchCutRoute } from '../src/batch-layout.js'
 
 const limits = { X: 600, Y: 600, A: 600, Z: 600 }
 const program = 'G90\nF300\nG1 X5 Y5 A5 Z5\nG1 X0 Y0 A0 Z0'
@@ -65,4 +66,15 @@ test('unmarked reversal remains a danger', () => {
   const result = analyzeMotionDynamics('G90\nG1 X10 Y0 A10 Z0\nG1 X0 Y0 A0 Z0', { limits })
   assert.equal(result.dangerCount, 1)
   assert.equal(result.advisories.length, 0)
+})
+
+test('batch route labels a controlled return around a spar hole in a solid section', () => {
+  const cut = [{ x: 10, y: 20 }, { x: 20, y: 20 }, { x: 10, y: 20 }, { x: 10, y: 30 }]
+  const item = {
+    row: 0, column: 0, index: 0, innerLeft: null, innerRight: null,
+    cutLeft: cut, cutRight: cut.map(point => ({ ...point })),
+    part: { name: 'Суцільна секція з отвором', straightSparRods: [{}] }
+  }
+  const route = createBatchCutRoute({ items: [item], rows: 1, blockWidth: 100, blockHeight: 100, corridor: 20, rowLanes: [10] })
+  assert.ok(route.events.some(event => event.comment === 'Контрольоване повернення по входу'))
 })

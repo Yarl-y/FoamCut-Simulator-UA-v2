@@ -720,7 +720,8 @@ export const createBatchCutRoute = layout => {
     addMove(leftCut[0], rightCut[0], 'Вхід у деталь')
     for (let index = 1; index < leftCut.length; index += 1) {
       let comment = ''
-      if ((item.innerLeft || item.innerRight) && index >= 2) {
+      const hasKnownInternalRoute = item.innerLeft || item.innerRight || item.part.straightSparRods?.length
+      if (hasKnownInternalRoute && index >= 2) {
         const previousDelta = [
           leftCut[index - 1].x - leftCut[index - 2].x, leftCut[index - 1].y - leftCut[index - 2].y,
           rightCut[index - 1].x - rightCut[index - 2].x, rightCut[index - 1].y - rightCut[index - 2].y
