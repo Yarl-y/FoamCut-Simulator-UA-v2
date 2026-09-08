@@ -47,7 +47,7 @@ test('nearly stationary wire end is reported as a burn-through risk', () => {
   assert.equal(result.burnThroughRiskCount, 1)
   assert.equal(risk.severity, 'danger')
   assert.equal(risk.lineNumber, 3)
-  assert.match(risk.message, /X\/Y 20\.000 мм, A\/Z 0\.500 мм \(2\.5%\)/)
+  assert.match(risk.message, /X\/Y 20\.0 мм, A\/Z 0\.5 мм; найменша синхронність 2\.5%/)
 })
 
 test('large wire-end speed difference is a warning before the stop zone', () => {
@@ -61,6 +61,14 @@ test('balanced movement of both wire ends has no burn-through warning', () => {
   const result = analyzeMotionDynamics('G90\nG1 X20 Y0 A18 Z0', { limits })
   assert.equal(result.burnThroughRiskCount, 0)
   assert.ok(!result.findings.some(item => item.type === 'Ризик пропалу'))
+})
+
+test('consecutive uneven moves are combined into one synchrony zone', () => {
+  const result = analyzeMotionDynamics('G90\nG1 X20 A2\nG1 X40 A4\nG1 X60 A24', { limits })
+  assert.equal(result.burnThroughRiskCount, 1)
+  assert.equal(result.synchronyZones[0].count, 2)
+  assert.equal(result.synchronyZones[0].startLine, 2)
+  assert.equal(result.synchronyZones[0].endLine, 3)
 })
 
 test('AI context separates and prioritizes NC findings with line numbers', () => {
