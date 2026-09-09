@@ -467,10 +467,53 @@ export function initializeMachineControl({ getNcText, getBlockSetup, onPositionC
     }
     const leftPath = svgNode('polyline', { points: pointsAttribute(leftPoints), fill: 'none', stroke: '#2563eb', 'stroke-width': 2 })
     const rightPath = svgNode('polyline', { points: pointsAttribute(rightPoints), fill: 'none', stroke: '#dc2626', 'stroke-width': 2 })
+    const riskLayer = svgNode('g', { class: 'machine-risk-zones', 'aria-label': 'Зони ризику пропалу' })
+    dynamics.synchronyZones.forEach((zone, zoneIndex) => {
+      const firstPoint = Math.max(0, zone.startIndex)
+      const lastPoint = Math.min(leftPoints.length - 1, zone.endIndex + 1)
+      const color = zone.severity === 'danger' ? '#dc2626' : '#f59e0b'
+      const label = `Зона ${zoneIndex + 1}: рядки ${zone.startLine}–${zone.endLine}; `
+        + `синхронність ${(zone.worstSynchronyRatio * 100).toFixed(1)}%; повільніший ${zone.slowerSide}`
+      const addRiskPath = (points, side) => {
+        const path = svgNode('polyline', {
+          points: pointsAttribute(points.slice(firstPoint, lastPoint + 1)),
+          fill: 'none', stroke: color, 'stroke-width': zone.severity === 'danger' ? 8 : 6,
+          'stroke-opacity': '0.82', 'stroke-linecap': 'round', 'stroke-linejoin': 'round',
+          'data-risk-zone': String(zoneIndex + 1), 'data-risk-side': side
+        })
+        const title = svgNode('title')
+        title.textContent = label
+        path.append(title)
+        riskLayer.append(path)
+      }
+      addRiskPath(leftPoints, 'X/Y')
+      addRiskPath(rightPoints, 'A/Z')
+      const slowerPoints = zone.slowerSide === 'X/Y' ? leftPoints : rightPoints
+      const markerPoint = toSvg(slowerPoints[Math.floor((firstPoint + lastPoint) / 2)].x,
+        slowerPoints[Math.floor((firstPoint + lastPoint) / 2)].y)
+      const marker = svgNode('g', { class: 'machine-risk-marker' })
+      marker.append(svgNode('circle', { cx: markerPoint.x, cy: markerPoint.y, r: 10, fill: color, stroke: '#ffffff', 'stroke-width': 2 }))
+      const markerText = svgNode('text', { x: markerPoint.x, y: markerPoint.y + 4, 'text-anchor': 'middle', fill: '#ffffff', 'font-size': 10, 'font-weight': 800 })
+      markerText.textContent = String(zoneIndex + 1)
+      marker.append(markerText)
+      const markerTitle = svgNode('title')
+      markerTitle.textContent = label
+      marker.append(markerTitle)
+      riskLayer.append(marker)
+    })
+    const legend = svgNode('g', { class: 'machine-risk-legend', transform: 'translate(28 22)' })
+    const legendBackground = svgNode('rect', { x: -8, y: -15, width: 250, height: 25, rx: 5, fill: '#ffffff', 'fill-opacity': '0.9', stroke: '#cbd5e1' })
+    const dangerDot = svgNode('circle', { cx: 6, cy: -2, r: 5, fill: '#dc2626' })
+    const warningDot = svgNode('circle', { cx: 116, cy: -2, r: 5, fill: '#f59e0b' })
+    const dangerText = svgNode('text', { x: 16, y: 2, fill: '#7f1d1d', 'font-size': 11, 'font-weight': 700 })
+    dangerText.textContent = 'небезпека ≤5%'
+    const warningText = svgNode('text', { x: 126, y: 2, fill: '#92400e', 'font-size': 11, 'font-weight': 700 })
+    warningText.textContent = 'увага 5–25%'
+    legend.append(legendBackground, dangerDot, dangerText, warningDot, warningText)
     const wire = svgNode('line', { 'data-live-wire': '', stroke: '#22c55e', 'stroke-width': 4, 'stroke-linecap': 'round' })
     const leftPoint = svgNode('circle', { 'data-live-left': '', r: 5, fill: '#22c55e', stroke: '#14532d' })
     const rightPoint = svgNode('circle', { 'data-live-right': '', r: 5, fill: '#22c55e', stroke: '#14532d' })
-    livePreview.replaceChildren(grid, leftPath, rightPath, wire, leftPoint, rightPoint)
+    livePreview.replaceChildren(grid, leftPath, rightPath, riskLayer, legend, wire, leftPoint, rightPoint)
     updateLivePreviewPosition()
   }
 

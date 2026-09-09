@@ -1543,6 +1543,9 @@ code {
 .machine-live-preview svg { display: block; width: 100%; max-height: 330px; margin: 10px 0 7px; border: 1px solid var(--border); border-radius: 7px; background: #fff; }
 .machine-live-preview p { color: #475569; font: 12px/1.4 var(--mono); }
 .machine-live-grid line { stroke: #e2e8f0; stroke-width: 1; }
+.machine-risk-zones polyline,
+.machine-risk-marker { cursor: help; }
+.machine-risk-zones polyline:hover { stroke-opacity: 1; }
 .machine-installation-card { margin-top: 14px; padding: 16px; border: 2px solid #0f766e; border-radius: 10px; background: color-mix(in srgb, var(--bg) 96%, #14b8a6); }
 .machine-installation-header, .machine-installation-header > div { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; }
 .machine-installation-header h2, .machine-installation-header p { margin: 3px 0; }
