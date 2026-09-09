@@ -171,6 +171,13 @@ const createGliderSection = (
   }))
 }
 
+const centerSectionHorizontally = points => {
+  const minX = Math.min(...points.map(point => point.x))
+  const maxX = Math.max(...points.map(point => point.x))
+  const centerX = (minX + maxX) / 2
+  return points.map(point => ({ ...point, x: point.x - centerX }))
+}
+
 export const createGliderFuselageSegment = ({
   segmentId,
   segmentIndex: requestedSegmentIndex,
@@ -234,8 +241,12 @@ export const createGliderFuselageSegment = ({
       dimensions.width, dimensions.height, dimensions.lift, pointCount, station
     )
   }
-  const rawLeft = makeSection(leftStation)
-  const rawRight = makeSection(rightStation)
+  // Fuselage stations share one longitudinal centreline.  Center each face
+  // before the common positive-coordinate translation; otherwise profiles of
+  // different widths are aligned by their left edges and a straight tube
+  // becomes diagonal through the foam block.
+  const rawLeft = centerSectionHorizontally(makeSection(leftStation))
+  const rawRight = centerSectionHorizontally(makeSection(rightStation))
   const pair = normalizeProfilePair(rawLeft, rawRight)
   let innerLeftPoints = null
   let innerRightPoints = null
@@ -265,14 +276,15 @@ export const createGliderFuselageSegment = ({
       if (innerWidth < 2 || innerHeight < 2) {
         throw new Error(`${label}: недостатньо місця для порожнини при заданій товщині`)
       }
-      return createGliderSection(
+      const inner = centerSectionHorizontally(createGliderSection(
         innerWidth,
         innerHeight,
         dimensions.lift + bottom,
         pointCount,
         station
-      ).map(point => ({
-        x: point.x + wall + pair.translation.x,
+      ))
+      return inner.map(point => ({
+        x: point.x + pair.translation.x,
         y: point.y + pair.translation.y
       }))
     }

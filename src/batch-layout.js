@@ -19,7 +19,30 @@ const rotateQuarter = points => points?.map(point => ({
   y: point.x
 })) || null
 
-const orientPart = (part, rotated) => rotated
+const centerXOf = points => {
+  const bounds = boundsOf(points)
+  return (bounds.minX + bounds.maxX) / 2
+}
+
+const alignFuselageFaces = part => {
+  if (part.kind !== 'fuselage') return part
+  const leftShift = -centerXOf(part.outerLeft)
+  const rightShift = -centerXOf(part.outerRight)
+  const shift = (points, dx) => points?.map(point => ({ ...point, x: point.x + dx })) || null
+  return {
+    ...part,
+    outerLeft: shift(part.outerLeft, leftShift),
+    outerRight: shift(part.outerRight, rightShift),
+    innerLeft: shift(part.innerLeft, leftShift),
+    innerRight: shift(part.innerRight, rightShift),
+    cutLeft: shift(part.cutLeft, leftShift),
+    cutRight: shift(part.cutRight, rightShift)
+  }
+}
+
+const orientPart = (sourcePart, rotated) => {
+  const part = alignFuselageFaces(sourcePart)
+  return rotated
   ? {
       ...part,
       outerLeft: rotateQuarter(part.outerLeft),
@@ -30,6 +53,7 @@ const orientPart = (part, rotated) => rotated
       cutRight: rotateQuarter(part.cutRight)
     }
   : part
+}
 
 export const createFuselageBatchLayout = (parts, settings = {}) => {
   const blockWidth = Number(settings.blockWidth) || 600
