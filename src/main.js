@@ -27,6 +27,7 @@ import { chooseEntrySide, createSafeLeadPoint, orientProfile, startProfileAtSide
 import {
   createImportedWing,
   createImportedWingCutProfiles,
+  findSmallerProfileCenter,
   loadImportedWings,
   saveImportedWings
 } from './wing-library.js'
@@ -151,12 +152,14 @@ document.querySelector('#app').innerHTML = `
             <p>Для конуса задайте однакові X, Y та діаметр у двох торцях. Отвір буде додано до робочої траєкторії струни.</p>
             <div class="spar-hole-row">
               <label><input id="importedSpar1Enabled" type="checkbox"> Отвір 1</label>
+              <label><input id="importedSpar1Centered" type="checkbox" checked> По центру меншого профілю</label>
               <label>X, мм <input id="importedSpar1X" type="number" step="0.1" value="60"></label>
               <label>Y, мм <input id="importedSpar1Y" type="number" step="0.1" value="0"></label>
               <label>Ø, мм <input id="importedSpar1Diameter" type="number" min="0.1" step="0.1" value="10"></label>
             </div>
             <div class="spar-hole-row">
               <label><input id="importedSpar2Enabled" type="checkbox"> Отвір 2</label>
+              <label><input id="importedSpar2Centered" type="checkbox"> По центру меншого профілю</label>
               <label>X, мм <input id="importedSpar2X" type="number" step="0.1" value="110"></label>
               <label>Y, мм <input id="importedSpar2Y" type="number" step="0.1" value="0"></label>
               <label>Ø, мм <input id="importedSpar2Diameter" type="number" min="0.1" step="0.1" value="8"></label>
@@ -965,6 +968,7 @@ const wingInsertSweepInput = document.querySelector('#wingInsertSweep')
 const buildWingInsertButton = document.querySelector('#buildWingInsert')
 const importedSparInputs = [1, 2].map(number => ({
   enabled: document.querySelector(`#importedSpar${number}Enabled`),
+  centered: document.querySelector(`#importedSpar${number}Centered`),
   x: document.querySelector(`#importedSpar${number}X`),
   y: document.querySelector(`#importedSpar${number}Y`),
   diameter: document.querySelector(`#importedSpar${number}Diameter`)
@@ -4056,24 +4060,40 @@ const renderImportedWingLibrary = (selectedId = importedWingSelect.value) => {
 
 const loadImportedWingSparInputs = () => {
   const wing = importedWings.find(item => item.id === importedWingSelect.value)
+  const center = wing ? findSmallerProfileCenter(wing) : null
   importedSparInputs.forEach((inputs, index) => {
     const rod = wing?.straightSparRods[index]
     inputs.enabled.checked = Boolean(rod)
+    inputs.centered.checked = rod ? rod.centered === true : index === 0
     if (rod) {
       inputs.x.value = rod.x
       inputs.y.value = rod.y
       inputs.diameter.value = rod.diameter
     }
+    if (inputs.centered.checked && center) {
+      inputs.x.value = Math.round(center.x * 1000) / 1000
+      inputs.y.value = Math.round(center.y * 1000) / 1000
+    }
+    inputs.x.disabled = inputs.centered.checked
+    inputs.y.disabled = inputs.centered.checked
   })
 }
 
-const readImportedWingSpars = () => importedSparInputs.flatMap((inputs, index) => {
+const readImportedWingSpars = wing => {
+  const center = findSmallerProfileCenter(wing)
+  return importedSparInputs.flatMap((inputs, index) => {
   if (!inputs.enabled.checked) return []
-  const x = readLibraryNumber(inputs.x, `X лонжерона ${index + 1}`)
-  const y = readLibraryNumber(inputs.y, `Y лонжерона ${index + 1}`)
-  const diameter = readPositiveLibraryNumber(inputs.diameter, `Діаметр лонжерона ${index + 1}`)
-  return [{ x, y, diameter }]
-})
+    const centered = inputs.centered.checked
+    const x = centered ? center.x : readLibraryNumber(inputs.x, `X отвору ${index + 1}`)
+    const y = centered ? center.y : readLibraryNumber(inputs.y, `Y отвору ${index + 1}`)
+    if (centered) {
+      inputs.x.value = Math.round(x * 1000) / 1000
+      inputs.y.value = Math.round(y * 1000) / 1000
+    }
+    const diameter = readPositiveLibraryNumber(inputs.diameter, `Діаметр отвору ${index + 1}`)
+    return [{ x, y, diameter, centered }]
+  })
+}
 
 const openImportedWingInConstructor = wing => {
   const cutProfiles = createImportedWingCutProfiles(wing)
@@ -4103,13 +4123,44 @@ const openImportedWingInConstructor = wing => {
   return cutProfiles
 }
 
-importedWingSelect.addEventListener('change', loadImportedWingSparInputs)
+const updateImportedWingHolePreview = () => {
+  const wing = importedWings.find(item => item.id === importedWingSelect.value)
+  if (!wing) return
+  try {
+    const straightSparRods = readImportedWingSpars(wing)
+    importedSparInputs.forEach(inputs => {
+      inputs.x.disabled = inputs.centered.checked
+      inputs.y.disabled = inputs.centered.checked
+    })
+    importedWingPreview = { ...wing, straightSparRods }
+    scheduleLibraryPreview('wing')
+    const center = findSmallerProfileCenter(wing)
+    importedWingLibraryStatus.className = ''
+    importedWingLibraryStatus.textContent = straightSparRods.length
+      ? `Попередній перегляд отвору показано. Центр меншого профілю: X${Math.round(center.x * 1000) / 1000}, Y${Math.round(center.y * 1000) / 1000}. Для зміни траєкторії натисніть «Застосувати отвори».`
+      : 'Увімкніть отвір, щоб побачити його у 3D-перегляді.'
+  } catch (error) {
+    importedWingLibraryStatus.className = 'profile-library-error'
+    importedWingLibraryStatus.textContent = error.message
+  }
+}
+
+importedWingSelect.addEventListener('change', () => {
+  loadImportedWingSparInputs()
+  updateImportedWingHolePreview()
+})
+importedSparInputs.forEach(inputs => {
+  ;[inputs.enabled, inputs.centered, inputs.x, inputs.y, inputs.diameter].forEach(input => {
+    input.addEventListener('input', updateImportedWingHolePreview)
+    input.addEventListener('change', updateImportedWingHolePreview)
+  })
+})
 
 saveImportedWingSparsButton.addEventListener('click', () => {
   try {
     const wingIndex = importedWings.findIndex(item => item.id === importedWingSelect.value)
     if (wingIndex < 0) throw new Error('Спочатку виберіть збережене крило')
-    const straightSparRods = readImportedWingSpars()
+    const straightSparRods = readImportedWingSpars(importedWings[wingIndex])
     const updatedWing = {
       ...importedWings[wingIndex],
       straightSparRods

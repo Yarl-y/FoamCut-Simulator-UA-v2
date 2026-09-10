@@ -40,7 +40,8 @@ const sanitizeWing = (wing, index = 0) => {
       ? wing.straightSparRods.map((rod, rodIndex) => ({
           x: finite(rod?.x, `Лонжерон ${rodIndex + 1}, X`),
           y: finite(rod?.y, `Лонжерон ${rodIndex + 1}, Y`),
-          diameter: Math.max(0.1, finite(rod?.diameter, `Лонжерон ${rodIndex + 1}, діаметр`))
+          diameter: Math.max(0.1, finite(rod?.diameter, `Лонжерон ${rodIndex + 1}, діаметр`)),
+          centered: rod?.centered === true
         }))
       : []
   }
@@ -66,6 +67,29 @@ export const createImportedWing = data => sanitizeWing({
   id: data.id || `wing-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
   importedAt: new Date().toISOString()
 })
+
+const polygonArea = points => Math.abs(points.reduce((sum, point, index) => {
+  const next = points[(index + 1) % points.length]
+  return sum + point.x * next.y - next.x * point.y
+}, 0) / 2)
+
+const profileCenter = points => {
+  const xs = points.map(point => point.x)
+  const ys = points.map(point => point.y)
+  return {
+    x: (Math.min(...xs) + Math.max(...xs)) / 2,
+    y: (Math.min(...ys) + Math.max(...ys)) / 2
+  }
+}
+
+export const findSmallerProfileCenter = wingData => {
+  const wing = sanitizeWing(wingData)
+  const leftPoints = removeInteriorCutLoops(wing.leftPoints)
+  const rightPoints = removeInteriorCutLoops(wing.rightPoints)
+  const side = polygonArea(leftPoints) <= polygonArea(rightPoints) ? 'left' : 'right'
+  const center = profileCenter(side === 'left' ? leftPoints : rightPoints)
+  return { ...center, side }
+}
 
 export const createImportedWingCutProfiles = wingData => {
   const wing = sanitizeWing(wingData)

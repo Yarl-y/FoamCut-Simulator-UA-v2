@@ -1,7 +1,11 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 
-import { createImportedWing, createImportedWingCutProfiles } from '../src/wing-library.js'
+import {
+  createImportedWing,
+  createImportedWingCutProfiles,
+  findSmallerProfileCenter
+} from '../src/wing-library.js'
 
 const ellipse = (centerX, centerY, radiusX, radiusY, count = 80) => Array.from(
   { length: count },
@@ -45,4 +49,15 @@ test('restored detail rejects a through-hole that does not fit the smaller face'
     () => createImportedWingCutProfiles(wing),
     /Отвір 1 не вміщується у профілі A\/Z/
   )
+})
+
+test('through-hole can bind to the bounding-box centre of the smaller face', () => {
+  const wing = createImportedWing({
+    name: 'Зміщений конус',
+    span: 200,
+    leftPoints: ellipse(50, 40, 45, 35),
+    rightPoints: ellipse(52, 43, 20, 15)
+  })
+
+  assert.deepEqual(findSmallerProfileCenter(wing), { x: 52, y: 43, side: 'right' })
 })
