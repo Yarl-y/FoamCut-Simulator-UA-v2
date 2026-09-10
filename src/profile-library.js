@@ -472,6 +472,11 @@ export const insertPairedSparHoles = (leftPoints, rightPoints, holes) => {
     throw new Error('Для отворів потрібні відповідні парні точки обох профілів')
   }
   const insertions = holes.map(hole => {
+    if (Number.isInteger(hole.baseIndex)
+      && hole.baseIndex >= 0
+      && hole.baseIndex < leftPoints.length) {
+      return { ...hole, baseIndex: hole.baseIndex }
+    }
     const leftCenter = hole.left.reduce((center, point) => ({
       x: center.x + point.x / hole.left.length,
       y: center.y + point.y / hole.left.length

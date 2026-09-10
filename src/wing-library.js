@@ -118,20 +118,31 @@ export const createImportedWingCutProfiles = wingData => {
     }
   })
   const firstHole = wing.straightSparRods[0]
-  let entryIndex = 0
-  let entryDistance = Infinity
-  outerLeft.forEach((point, index) => {
-    const distance = Math.hypot(point.x - firstHole.x, point.y - firstHole.y)
-    if (distance < entryDistance) {
-      entryDistance = distance
-      entryIndex = index
-    }
-  })
+  const smallerProfile = polygonArea(outerLeft) <= polygonArea(outerRight) ? outerLeft : outerRight
+  const ys = smallerProfile.map(point => point.y)
+  const minY = Math.min(...ys)
+  const maxY = Math.max(...ys)
+  const topBand = Math.max((maxY - minY) * 0.02, 0.1)
+  const topCandidates = smallerProfile
+    .map((point, index) => ({ point, index }))
+    .filter(({ point }) => point.y >= maxY - topBand)
+  const entryIndex = topCandidates.reduce((best, candidate) => (
+    Math.abs(candidate.point.x - firstHole.x) < Math.abs(best.point.x - firstHole.x)
+      ? candidate
+      : best
+  )).index
   const rotatePair = points => [
     ...points.slice(entryIndex),
     ...points.slice(0, entryIndex)
   ].map(point => ({ ...point }))
-  const cutPair = insertPairedSparHoles(rotatePair(outerLeft), rotatePair(outerRight), holes)
+  const topEntryHoles = holes.map((hole, index) => (
+    index === 0 ? { ...hole, baseIndex: 0 } : hole
+  ))
+  const cutPair = insertPairedSparHoles(
+    rotatePair(outerLeft),
+    rotatePair(outerRight),
+    topEntryHoles
+  )
   return {
     outerLeft,
     outerRight,

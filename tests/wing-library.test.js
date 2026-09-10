@@ -32,6 +32,9 @@ test('restored tapered detail adds a straight through-hole to both cutting faces
   assert.equal(cut.leftPoints.length, cut.rightPoints.length)
   assert.ok(cut.leftPoints.length > cut.outerLeft.length)
   assert.ok(cut.rightPoints.length > cut.outerRight.length)
+  const smallerTop = Math.max(...cut.outerRight.map(point => point.y))
+  assert.ok(Math.abs(cut.rightPoints[0].y - smallerTop) < 0.01)
+  assert.ok(Math.abs(cut.rightPoints[0].x - 50) < 0.01)
   const firstHolePoint = cut.leftPoints.findIndex(
     point => Math.abs(Math.hypot(point.x - 50, point.y - 40) - 6) < 0.01
   )
