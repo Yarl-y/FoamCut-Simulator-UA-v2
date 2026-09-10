@@ -1,3 +1,10 @@
+import { removeInteriorCutLoops } from './nc-dxf.js'
+import {
+  createStraightSparHoleContour,
+  insertPairedSparHoles,
+  sparHoleFitsProfile
+} from './profile-library.js'
+
 const STORAGE_KEY = 'foamcut-imported-wing-library-v1'
 
 const finite = (value, label) => {
@@ -59,3 +66,38 @@ export const createImportedWing = data => sanitizeWing({
   id: data.id || `wing-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
   importedAt: new Date().toISOString()
 })
+
+export const createImportedWingCutProfiles = wingData => {
+  const wing = sanitizeWing(wingData)
+  if (!wing.straightSparRods.length) {
+    return {
+      outerLeft: removeInteriorCutLoops(wing.leftPoints),
+      outerRight: removeInteriorCutLoops(wing.rightPoints),
+      leftPoints: wing.leftPoints.map(point => ({ ...point })),
+      rightPoints: wing.rightPoints.map(point => ({ ...point }))
+    }
+  }
+
+  const outerLeft = removeInteriorCutLoops(wing.leftPoints)
+  const outerRight = removeInteriorCutLoops(wing.rightPoints)
+  const holes = wing.straightSparRods.map((rod, index) => {
+    const contour = createStraightSparHoleContour(rod)
+    if (!sparHoleFitsProfile(outerLeft, contour)) {
+      throw new Error(`Отвір ${index + 1} не вміщується у профілі X/Y`)
+    }
+    if (!sparHoleFitsProfile(outerRight, contour)) {
+      throw new Error(`Отвір ${index + 1} не вміщується у профілі A/Z`)
+    }
+    return {
+      left: contour,
+      right: contour.map(point => ({ ...point }))
+    }
+  })
+  const cutPair = insertPairedSparHoles(outerLeft, outerRight, holes)
+  return {
+    outerLeft,
+    outerRight,
+    leftPoints: cutPair.leftPoints,
+    rightPoints: cutPair.rightPoints
+  }
+}

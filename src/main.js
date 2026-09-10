@@ -24,7 +24,12 @@ import {
 import { createFoamCutProject, parseFoamCutProject } from './project-file.js'
 import { initializeMachineControl } from './machine-control.js'
 import { chooseEntrySide, createSafeLeadPoint, orientProfile, startProfileAtSide, preparePairedProfiles } from './profile-entry.js'
-import { createImportedWing, loadImportedWings, saveImportedWings } from './wing-library.js'
+import {
+  createImportedWing,
+  createImportedWingCutProfiles,
+  loadImportedWings,
+  saveImportedWings
+} from './wing-library.js'
 import {
   builtinFuselageTemplates,
   cloneFuselageTemplate,
@@ -139,23 +144,24 @@ document.querySelector('#app').innerHTML = `
         <button id="buildLibraryWing" type="button">Побудувати 3D-крило</button>
         <p id="profileLibraryStatus">Виберіть параметри кореневого та кінцевого профілів</p>
         <section class="imported-wing-library">
-          <h3>Крила, відновлені з NC</h3>
-          <div><label>Збережене крило <select id="importedWingSelect"></select></label><button id="loadImportedWing" type="button" disabled>Відкрити крило</button><button id="deleteImportedWing" type="button" disabled>Видалити</button></div>
+          <h2>Конструктор секції фюзеляжу або крила з NC</h2>
+          <div><label>Збережена деталь <select id="importedWingSelect"></select></label><button id="loadImportedWing" type="button" disabled>Відкрити у конструкторі</button><button id="deleteImportedWing" type="button" disabled>Видалити</button></div>
           <div class="imported-wing-spars">
-            <strong>Прямі осі лонжеронів у фізичних мм</strong>
+            <strong>Наскрізні отвори на прямій осі, у фізичних мм</strong>
+            <p>Для конуса задайте однакові X, Y та діаметр у двох торцях. Отвір буде додано до робочої траєкторії струни.</p>
             <div class="spar-hole-row">
-              <label><input id="importedSpar1Enabled" type="checkbox"> Лонжерон 1</label>
+              <label><input id="importedSpar1Enabled" type="checkbox"> Отвір 1</label>
               <label>X, мм <input id="importedSpar1X" type="number" step="0.1" value="60"></label>
               <label>Y, мм <input id="importedSpar1Y" type="number" step="0.1" value="0"></label>
               <label>Ø, мм <input id="importedSpar1Diameter" type="number" min="0.1" step="0.1" value="10"></label>
             </div>
             <div class="spar-hole-row">
-              <label><input id="importedSpar2Enabled" type="checkbox"> Лонжерон 2</label>
+              <label><input id="importedSpar2Enabled" type="checkbox"> Отвір 2</label>
               <label>X, мм <input id="importedSpar2X" type="number" step="0.1" value="110"></label>
               <label>Y, мм <input id="importedSpar2Y" type="number" step="0.1" value="0"></label>
               <label>Ø, мм <input id="importedSpar2Diameter" type="number" min="0.1" step="0.1" value="8"></label>
             </div>
-            <button id="saveImportedWingSpars" type="button" disabled>Зберегти осі лонжеронів</button>
+            <button id="saveImportedWingSpars" type="button" disabled>Застосувати отвори до траєкторії</button>
           </div>
           <div class="imported-wing-insert">
             <strong>Стрілоподібна вставка до фюзеляжу</strong>
@@ -164,7 +170,7 @@ document.querySelector('#app').innerHTML = `
             <label>Зміщення профілю X/Y, мм <input id="wingInsertSweep" type="number" step="1" value="0"></label>
             <button id="buildWingInsert" type="button" disabled>Створити вставку з цього крила</button>
           </div>
-          <p id="importedWingLibraryStatus">Відкрийте NC у вкладці «Файли та NC» і збережіть його як крило.</p>
+          <p id="importedWingLibraryStatus">Відкрийте NC у вкладці «Файли та NC» і збережіть деталь у конструкторі.</p>
         </section>
         <div class="fuselage-library">
           <h3>Бібліотека фюзеляжів</h3>
@@ -299,10 +305,10 @@ document.querySelector('#app').innerHTML = `
       <span id="ncToDxfStatus">Відкрийте NC для відновлення профілів</span>
     </div>
     <section class="nc-wing-import" data-workspace="files">
-      <strong>Зберегти відновлене крило в бібліотеці</strong>
-      <label>Назва <input id="ncWingName" type="text" placeholder="Моє крило"></label>
-      <label>Довжина півкрила, мм <input id="ncWingSpan" type="number" min="1" step="1" value="1000"></label>
-      <button id="saveNcWingToLibrary" type="button" disabled>Зберегти крило з NC</button>
+      <strong>Передати відновлену секцію з G-коду в конструктор</strong>
+      <label>Назва секції <input id="ncWingName" type="text" placeholder="Секція фюзеляжу або крило"></label>
+      <label>Довжина секції, мм <input id="ncWingSpan" type="number" min="1" step="1" value="1000"></label>
+      <button id="saveNcWingToLibrary" type="button" disabled>Зберегти й відкрити в конструкторі</button>
       <p id="ncWingImportStatus">Спочатку завантажте NC-файл.</p>
     </section>
 
@@ -1504,7 +1510,7 @@ const renderLibraryPreview = () => {
           offsets: { x: 0, y: 0, z: 0 },
           rods: importedWingPreview.straightSparRods
         })]
-        libraryPreviewStatus.textContent = `Крило з NC: ${importedWingPreview.name}; довжина ${importedWingPreview.span} мм; `
+        libraryPreviewStatus.textContent = `Деталь з NC: ${importedWingPreview.name}; довжина ${importedWingPreview.span} мм; `
           + `${importedWingPreview.leftPoints.length} синхронних точок`
       } else {
       const rootChord = readPositiveLibraryNumber(rootLibraryChordInput, 'Хорда кореня')
@@ -4069,6 +4075,34 @@ const readImportedWingSpars = () => importedSparInputs.flatMap((inputs, index) =
   return [{ x, y, diameter }]
 })
 
+const openImportedWingInConstructor = wing => {
+  const cutProfiles = createImportedWingCutProfiles(wing)
+  importedWingPreview = wing
+  activeStraightSparRods = wing.straightSparRods.map(rod => ({ ...rod }))
+  activeServoChannels = []
+  preparedDxfProfiles.left = { points: cutProfiles.leftPoints.map(point => ({ ...point })), source: 'wing-library' }
+  preparedDxfProfiles.right = { points: cutProfiles.rightPoints.map(point => ({ ...point })), source: 'wing-library' }
+  currentAssemblyCandidate = {
+    kind: 'wing', name: wing.name, span: wing.span,
+    outerLeft: cutProfiles.outerLeft.map(point => ({ ...point })),
+    outerRight: cutProfiles.outerRight.map(point => ({ ...point })),
+    cutLeft: cutProfiles.leftPoints.map(point => ({ ...point })),
+    cutRight: cutProfiles.rightPoints.map(point => ({ ...point })),
+    straightSparRods: activeStraightSparRods.map(rod => ({ ...rod })),
+    servoChannels: [], defaultOffsets: { x: 0, y: 0, z: 0 },
+    wingDesign: { type: 'imported-wing', sourceWingId: wing.id, sourceWingName: wing.name }
+  }
+  foamWidthInput.value = wing.span
+  showProfileInDxfPanel('left', cutProfiles.leftPoints, true, `${wing.name} — X/Y`)
+  showProfileInDxfPanel('right', cutProfiles.rightPoints, true, `${wing.name} — A/Z`)
+  updateDxfAssignmentStatus()
+  updateProjectSaveAvailability()
+  updateAssemblyCandidateControls()
+  renderPreparedDxfSimulation()
+  scheduleLibraryPreview('wing')
+  return cutProfiles
+}
+
 importedWingSelect.addEventListener('change', loadImportedWingSparInputs)
 
 saveImportedWingSparsButton.addEventListener('click', () => {
@@ -4080,21 +4114,14 @@ saveImportedWingSparsButton.addEventListener('click', () => {
       ...importedWings[wingIndex],
       straightSparRods
     }
+    createImportedWingCutProfiles(updatedWing)
     importedWings[wingIndex] = updatedWing
     importedWings = saveImportedWings(importedWings)
-    if (importedWingPreview?.id === updatedWing.id) {
-      importedWingPreview = updatedWing
-      activeStraightSparRods = straightSparRods.map(rod => ({ ...rod }))
-      if (currentAssemblyCandidate?.kind === 'wing') {
-        currentAssemblyCandidate.straightSparRods = activeStraightSparRods.map(rod => ({ ...rod }))
-      }
-      renderPreparedDxfSimulation()
-      scheduleLibraryPreview('wing')
-    }
+    openImportedWingInConstructor(updatedWing)
     importedWingLibraryStatus.className = 'profile-library-valid'
     importedWingLibraryStatus.textContent = straightSparRods.length
-      ? `Збережено ${straightSparRods.length} прямих осей. Вони проходять без зміни X/Y через усе крило.`
-      : 'Осі лонжеронів очищено для цього крила.'
+      ? `Готово: ${straightSparRods.length} наскрізних отворів додано до робочої траєкторії X/Y–A/Z.`
+      : 'Наскрізні отвори прибрано з робочої траєкторії цієї деталі.'
   } catch (error) {
     importedWingLibraryStatus.className = 'profile-library-error'
     importedWingLibraryStatus.textContent = error.message
@@ -4178,15 +4205,22 @@ saveNcWingToLibraryButton.addEventListener('click', () => {
       recoveryMethod: recoveredNcProfiles.method,
       straightSparRods: recoveredNcStraightSparRods
     })
+    createImportedWingCutProfiles(wing)
     if (existingIndex >= 0) importedWings[existingIndex] = wing
     else importedWings.push(wing)
     importedWings = saveImportedWings(importedWings)
     renderImportedWingLibrary(wing.id)
     loadImportedWingSparInputs()
+    profileLibraryPanel.hidden = false
+    toggleProfileLibraryButton.setAttribute('aria-expanded', 'true')
+    activateWorkspaceTab('library')
+    openImportedWingInConstructor(wing)
     ncWingImportStatus.className = 'profile-library-valid'
-    ncWingImportStatus.textContent = `Крило «${wing.name}» ${existingIndex >= 0 ? 'оновлено' : 'збережено'}: `
-      + `${wing.span} мм, ${wing.leftPoints.length} синхронних точок, прямих лонжеронів ${wing.straightSparRods.length}.`
-    importedWingLibraryStatus.textContent = `У бібліотеці ${importedWings.length} крил(а) з NC.`
+    ncWingImportStatus.textContent = `Деталь «${wing.name}» ${existingIndex >= 0 ? 'оновлено' : 'збережено'}: `
+      + `${wing.span} мм, ${wing.leftPoints.length} синхронних точок, наскрізних отворів ${wing.straightSparRods.length}.`
+    importedWingLibraryStatus.className = 'profile-library-valid'
+    importedWingLibraryStatus.textContent = `«${wing.name}» відкрито в конструкторі. Задайте наскрізний отвір і натисніть «Застосувати отвори до траєкторії».`
+    setTimeout(() => document.querySelector('.imported-wing-library')?.scrollIntoView({ behavior: 'smooth', block: 'start' }))
   } catch (error) {
     ncWingImportStatus.className = 'profile-library-error'
     ncWingImportStatus.textContent = error.message
@@ -4196,28 +4230,9 @@ saveNcWingToLibraryButton.addEventListener('click', () => {
 loadImportedWingButton.addEventListener('click', () => {
   const wing = importedWings.find(item => item.id === importedWingSelect.value)
   if (!wing) return
-  importedWingPreview = wing
-  activeStraightSparRods = wing.straightSparRods.map(rod => ({ ...rod }))
-  activeServoChannels = []
-  preparedDxfProfiles.left = { points: wing.leftPoints.map(point => ({ ...point })), source: 'wing-library' }
-  preparedDxfProfiles.right = { points: wing.rightPoints.map(point => ({ ...point })), source: 'wing-library' }
-  currentAssemblyCandidate = {
-    kind: 'wing', name: wing.name, span: wing.span,
-    outerLeft: wing.leftPoints.map(point => ({ ...point })),
-    outerRight: wing.rightPoints.map(point => ({ ...point })),
-    cutLeft: wing.leftPoints.map(point => ({ ...point })),
-    cutRight: wing.rightPoints.map(point => ({ ...point })),
-    straightSparRods: activeStraightSparRods.map(rod => ({ ...rod })),
-    servoChannels: [], defaultOffsets: { x: 0, y: 0, z: 0 },
-    wingDesign: { type: 'imported-wing', sourceWingId: wing.id, sourceWingName: wing.name }
-  }
-  foamWidthInput.value = wing.span
-  showProfileInDxfPanel('left', wing.leftPoints, true, `${wing.name} — X/Y`)
-  showProfileInDxfPanel('right', wing.rightPoints, true, `${wing.name} — A/Z`)
-  updateDxfAssignmentStatus(); updateProjectSaveAvailability(); updateAssemblyCandidateControls()
-  renderPreparedDxfSimulation(); scheduleLibraryPreview('wing')
+  openImportedWingInConstructor(wing)
   importedWingLibraryStatus.className = 'profile-library-valid'
-  importedWingLibraryStatus.textContent = `Відкрито «${wing.name}». Його можна додати у збірку або використати для вставки.`
+  importedWingLibraryStatus.textContent = `Відкрито «${wing.name}». Робоча траєкторія містить наскрізних отворів: ${wing.straightSparRods.length}.`
 })
 
 deleteImportedWingButton.addEventListener('click', () => {
@@ -4227,7 +4242,7 @@ deleteImportedWingButton.addEventListener('click', () => {
   if (importedWingPreview?.id === wing.id) importedWingPreview = null
   renderImportedWingLibrary()
   loadImportedWingSparInputs()
-  importedWingLibraryStatus.textContent = `Крило «${wing.name}» видалено з локальної бібліотеки.`
+  importedWingLibraryStatus.textContent = `Деталь «${wing.name}» видалено з локальної бібліотеки.`
 })
 
 renderImportedWingLibrary()
@@ -4291,7 +4306,7 @@ recoveredNcSourceFile = ''
 recoveredNcStraightSparRods = []
 saveNcWingToLibraryButton.disabled = true
 ncWingImportStatus.className = ''
-ncWingImportStatus.textContent = 'Пошук профілів і розмірів крила у NC...'
+ncWingImportStatus.textContent = 'Пошук профілів і розмірів деталі у NC...'
 downloadNcDxfLeftButton.disabled = true
 downloadNcDxfRightButton.disabled = true
 downloadNcDxfPairButton.disabled = true
@@ -4302,7 +4317,7 @@ const { leftPoints, rightPoints } = parsedNc
         status.textContent = 'У файлі не знайдено траєкторію 4 осей'
         ncToDxfStatus.textContent = 'Не вдалося відновити профілі з цього NC'
         ncWingImportStatus.className = 'profile-library-error'
-        ncWingImportStatus.textContent = 'Крило не можна зберегти: у NC немає повної траєкторії X/Y/A/Z.'
+        ncWingImportStatus.textContent = 'Деталь не можна зберегти: у NC немає повної траєкторії X/Y/A/Z.'
         return
     }
 
@@ -4322,8 +4337,8 @@ const { leftPoints, rightPoints } = parsedNc
     else if (Number(foamWidthInput.value) > 0) ncWingSpanInput.value = foamWidthInput.value
     saveNcWingToLibraryButton.disabled = false
     ncWingImportStatus.className = 'profile-library-valid'
-    ncWingImportStatus.textContent = `Профілі відновлено. Знайдено прямих отворів лонжеронів: ${recoveredNcStraightSparRods.length}. `
-      + `Перевірте назву та довжину ${ncWingSpanInput.value} мм, потім збережіть крило.`
+    ncWingImportStatus.textContent = `Профілі відновлено. Знайдено наскрізних прямих отворів: ${recoveredNcStraightSparRods.length}. `
+      + `Перевірте назву та довжину ${ncWingSpanInput.value} мм, потім збережіть деталь.`
     downloadNcDxfLeftButton.disabled = false
     downloadNcDxfRightButton.disabled = false
     downloadNcDxfPairButton.disabled = false
