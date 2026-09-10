@@ -117,7 +117,21 @@ export const createImportedWingCutProfiles = wingData => {
       right: contour.map(point => ({ ...point }))
     }
   })
-  const cutPair = insertPairedSparHoles(outerLeft, outerRight, holes)
+  const firstHole = wing.straightSparRods[0]
+  let entryIndex = 0
+  let entryDistance = Infinity
+  outerLeft.forEach((point, index) => {
+    const distance = Math.hypot(point.x - firstHole.x, point.y - firstHole.y)
+    if (distance < entryDistance) {
+      entryDistance = distance
+      entryIndex = index
+    }
+  })
+  const rotatePair = points => [
+    ...points.slice(entryIndex),
+    ...points.slice(0, entryIndex)
+  ].map(point => ({ ...point }))
+  const cutPair = insertPairedSparHoles(rotatePair(outerLeft), rotatePair(outerRight), holes)
   return {
     outerLeft,
     outerRight,

@@ -3403,12 +3403,14 @@ const selectAssemblyPartForCutting = part => {
   preparedDxfProfiles.left = {
     points: cutPair.leftPoints.map(point => ({ ...point })),
     source: 'assembly',
-    internalFirst: part.kind === 'fuselage' && part.cutLeft.length > part.outerLeft.length
+    internalFirst: (part.kind === 'fuselage' && part.cutLeft.length > part.outerLeft.length)
+      || (part.straightSparRods.length > 0 && cutPair.leftPoints.length > part.outerLeft.length)
   }
   preparedDxfProfiles.right = {
     points: cutPair.rightPoints.map(point => ({ ...point })),
     source: 'assembly',
-    internalFirst: part.kind === 'fuselage' && part.cutRight.length > part.outerRight.length
+    internalFirst: (part.kind === 'fuselage' && part.cutRight.length > part.outerRight.length)
+      || (part.straightSparRods.length > 0 && cutPair.rightPoints.length > part.outerRight.length)
   }
   foamWidthInput.value = Math.round(part.span * 1000) / 1000
   showProfileInDxfPanel('left', preparedDxfProfiles.left.points, true, `${part.name} — X/Y`)
@@ -4100,8 +4102,17 @@ const openImportedWingInConstructor = wing => {
   importedWingPreview = wing
   activeStraightSparRods = wing.straightSparRods.map(rod => ({ ...rod }))
   activeServoChannels = []
-  preparedDxfProfiles.left = { points: cutProfiles.leftPoints.map(point => ({ ...point })), source: 'wing-library' }
-  preparedDxfProfiles.right = { points: cutProfiles.rightPoints.map(point => ({ ...point })), source: 'wing-library' }
+  const holeFirst = wing.straightSparRods.length > 0
+  preparedDxfProfiles.left = {
+    points: cutProfiles.leftPoints.map(point => ({ ...point })),
+    source: 'wing-library',
+    internalFirst: holeFirst
+  }
+  preparedDxfProfiles.right = {
+    points: cutProfiles.rightPoints.map(point => ({ ...point })),
+    source: 'wing-library',
+    internalFirst: holeFirst
+  }
   currentAssemblyCandidate = {
     kind: 'wing', name: wing.name, span: wing.span,
     outerLeft: cutProfiles.outerLeft.map(point => ({ ...point })),
