@@ -67,3 +67,26 @@ test('through-hole can bind to the bounding-box centre of the smaller face', () 
 
   assert.deepEqual(findSmallerProfileCenter(wing), { x: 52, y: 43, side: 'right' })
 })
+
+test('offline wing mode cuts upper surface first and enters holes from the lower surface', () => {
+  const wing = createImportedWing({
+    name: 'Просте крило',
+    span: 600,
+    cutStrategy: 'wing-single',
+    leftPoints: ellipse(50, 40, 45, 15),
+    rightPoints: ellipse(50, 40, 30, 10),
+    straightSparRods: [{ x: 55, y: 40, diameter: 6 }]
+  })
+
+  const cut = createImportedWingCutProfiles(wing)
+  const noseIndex = cut.leftPoints.findIndex(point => Math.abs(point.x - 5) < 0.01)
+  const firstHolePoint = cut.leftPoints.findIndex(
+    point => Math.abs(Math.hypot(point.x - 55, point.y - 40) - 3) < 0.01
+  )
+
+  assert.ok(Math.abs(cut.leftPoints[0].x - 95) < 0.01, 'the route must start at the trailing edge')
+  assert.ok(cut.leftPoints[1].y > 40, 'the route must leave along the upper surface')
+  assert.ok(noseIndex > 0)
+  assert.ok(firstHolePoint > noseIndex, 'the hole must branch from the lower return surface')
+  assert.equal(cut.holeEntrySurface, 'lower')
+})

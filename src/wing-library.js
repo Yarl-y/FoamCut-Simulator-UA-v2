@@ -35,6 +35,7 @@ const sanitizeWing = (wing, index = 0) => {
     rightPoints,
     sourceFile: String(wing?.sourceFile || ''),
     recoveryMethod: String(wing?.recoveryMethod || 'unknown'),
+    cutStrategy: wing?.cutStrategy === 'wing-single' ? 'wing-single' : 'section-hole-first',
     importedAt: String(wing?.importedAt || new Date().toISOString()),
     straightSparRods: Array.isArray(wing?.straightSparRods)
       ? wing.straightSparRods.map((rod, rodIndex) => ({
@@ -93,17 +94,17 @@ export const findSmallerProfileCenter = wingData => {
 
 export const createImportedWingCutProfiles = wingData => {
   const wing = sanitizeWing(wingData)
-  if (!wing.straightSparRods.length) {
+  const outerLeft = removeInteriorCutLoops(wing.leftPoints)
+  const outerRight = removeInteriorCutLoops(wing.rightPoints)
+  if (!wing.straightSparRods.length && wing.cutStrategy !== 'wing-single') {
     return {
-      outerLeft: removeInteriorCutLoops(wing.leftPoints),
-      outerRight: removeInteriorCutLoops(wing.rightPoints),
+      outerLeft,
+      outerRight,
       leftPoints: wing.leftPoints.map(point => ({ ...point })),
       rightPoints: wing.rightPoints.map(point => ({ ...point }))
     }
   }
 
-  const outerLeft = removeInteriorCutLoops(wing.leftPoints)
-  const outerRight = removeInteriorCutLoops(wing.rightPoints)
   const holes = wing.straightSparRods.map((rod, index) => {
     const contour = createStraightSparHoleContour(rod)
     if (!sparHoleFitsProfile(outerLeft, contour)) {
@@ -117,6 +118,69 @@ export const createImportedWingCutProfiles = wingData => {
       right: contour.map(point => ({ ...point }))
     }
   })
+
+  if (wing.cutStrategy === 'wing-single') {
+    const smallerProfile = polygonArea(outerLeft) <= polygonArea(outerRight) ? outerLeft : outerRight
+    const maxX = Math.max(...smallerProfile.map(point => point.x))
+    const entryIndex = smallerProfile.reduce((bestIndex, point, index) => (
+      point.x > smallerProfile[bestIndex].x ? index : bestIndex
+    ), 0)
+    const rotate = profile => [
+      ...profile.slice(entryIndex),
+      ...profile.slice(0, entryIndex)
+    ].map(point => ({ ...point }))
+    let orderedLeft = rotate(outerLeft)
+    let orderedRight = rotate(outerRight)
+    let orderedReference = polygonArea(outerLeft) <= polygonArea(outerRight)
+      ? orderedLeft
+      : orderedRight
+    const noseIndex = orderedReference.reduce((bestIndex, point, index) => (
+      point.x < orderedReference[bestIndex].x ? index : bestIndex
+    ), 0)
+    const averageY = profile => profile.reduce((sum, point) => sum + point.y, 0)
+      / Math.max(profile.length, 1)
+    if (averageY(orderedReference.slice(1, noseIndex + 1))
+      < averageY(orderedReference.slice(noseIndex + 1))) {
+      const reverseAfterStart = profile => [profile[0], ...profile.slice(1).reverse()]
+      orderedLeft = reverseAfterStart(orderedLeft)
+      orderedRight = reverseAfterStart(orderedRight)
+      orderedReference = polygonArea(outerLeft) <= polygonArea(outerRight)
+        ? orderedLeft
+        : orderedRight
+    }
+    const lowerStartIndex = orderedReference.reduce((bestIndex, point, index) => (
+      point.x < orderedReference[bestIndex].x ? index : bestIndex
+    ), 0)
+    const lowerEntryHoles = holes.map(hole => {
+      const center = hole.left.reduce((result, point) => ({
+        x: result.x + point.x / hole.left.length,
+        y: result.y + point.y / hole.left.length
+      }), { x: 0, y: 0 })
+      let baseIndex = lowerStartIndex
+      let nearestDistance = Infinity
+      orderedReference.forEach((point, index) => {
+        if (index < lowerStartIndex) return
+        const distance = Math.hypot(point.x - center.x, point.y - center.y)
+        if (distance < nearestDistance) {
+          nearestDistance = distance
+          baseIndex = index
+        }
+      })
+      return { ...hole, baseIndex }
+    })
+    const cutPair = holes.length
+      ? insertPairedSparHoles(orderedLeft, orderedRight, lowerEntryHoles)
+      : { leftPoints: orderedLeft, rightPoints: orderedRight }
+    return {
+      outerLeft,
+      outerRight,
+      leftPoints: cutPair.leftPoints,
+      rightPoints: cutPair.rightPoints,
+      entry: { side: 'trailing-edge', x: maxX },
+      holeEntrySurface: 'lower'
+    }
+  }
+
   const firstHole = wing.straightSparRods[0]
   const smallerProfile = polygonArea(outerLeft) <= polygonArea(outerRight) ? outerLeft : outerRight
   const ys = smallerProfile.map(point => point.y)

@@ -150,6 +150,13 @@ document.querySelector('#app').innerHTML = `
           <div class="imported-wing-spars">
             <strong>Наскрізні отвори на прямій осі, у фізичних мм</strong>
             <p>Для конуса задайте однакові X, Y та діаметр у двох торцях. Отвір буде додано до робочої траєкторії струни.</p>
+            <label>Порядок різання
+              <select id="importedWingCutStrategy">
+                <option value="section-hole-first">Секція або конус — спочатку отвори</option>
+                <option value="wing-single">Крило — верх, носик, низ та отвори</option>
+              </select>
+            </label>
+            <p>У режимі крила виконується один прохід від задньої кромки: верхом до носика, низом назад; отвори входять тільки з нижньої поверхні.</p>
             <div class="spar-hole-row">
               <label><input id="importedSpar1Enabled" type="checkbox"> Отвір 1</label>
               <label><input id="importedSpar1Centered" type="checkbox" checked> По центру меншого профілю</label>
@@ -962,6 +969,7 @@ const loadImportedWingButton = document.querySelector('#loadImportedWing')
 const deleteImportedWingButton = document.querySelector('#deleteImportedWing')
 const importedWingLibraryStatus = document.querySelector('#importedWingLibraryStatus')
 const saveImportedWingSparsButton = document.querySelector('#saveImportedWingSpars')
+const importedWingCutStrategyInput = document.querySelector('#importedWingCutStrategy')
 const wingInsertSpanInput = document.querySelector('#wingInsertSpan')
 const wingInsertScaleInput = document.querySelector('#wingInsertScale')
 const wingInsertSweepInput = document.querySelector('#wingInsertSweep')
@@ -2427,6 +2435,8 @@ const renderPreparedDxfSimulation = () => {
     : 300
   const internalFirst = preparedDxfProfiles.left.internalFirst === true
     || preparedDxfProfiles.right.internalFirst === true
+  const preserveOrder = preparedDxfProfiles.left.preserveOrder === true
+    || preparedDxfProfiles.right.preserveOrder === true
   const paired = Boolean(preparedDxfProfiles.left.source && preparedDxfProfiles.right.source)
   // Splitting a composed route by its midpoint may split a hole, not a surface.
   const effectivePassMode = internalFirst || paired ? 'single' : cutPassModeInput.value
@@ -2445,7 +2455,7 @@ const renderPreparedDxfSimulation = () => {
         offsetY: profileHeightOffsetInput.value
       })
     : requestedEntrySide
-  if (profileAutoStartInput.checked && !internalFirst) {
+  if (profileAutoStartInput.checked && !preserveOrder) {
     if (paired) {
       const ordered = preparePairedProfiles(sourceLeftPoints, sourceRightPoints, 'none', entrySide, true)
       sourceLeftPoints = ordered.leftPoints
@@ -2461,6 +2471,9 @@ const renderPreparedDxfSimulation = () => {
   const orientationLabels = { none: 'як у DXF', rotate180: 'поворот 180°', mirrorX: 'дзеркально ліворуч/праворуч', mirrorY: 'дзеркально вгору/вниз' }
   profileEntryStatus.textContent = `Застосовано до обох сторін: ${orientationLabels[profileOrientationInput.value]}; `
     + `безпечний вхід ${sideLabels[entrySide]} від X0/Y0 уздовж зовнішніх граней блока${internalFirst ? '; автоматичний старт вимкнено для складеної траєкторії порожнин' : ''}.`
+  if (preserveOrder && !internalFirst) {
+    profileEntryStatus.textContent += ' Порядок крила збережено: задня кромка → верх → носик → низ та отвори.'
+  }
   if (paired) profileEntryStatus.textContent += ' Парна траєкторія: один прохід, відповідність точок збережено.'
 
   if (faceLeftPoints.length !== faceRightPoints.length) {
@@ -4063,6 +4076,7 @@ const renderImportedWingLibrary = (selectedId = importedWingSelect.value) => {
 const loadImportedWingSparInputs = () => {
   const wing = importedWings.find(item => item.id === importedWingSelect.value)
   const center = wing ? findSmallerProfileCenter(wing) : null
+  importedWingCutStrategyInput.value = wing?.cutStrategy || 'section-hole-first'
   importedSparInputs.forEach((inputs, index) => {
     const rod = wing?.straightSparRods[index]
     inputs.enabled.checked = Boolean(rod)
@@ -4099,19 +4113,23 @@ const readImportedWingSpars = wing => {
 
 const openImportedWingInConstructor = wing => {
   const cutProfiles = createImportedWingCutProfiles(wing)
+  importedWingCutStrategyInput.value = wing.cutStrategy || 'section-hole-first'
   importedWingPreview = wing
   activeStraightSparRods = wing.straightSparRods.map(rod => ({ ...rod }))
   activeServoChannels = []
-  const holeFirst = wing.straightSparRods.length > 0
+  const holeFirst = wing.straightSparRods.length > 0 && wing.cutStrategy !== 'wing-single'
+  const preserveOrder = holeFirst || wing.cutStrategy === 'wing-single'
   preparedDxfProfiles.left = {
     points: cutProfiles.leftPoints.map(point => ({ ...point })),
     source: 'wing-library',
-    internalFirst: holeFirst
+    internalFirst: holeFirst,
+    preserveOrder
   }
   preparedDxfProfiles.right = {
     points: cutProfiles.rightPoints.map(point => ({ ...point })),
     source: 'wing-library',
-    internalFirst: holeFirst
+    internalFirst: holeFirst,
+    preserveOrder
   }
   currentAssemblyCandidate = {
     kind: 'wing', name: wing.name, span: wing.span,
@@ -4143,12 +4161,16 @@ const updateImportedWingHolePreview = () => {
       inputs.x.disabled = inputs.centered.checked
       inputs.y.disabled = inputs.centered.checked
     })
-    importedWingPreview = { ...wing, straightSparRods }
+    importedWingPreview = {
+      ...wing,
+      cutStrategy: importedWingCutStrategyInput.value,
+      straightSparRods
+    }
     scheduleLibraryPreview('wing')
     const center = findSmallerProfileCenter(wing)
     importedWingLibraryStatus.className = ''
     importedWingLibraryStatus.textContent = straightSparRods.length
-      ? `Попередній перегляд отвору показано. Центр меншого профілю: X${Math.round(center.x * 1000) / 1000}, Y${Math.round(center.y * 1000) / 1000}. Для зміни траєкторії натисніть «Застосувати отвори».`
+      ? `Попередній перегляд отвору показано. Центр меншого профілю: X${Math.round(center.x * 1000) / 1000}, Y${Math.round(center.y * 1000) / 1000}. ${importedWingCutStrategyInput.value === 'wing-single' ? 'Крило піде верхом до носика й повернеться низом через отвори.' : 'Спочатку будуть вирізані отвори секції.'} Для зміни траєкторії натисніть «Застосувати отвори».`
       : 'Увімкніть отвір, щоб побачити його у 3D-перегляді.'
   } catch (error) {
     importedWingLibraryStatus.className = 'profile-library-error'
@@ -4166,6 +4188,7 @@ importedSparInputs.forEach(inputs => {
     input.addEventListener('change', updateImportedWingHolePreview)
   })
 })
+importedWingCutStrategyInput.addEventListener('change', updateImportedWingHolePreview)
 
 saveImportedWingSparsButton.addEventListener('click', () => {
   try {
@@ -4174,6 +4197,7 @@ saveImportedWingSparsButton.addEventListener('click', () => {
     const straightSparRods = readImportedWingSpars(importedWings[wingIndex])
     const updatedWing = {
       ...importedWings[wingIndex],
+      cutStrategy: importedWingCutStrategyInput.value,
       straightSparRods
     }
     createImportedWingCutProfiles(updatedWing)
@@ -4182,7 +4206,7 @@ saveImportedWingSparsButton.addEventListener('click', () => {
     openImportedWingInConstructor(updatedWing)
     importedWingLibraryStatus.className = 'profile-library-valid'
     importedWingLibraryStatus.textContent = straightSparRods.length
-      ? `Готово: ${straightSparRods.length} наскрізних отворів додано до робочої траєкторії X/Y–A/Z.`
+      ? `Готово: ${straightSparRods.length} наскрізних отворів додано. ${updatedWing.cutStrategy === 'wing-single' ? 'Один прохід: задня кромка → верх → носик → низ з отворами → вихід.' : 'Режим секції: отвори вирізаються першими.'}`
       : 'Наскрізні отвори прибрано з робочої траєкторії цієї деталі.'
   } catch (error) {
     importedWingLibraryStatus.className = 'profile-library-error'
