@@ -62,7 +62,7 @@ const trimMirroredApproach = points => {
 }
 
 const findLongestClosedSegment = points => {
-  let best = null
+  const candidates = []
 
   for (let start = 0; start < points.length - 3; start++) {
     for (let end = points.length - 1; end >= start + 3; end--) {
@@ -70,14 +70,38 @@ const findLongestClosedSegment = points => {
         const candidate = stripDuplicateEnd(
           trimMirroredApproach(points.slice(start, end + 1))
         )
-        if (candidate.length >= 3 && (!best || candidate.length > best.points.length)) {
-          best = { points: candidate }
+        if (candidate.length >= 3) {
+          const xs = candidate.map(point => point.x)
+          const ys = candidate.map(point => point.y)
+          candidates.push({
+            points: candidate,
+            width: Math.max(...xs) - Math.min(...xs),
+            height: Math.max(...ys) - Math.min(...ys)
+          })
         }
+        // The widest candidate for this start was considered first.
+        break
       }
     }
   }
 
-  if (!best) return { points: points.map(point => ({ ...point })), closed: false }
+  if (!candidates.length) return { points: points.map(point => ({ ...point })), closed: false }
+  const totalWidth = Math.max(...points.map(point => point.x)) - Math.min(...points.map(point => point.x))
+  const totalHeight = Math.max(...points.map(point => point.y)) - Math.min(...points.map(point => point.y))
+  const shapeCandidates = candidates.filter(candidate => (
+    candidate.width >= totalWidth * 0.8
+    && candidate.height >= totalHeight * 0.45
+  ))
+  const usableCandidates = shapeCandidates.length ? shapeCandidates : candidates
+  const longestLength = Math.max(...usableCandidates.map(candidate => candidate.points.length))
+  const completeCandidates = usableCandidates.filter(candidate => (
+    candidate.points.length >= longestLength * 0.6
+  ))
+  // Prefer the innermost complete loop. This drops old hole-first/service routes
+  // wrapped around a later closed exterior profile.
+  const best = completeCandidates.reduce((selected, candidate) => (
+    candidate.points.length < selected.points.length ? candidate : selected
+  ))
   return {
     points: best.points.map(point => ({ ...point })),
     closed: true

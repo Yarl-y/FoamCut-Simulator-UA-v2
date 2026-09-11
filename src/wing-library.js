@@ -83,6 +83,27 @@ const profileCenter = points => {
   }
 }
 
+const findTrailingEdgeIndex = profile => {
+  const xs = profile.map(point => point.x)
+  const minX = Math.min(...xs)
+  const maxX = Math.max(...xs)
+  const width = Math.max(maxX - minX, 1e-9)
+  const bandWidth = width * 0.12
+  const verticalSpread = edgePoints => {
+    const ys = edgePoints.map(point => point.y)
+    return Math.max(...ys) - Math.min(...ys)
+  }
+  const leftSpread = verticalSpread(profile.filter(point => point.x <= minX + bandWidth))
+  const rightSpread = verticalSpread(profile.filter(point => point.x >= maxX - bandWidth))
+  const spreadTolerance = Math.max(leftSpread, rightSpread, 1) * 0.02
+  const trailingX = leftSpread + spreadTolerance < rightSpread ? minX : maxX
+  return profile.reduce((bestIndex, point, index) => (
+    Math.abs(point.x - trailingX) < Math.abs(profile[bestIndex].x - trailingX)
+      ? index
+      : bestIndex
+  ), 0)
+}
+
 export const findSmallerProfileCenter = wingData => {
   const wing = sanitizeWing(wingData)
   const leftPoints = removeInteriorCutLoops(wing.leftPoints)
@@ -120,23 +141,38 @@ export const createImportedWingCutProfiles = wingData => {
   })
 
   if (wing.cutStrategy === 'wing-single') {
-    const smallerProfile = polygonArea(outerLeft) <= polygonArea(outerRight) ? outerLeft : outerRight
-    const maxX = Math.max(...smallerProfile.map(point => point.x))
-    const entryIndex = smallerProfile.reduce((bestIndex, point, index) => (
-      point.x > smallerProfile[bestIndex].x ? index : bestIndex
-    ), 0)
+    const pairHasDuplicateEnd = Math.hypot(
+      outerLeft[0].x - outerLeft.at(-1).x,
+      outerLeft[0].y - outerLeft.at(-1).y
+    ) <= 0.02 && Math.hypot(
+      outerRight[0].x - outerRight.at(-1).x,
+      outerRight[0].y - outerRight.at(-1).y
+    ) <= 0.02
+    const wingOuterLeft = pairHasDuplicateEnd ? outerLeft.slice(0, -1) : outerLeft
+    const wingOuterRight = pairHasDuplicateEnd ? outerRight.slice(0, -1) : outerRight
+    const leftIsSmaller = polygonArea(wingOuterLeft) <= polygonArea(wingOuterRight)
+    const smallerProfile = leftIsSmaller ? wingOuterLeft : wingOuterRight
+    const entryIndex = findTrailingEdgeIndex(smallerProfile)
+    const trailingX = smallerProfile[entryIndex].x
     const rotate = profile => [
       ...profile.slice(entryIndex),
       ...profile.slice(0, entryIndex)
     ].map(point => ({ ...point }))
-    let orderedLeft = rotate(outerLeft)
-    let orderedRight = rotate(outerRight)
-    let orderedReference = polygonArea(outerLeft) <= polygonArea(outerRight)
-      ? orderedLeft
-      : orderedRight
-    const noseIndex = orderedReference.reduce((bestIndex, point, index) => (
-      point.x < orderedReference[bestIndex].x ? index : bestIndex
-    ), 0)
+    let orderedLeft = rotate(wingOuterLeft)
+    let orderedRight = rotate(wingOuterRight)
+    let orderedReference = leftIsSmaller ? orderedLeft : orderedRight
+    const findNoseIndex = profile => {
+      const xs = profile.map(point => point.x)
+      const minX = Math.min(...xs)
+      const maxX = Math.max(...xs)
+      const noseX = Math.abs(trailingX - minX) < Math.abs(trailingX - maxX) ? maxX : minX
+      return profile.reduce((bestIndex, point, index) => (
+        Math.abs(point.x - noseX) < Math.abs(profile[bestIndex].x - noseX)
+          ? index
+          : bestIndex
+      ), 0)
+    }
+    const noseIndex = findNoseIndex(orderedReference)
     const averageY = profile => profile.reduce((sum, point) => sum + point.y, 0)
       / Math.max(profile.length, 1)
     if (averageY(orderedReference.slice(1, noseIndex + 1))
@@ -144,13 +180,9 @@ export const createImportedWingCutProfiles = wingData => {
       const reverseAfterStart = profile => [profile[0], ...profile.slice(1).reverse()]
       orderedLeft = reverseAfterStart(orderedLeft)
       orderedRight = reverseAfterStart(orderedRight)
-      orderedReference = polygonArea(outerLeft) <= polygonArea(outerRight)
-        ? orderedLeft
-        : orderedRight
+      orderedReference = leftIsSmaller ? orderedLeft : orderedRight
     }
-    const lowerStartIndex = orderedReference.reduce((bestIndex, point, index) => (
-      point.x < orderedReference[bestIndex].x ? index : bestIndex
-    ), 0)
+    const lowerStartIndex = findNoseIndex(orderedReference)
     const lowerEntryHoles = holes.map(hole => {
       const center = hole.left.reduce((result, point) => ({
         x: result.x + point.x / hole.left.length,
@@ -176,7 +208,7 @@ export const createImportedWingCutProfiles = wingData => {
       outerRight,
       leftPoints: cutPair.leftPoints,
       rightPoints: cutPair.rightPoints,
-      entry: { side: 'trailing-edge', x: maxX },
+      entry: { side: 'trailing-edge', x: trailingX },
       holeEntrySurface: 'lower'
     }
   }

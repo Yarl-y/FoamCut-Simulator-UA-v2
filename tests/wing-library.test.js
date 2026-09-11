@@ -6,6 +6,7 @@ import {
   createImportedWingCutProfiles,
   findSmallerProfileCenter
 } from '../src/wing-library.js'
+import { createLibraryProfile } from '../src/profile-library.js'
 
 const ellipse = (centerX, centerY, radiusX, radiusY, count = 80) => Array.from(
   { length: count },
@@ -89,4 +90,30 @@ test('offline wing mode cuts upper surface first and enters holes from the lower
   assert.ok(noseIndex > 0)
   assert.ok(firstHolePoint > noseIndex, 'the hole must branch from the lower return surface')
   assert.equal(cut.holeEntrySurface, 'lower')
+})
+
+test('offline wing mode recognizes a sharp trailing edge when the nose points right', () => {
+  const points = createLibraryProfile('naca0012', 120).map(point => ({
+    x: (1 - point.x) * 100,
+    y: point.y * 100 + 20
+  }))
+  const wing = createImportedWing({
+    name: 'Крило носиком праворуч',
+    span: 600,
+    cutStrategy: 'wing-single',
+    leftPoints: points,
+    rightPoints: points,
+    straightSparRods: [{ x: 60, y: 20, diameter: 4 }]
+  })
+
+  const cut = createImportedWingCutProfiles(wing)
+  const noseIndex = cut.leftPoints.findIndex(point => point.x > 99.9)
+  const firstHolePoint = cut.leftPoints.findIndex(
+    point => Math.abs(Math.hypot(point.x - 60, point.y - 20) - 2) < 0.01
+  )
+
+  assert.ok(cut.leftPoints[0].x < 0.1, 'the sharp left edge must be selected as trailing edge')
+  assert.ok(cut.leftPoints[1].y > 20, 'the first surface must still be the upper surface')
+  assert.ok(noseIndex > 0)
+  assert.ok(firstHolePoint > noseIndex)
 })

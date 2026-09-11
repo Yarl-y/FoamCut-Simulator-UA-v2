@@ -97,6 +97,29 @@ test('compensation preserves identical bore points; envelope rejects 601.630 mm'
   assert.equal(result.ranges.x.maximum, 601.630)
 })
 
+test('recovery separates a hole-first service route from the later exterior profile', () => {
+  const hole = Array.from({ length: 25 }, (_, index) => {
+    const angle = Math.PI * 2 * index / 24
+    return { x: 60 + Math.cos(angle) * 5, y: 20 + Math.sin(angle) * 5 }
+  })
+  const exterior = Array.from({ length: 81 }, (_, index) => {
+    const angle = Math.PI * 2 * index / 80
+    return { x: 50 + Math.cos(angle) * 50, y: 30 + Math.sin(angle) * 15 }
+  })
+  const moves = [
+    { x: 0, y: 0 }, { x: 0, y: 5 }, { x: 60, y: 5 },
+    ...hole, { x: 60, y: 5 }, { x: 0, y: 5 }, { x: 0, y: 0 },
+    ...exterior, { x: 0, y: 0 }
+  ]
+
+  const recovered = recoverNcProfiles('', moves, moves)
+
+  assert.equal(recovered.method, 'detected')
+  assert.ok(recovered.leftPoints.every(point => point.y >= 15))
+  assert.ok(recovered.leftPoints.length >= 75 && recovered.leftPoints.length <= 81)
+  assert.equal(detectCircularHoles(moves).length, 1)
+})
+
 test('original straight-wing NC: 150% insert, 400 mm span, 500 mm towers', { skip: !process.env.FOAMCUT_TEST_NC }, () => {
   const text = readFileSync(process.env.FOAMCUT_TEST_NC, 'utf8')
   // This fixture is absolute metric G0/G1 with all four coordinates per move.

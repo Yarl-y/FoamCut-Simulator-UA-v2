@@ -4408,8 +4408,9 @@ const { leftPoints, rightPoints } = parsedNc
     }
 
     recoveredNcProfiles = recoverNcProfiles(text, leftPoints, rightPoints)
-    const detectedLeftHoles = detectCircularHoles(recoveredNcProfiles.leftPoints)
-    const detectedRightHoles = detectCircularHoles(recoveredNcProfiles.rightPoints)
+    // Holes may be cut in a separate service route before the clean exterior profile.
+    const detectedLeftHoles = detectCircularHoles(leftPoints)
+    const detectedRightHoles = detectCircularHoles(rightPoints)
     recoveredNcStraightSparRods = detectedLeftHoles.filter(leftHole => (
       detectedRightHoles.some(rightHole => (
         Math.hypot(leftHole.x - rightHole.x, leftHole.y - rightHole.y) <= 0.5
