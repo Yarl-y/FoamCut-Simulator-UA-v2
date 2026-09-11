@@ -2319,22 +2319,9 @@ const createMach3Nc = trajectory => {
       + `right gap ${formatNcNumber(trajectory.blockSetup.rightGap)} mm)`)
   }
 
-  if (trajectory.sourceLeftPoints && trajectory.sourceRightPoints) {
-    lines.push('(FOAMCUT_PROFILE_DATA_BEGIN)')
-    const profileCount = Math.min(
-      trajectory.sourceLeftPoints.length,
-      trajectory.sourceRightPoints.length
-    )
-
-    for (let index = 0; index < profileCount; index++) {
-      const left = trajectory.sourceLeftPoints[index]
-      const right = trajectory.sourceRightPoints[index]
-      lines.push(`(FOAMCUT_PROFILE X${formatNcNumber(left.x)} Y${formatNcNumber(left.y)} `
-        + `A${formatNcNumber(right.x)} Z${formatNcNumber(right.y)})`)
-    }
-    lines.push('(FOAMCUT_PROFILE_DATA_END)')
-  }
-
+  // A controller file must contain only the short machine header and motion.
+  // Source profiles stay in the application's wing library; embedding thousands
+  // of FOAMCUT_PROFILE comments makes Mach3 spend minutes reading the preamble.
   lines.push('G21', 'G90', 'G94', `F${formatNcNumber(trajectory.feedRate)}`)
   let previousLine = null
 

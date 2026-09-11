@@ -97,6 +97,21 @@ test('compensation preserves identical bore points; envelope rejects 601.630 mm'
   assert.equal(result.ranges.x.maximum, 601.630)
 })
 
+test('Mach3 NC keeps profile recovery data out of the controller preamble', () => {
+  const nc = context.api.createMach3Nc({
+    leftPoints: left,
+    rightPoints: right,
+    sourceLeftPoints: Array.from({ length: 1000 }, () => left[0]),
+    sourceRightPoints: Array.from({ length: 1000 }, () => right[0]),
+    blockSetup: { wireSpan: 500, leftGap: 50, blockWidth: 400, rightGap: 50 },
+    feedRate: 300
+  })
+
+  assert.doesNotMatch(nc, /FOAMCUT_PROFILE/)
+  assert.equal(nc.split(/\r?\n/).filter(Boolean).length, left.length + 10)
+  assert.match(nc, /\nG21\nG90\nG94\nF300\.000\nG1 /)
+})
+
 test('recovery separates a hole-first service route from the later exterior profile', () => {
   const hole = Array.from({ length: 25 }, (_, index) => {
     const angle = Math.PI * 2 * index / 24
