@@ -69,26 +69,32 @@ test('through-hole can bind to the bounding-box centre of the smaller face', () 
   assert.deepEqual(findSmallerProfileCenter(wing), { x: 52, y: 43, side: 'right' })
 })
 
-test('offline wing mode cuts upper surface first and enters holes from the lower surface', () => {
+test('offline wing mode cuts the lower surface and spar holes before returning over the upper surface', () => {
   const wing = createImportedWing({
     name: 'Просте крило',
     span: 600,
     cutStrategy: 'wing-single',
     leftPoints: ellipse(50, 40, 45, 15),
     rightPoints: ellipse(50, 40, 30, 10),
-    straightSparRods: [{ x: 55, y: 40, diameter: 6 }]
+    straightSparRods: [
+      { x: 45, y: 40, diameter: 5 },
+      { x: 60, y: 40, diameter: 7 }
+    ]
   })
 
   const cut = createImportedWingCutProfiles(wing)
   const noseIndex = cut.leftPoints.findIndex(point => Math.abs(point.x - 5) < 0.01)
-  const firstHolePoint = cut.leftPoints.findIndex(
-    point => Math.abs(Math.hypot(point.x - 55, point.y - 40) - 3) < 0.01
-  )
+  const holeIndices = [
+    { x: 45, radius: 2.5 },
+    { x: 60, radius: 3.5 }
+  ].map(hole => cut.leftPoints.findIndex(
+    point => Math.abs(Math.hypot(point.x - hole.x, point.y - 40) - hole.radius) < 0.01
+  ))
 
   assert.ok(Math.abs(cut.leftPoints[0].x - 95) < 0.01, 'the route must start at the trailing edge')
-  assert.ok(cut.leftPoints[1].y > 40, 'the route must leave along the upper surface')
+  assert.ok(cut.leftPoints[1].y < 40, 'the route must leave along the lower surface')
   assert.ok(noseIndex > 0)
-  assert.ok(firstHolePoint > noseIndex, 'the hole must branch from the lower return surface')
+  assert.ok(holeIndices.every(index => index > 0 && index < noseIndex), 'all holes must branch from the lower first surface')
   assert.equal(cut.holeEntrySurface, 'lower')
 })
 
@@ -113,7 +119,7 @@ test('offline wing mode recognizes a sharp trailing edge when the nose points ri
   )
 
   assert.ok(cut.leftPoints[0].x < 0.1, 'the sharp left edge must be selected as trailing edge')
-  assert.ok(cut.leftPoints[1].y > 20, 'the first surface must still be the upper surface')
+  assert.ok(cut.leftPoints[1].y < 20, 'the first surface must be the lower surface')
   assert.ok(noseIndex > 0)
-  assert.ok(firstHolePoint > noseIndex)
+  assert.ok(firstHolePoint > 0 && firstHolePoint < noseIndex)
 })

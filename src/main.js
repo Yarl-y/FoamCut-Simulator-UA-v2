@@ -153,10 +153,10 @@ document.querySelector('#app').innerHTML = `
             <label>Порядок різання
               <select id="importedWingCutStrategy">
                 <option value="section-hole-first">Секція або конус — спочатку отвори</option>
-                <option value="wing-single">Крило — верх, носик, низ та отвори</option>
+                <option value="wing-single">Крило — низ та отвори, носик, верх</option>
               </select>
             </label>
-            <p>У режимі крила виконується один прохід від задньої кромки: верхом до носика, низом назад; отвори входять тільки з нижньої поверхні.</p>
+            <p>У режимі крила виконується один прохід від задньої кромки: низом через отвори до носика, верхом назад до виходу.</p>
             <div class="spar-hole-row">
               <label><input id="importedSpar1Enabled" type="checkbox"> Отвір 1</label>
               <label><input id="importedSpar1Centered" type="checkbox" checked> По центру меншого профілю</label>
@@ -2472,7 +2472,7 @@ const renderPreparedDxfSimulation = () => {
   profileEntryStatus.textContent = `Застосовано до обох сторін: ${orientationLabels[profileOrientationInput.value]}; `
     + `безпечний вхід ${sideLabels[entrySide]} від X0/Y0 уздовж зовнішніх граней блока${internalFirst ? '; автоматичний старт вимкнено для складеної траєкторії порожнин' : ''}.`
   if (preserveOrder && !internalFirst) {
-    profileEntryStatus.textContent += ' Порядок крила збережено: задня кромка → верх → носик → низ та отвори.'
+    profileEntryStatus.textContent += ' Порядок крила збережено: задня кромка → низ та отвори → носик → верх → вихід.'
   }
   if (paired) profileEntryStatus.textContent += ' Парна траєкторія: один прохід, відповідність точок збережено.'
 
@@ -4170,7 +4170,7 @@ const updateImportedWingHolePreview = () => {
     const center = findSmallerProfileCenter(wing)
     importedWingLibraryStatus.className = ''
     importedWingLibraryStatus.textContent = straightSparRods.length
-      ? `Попередній перегляд отвору показано. Центр меншого профілю: X${Math.round(center.x * 1000) / 1000}, Y${Math.round(center.y * 1000) / 1000}. ${importedWingCutStrategyInput.value === 'wing-single' ? 'Крило піде верхом до носика й повернеться низом через отвори.' : 'Спочатку будуть вирізані отвори секції.'} Для зміни траєкторії натисніть «Застосувати отвори».`
+      ? `Попередній перегляд отвору показано. Центр меншого профілю: X${Math.round(center.x * 1000) / 1000}, Y${Math.round(center.y * 1000) / 1000}. ${importedWingCutStrategyInput.value === 'wing-single' ? 'Крило піде низом через отвори до носика й повернеться верхом до виходу.' : 'Спочатку будуть вирізані отвори секції.'} Для зміни траєкторії натисніть «Застосувати отвори».`
       : 'Увімкніть отвір, щоб побачити його у 3D-перегляді.'
   } catch (error) {
     importedWingLibraryStatus.className = 'profile-library-error'
@@ -4206,7 +4206,7 @@ saveImportedWingSparsButton.addEventListener('click', () => {
     openImportedWingInConstructor(updatedWing)
     importedWingLibraryStatus.className = 'profile-library-valid'
     importedWingLibraryStatus.textContent = straightSparRods.length
-      ? `Готово: ${straightSparRods.length} наскрізних отворів додано. ${updatedWing.cutStrategy === 'wing-single' ? 'Один прохід: задня кромка → верх → носик → низ з отворами → вихід.' : 'Режим секції: отвори вирізаються першими.'}`
+      ? `Готово: ${straightSparRods.length} наскрізних отворів додано. ${updatedWing.cutStrategy === 'wing-single' ? 'Один прохід: задня кромка → низ з отворами → носик → верх → вихід.' : 'Режим секції: отвори вирізаються першими.'}`
       : 'Наскрізні отвори прибрано з робочої траєкторії цієї деталі.'
   } catch (error) {
     importedWingLibraryStatus.className = 'profile-library-error'

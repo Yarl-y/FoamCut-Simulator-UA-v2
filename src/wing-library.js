@@ -175,23 +175,27 @@ export const createImportedWingCutProfiles = wingData => {
     const noseIndex = findNoseIndex(orderedReference)
     const averageY = profile => profile.reduce((sum, point) => sum + point.y, 0)
       / Math.max(profile.length, 1)
+    // Keep the cut-off core above the first pass. The wire therefore starts
+    // along the lower skin, cuts the spar holes, rounds the nose, and returns
+    // along the upper skin. On release, gravity pulls the core away from the
+    // wire instead of letting it bear down on the final cut.
     if (averageY(orderedReference.slice(1, noseIndex + 1))
-      < averageY(orderedReference.slice(noseIndex + 1))) {
+      > averageY(orderedReference.slice(noseIndex + 1))) {
       const reverseAfterStart = profile => [profile[0], ...profile.slice(1).reverse()]
       orderedLeft = reverseAfterStart(orderedLeft)
       orderedRight = reverseAfterStart(orderedRight)
       orderedReference = leftIsSmaller ? orderedLeft : orderedRight
     }
-    const lowerStartIndex = findNoseIndex(orderedReference)
+    const lowerEndIndex = findNoseIndex(orderedReference)
     const lowerEntryHoles = holes.map(hole => {
       const center = hole.left.reduce((result, point) => ({
         x: result.x + point.x / hole.left.length,
         y: result.y + point.y / hole.left.length
       }), { x: 0, y: 0 })
-      let baseIndex = lowerStartIndex
+      let baseIndex = 0
       let nearestDistance = Infinity
       orderedReference.forEach((point, index) => {
-        if (index < lowerStartIndex) return
+        if (index > lowerEndIndex) return
         const distance = Math.hypot(point.x - center.x, point.y - center.y)
         if (distance < nearestDistance) {
           nearestDistance = distance
