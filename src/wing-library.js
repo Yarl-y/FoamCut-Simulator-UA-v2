@@ -6,6 +6,8 @@ import {
 } from './profile-library.js'
 
 const STORAGE_KEY = 'foamcut-imported-wing-library-v1'
+export const WING_LIBRARY_FORMAT = 'Zhart Wing Library'
+export const WING_LIBRARY_VERSION = 1
 
 const finite = (value, label) => {
   const number = Number(value)
@@ -37,6 +39,9 @@ const sanitizeWing = (wing, index = 0) => {
     recoveryMethod: String(wing?.recoveryMethod || 'unknown'),
     cutStrategy: wing?.cutStrategy === 'wing-single' ? 'wing-single' : 'section-hole-first',
     importedAt: String(wing?.importedAt || new Date().toISOString()),
+    design: wing?.design && typeof wing.design === 'object'
+      ? JSON.parse(JSON.stringify(wing.design))
+      : null,
     straightSparRods: Array.isArray(wing?.straightSparRods)
       ? wing.straightSparRods.map((rod, rodIndex) => ({
           x: finite(rod?.x, `Лонжерон ${rodIndex + 1}, X`),
@@ -68,6 +73,37 @@ export const createImportedWing = data => sanitizeWing({
   id: data.id || `wing-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
   importedAt: new Date().toISOString()
 })
+
+export const createWingLibraryBackup = wings => ({
+  format: WING_LIBRARY_FORMAT,
+  version: WING_LIBRARY_VERSION,
+  exportedAt: new Date().toISOString(),
+  wings: wings.map(sanitizeWing)
+})
+
+export const parseWingLibraryBackup = text => {
+  let data
+  try {
+    data = JSON.parse(text)
+  } catch {
+    throw new Error('Файл бібліотеки не є коректним JSON')
+  }
+  if (data?.format !== WING_LIBRARY_FORMAT || data?.version !== WING_LIBRARY_VERSION) {
+    throw new Error('Це не підтримуваний файл бібліотеки крил ЖАРТ')
+  }
+  if (!Array.isArray(data.wings)) throw new Error('У файлі бібліотеки немає списку крил')
+  return data.wings.map(sanitizeWing)
+}
+
+export const mergeWingLibraries = (currentWings, importedWings) => {
+  const merged = currentWings.map(sanitizeWing)
+  importedWings.map(sanitizeWing).forEach(wing => {
+    const sameId = merged.findIndex(item => item.id === wing.id)
+    if (sameId >= 0) merged[sameId] = wing
+    else merged.push(wing)
+  })
+  return merged
+}
 
 const polygonArea = points => Math.abs(points.reduce((sum, point, index) => {
   const next = points[(index + 1) % points.length]

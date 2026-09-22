@@ -4,7 +4,10 @@ import assert from 'node:assert/strict'
 import {
   createImportedWing,
   createImportedWingCutProfiles,
-  findSmallerProfileCenter
+  createWingLibraryBackup,
+  findSmallerProfileCenter,
+  mergeWingLibraries,
+  parseWingLibraryBackup
 } from '../src/wing-library.js'
 import { createLibraryProfile } from '../src/profile-library.js'
 
@@ -122,4 +125,58 @@ test('offline wing mode recognizes a sharp trailing edge when the nose points ri
   assert.ok(cut.leftPoints[1].y < 20, 'the first surface must be the lower surface')
   assert.ok(noseIndex > 0)
   assert.ok(firstHolePoint > 0 && firstHolePoint < noseIndex)
+})
+
+test('portable wing library preserves geometry, holes and parametric design', () => {
+  const wing = createImportedWing({
+    id: 'trainer-wing',
+    name: 'Крило тренера',
+    span: 800,
+    leftPoints: ellipse(60, 20, 55, 18),
+    rightPoints: ellipse(45, 18, 40, 12),
+    straightSparRods: [{ x: 45, y: 18, diameter: 6, centered: false }],
+    design: {
+      type: 'parametric-wing',
+      rootProfileId: 'naca2412',
+      rootChord: 300,
+      tipProfileId: 'naca0012',
+      tipChord: 150,
+      sweep: 40,
+      twist: -2
+    }
+  })
+
+  const restored = parseWingLibraryBackup(JSON.stringify(createWingLibraryBackup([wing])))
+
+  assert.equal(restored.length, 1)
+  assert.equal(restored[0].name, 'Крило тренера')
+  assert.equal(restored[0].leftPoints.length, 80)
+  assert.equal(restored[0].straightSparRods[0].diameter, 6)
+  assert.equal(restored[0].design.rootChord, 300)
+  assert.equal(restored[0].design.twist, -2)
+})
+
+test('library import updates matching ids and keeps local-only wings', () => {
+  const first = createImportedWing({
+    id: 'same', name: 'Стара назва', span: 400,
+    leftPoints: ellipse(20, 20, 15, 8), rightPoints: ellipse(20, 20, 10, 5)
+  })
+  const local = createImportedWing({
+    id: 'local', name: 'Місцеве', span: 300,
+    leftPoints: ellipse(20, 20, 15, 8), rightPoints: ellipse(20, 20, 10, 5)
+  })
+  const update = createImportedWing({
+    id: 'same', name: 'Оновлена назва', span: 450,
+    leftPoints: ellipse(20, 20, 15, 8), rightPoints: ellipse(20, 20, 10, 5)
+  })
+
+  const merged = mergeWingLibraries([first, local], [update])
+
+  assert.equal(merged.length, 2)
+  assert.equal(merged.find(wing => wing.id === 'same').name, 'Оновлена назва')
+  assert.equal(merged.find(wing => wing.id === 'local').name, 'Місцеве')
+})
+
+test('library import rejects unrelated json', () => {
+  assert.throws(() => parseWingLibraryBackup('{"version":1,"wings":[]}'), /не підтримуваний/)
 })

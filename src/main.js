@@ -32,8 +32,11 @@ import { chooseEntrySide, createSafeLeadPoint, orientProfile, startProfileAtSide
 import {
   createImportedWing,
   createImportedWingCutProfiles,
+  createWingLibraryBackup,
   findSmallerProfileCenter,
   loadImportedWings,
+  mergeWingLibraries,
+  parseWingLibraryBackup,
   saveImportedWings
 } from './wing-library.js'
 import {
@@ -147,10 +150,23 @@ document.querySelector('#app').innerHTML = `
             <label>Ø кінця <input id="servo2TipDiameter" type="number" min="1" step="1" value="6"></label>
           </div>
         </div>
-        <button id="buildLibraryWing" type="button">Побудувати 3D-крило</button>
+        <div class="library-save-row">
+          <label>Назва власного крила
+            <input id="libraryWingName" type="text" maxlength="100" placeholder="Наприклад: Крило тренера 300–150">
+          </label>
+          <button id="buildLibraryWing" type="button">Побудувати 3D-крило</button>
+          <button id="saveLibraryWing" type="button" disabled>Зберегти у внутрішній бібліотеці</button>
+        </div>
         <p id="profileLibraryStatus">Виберіть параметри кореневого та кінцевого профілів</p>
         <section class="imported-wing-library">
-          <h2>Конструктор секції фюзеляжу або крила з NC</h2>
+          <h2>Власна та переносна бібліотека</h2>
+          <div class="library-transfer-row">
+            <button id="exportWingLibrary" type="button">Зберегти копію бібліотеки на диск</button>
+            <button id="importWingLibrary" type="button">Додати бібліотеку з диска</button>
+            <input id="wingLibraryFile" type="file" accept=".json,.zhart-library.json,application/json" hidden>
+          </div>
+          <p>Копію можна тримати на диску GURT і відкрити на іншому комп’ютері. Вбудовані профілі при цьому не змінюються.</p>
+          <h3>Конструктор секції фюзеляжу або крила з NC</h3>
           <div><label>Збережена деталь <select id="importedWingSelect"></select></label><button id="loadImportedWing" type="button" disabled>Відкрити у конструкторі</button><button id="deleteImportedWing" type="button" disabled>Видалити</button></div>
           <div class="imported-wing-spars">
             <strong>Наскрізні отвори на прямій осі, у фізичних мм</strong>
@@ -956,6 +972,8 @@ const wingSweepInput = document.querySelector('#wingSweep')
 const tipTwistInput = document.querySelector('#tipTwist')
 const twistAxisInput = document.querySelector('#twistAxis')
 const buildLibraryWingButton = document.querySelector('#buildLibraryWing')
+const libraryWingNameInput = document.querySelector('#libraryWingName')
+const saveLibraryWingButton = document.querySelector('#saveLibraryWing')
 const profileLibraryStatus = document.querySelector('#profileLibraryStatus')
 const sparHoleModeInput = document.querySelector('#sparHoleMode')
 const sparHoleHelp = document.querySelector('#sparHoleHelp')
@@ -1040,6 +1058,9 @@ const ncWingImportStatus = document.querySelector('#ncWingImportStatus')
 const importedWingSelect = document.querySelector('#importedWingSelect')
 const loadImportedWingButton = document.querySelector('#loadImportedWing')
 const deleteImportedWingButton = document.querySelector('#deleteImportedWing')
+const exportWingLibraryButton = document.querySelector('#exportWingLibrary')
+const importWingLibraryButton = document.querySelector('#importWingLibrary')
+const wingLibraryFileInput = document.querySelector('#wingLibraryFile')
 const importedWingLibraryStatus = document.querySelector('#importedWingLibraryStatus')
 const saveImportedWingSparsButton = document.querySelector('#saveImportedWingSpars')
 const importedWingCutStrategyInput = document.querySelector('#importedWingCutStrategy')
@@ -1183,6 +1204,7 @@ let importedWings = loadImportedWings()
 let activeStraightSparRods = []
 let activeServoChannels = []
 let currentAssemblyCandidate = null
+let currentParametricWingDesign = null
 let importedWingPreview = null
 let fuselageStations = defaultFuselageStations.map(station => ({ ...station }))
 let fuselageSectionSettings = Array.from({ length: defaultFuselageStations.length - 1 }, () => ({
@@ -2884,6 +2906,22 @@ buildLibraryWingButton.addEventListener('click', () => {
       servoChannels: activeServoChannels.map(channel => ({ ...channel })),
       defaultOffsets: { x: 0, y: 0, z: 0 }
     }
+    currentParametricWingDesign = {
+      type: 'parametric-wing',
+      rootProfileId: rootLibraryProfileInput.value,
+      rootProfileName: rootLibraryProfileInput.selectedOptions[0].textContent,
+      rootChord,
+      tipProfileId: tipLibraryProfileInput.value,
+      tipProfileName: tipLibraryProfileInput.selectedOptions[0].textContent,
+      tipChord,
+      halfSpan,
+      sweep,
+      twist,
+      twistAxis,
+      sparMode: sparHoleModeInput.value,
+      pointCount
+    }
+    saveLibraryWingButton.disabled = false
     updateAssemblyCandidateControls()
 
     preparedDxfProfiles.left = { points: normalizedPair.leftPoints, source: 'library' }
@@ -2910,8 +2948,45 @@ buildLibraryWingButton.addEventListener('click', () => {
       + `${sparHoleModeInput.value === 'straight' ? 'наскрізні прямі осі' : 'позиція за хордою'}; `
       + `каналів проводів: ${servoChannels.length}`
   } catch (error) {
+    saveLibraryWingButton.disabled = true
+    currentParametricWingDesign = null
     profileLibraryStatus.className = 'profile-library-error'
     profileLibraryStatus.textContent = `Не вдалося побудувати крило: ${error.message}`
+  }
+})
+
+saveLibraryWingButton.addEventListener('click', () => {
+  try {
+    if (!currentAssemblyCandidate || currentAssemblyCandidate.kind !== 'wing' || !currentParametricWingDesign) {
+      throw new Error('Спочатку побудуйте крило у конструкторі')
+    }
+    const name = libraryWingNameInput.value.trim()
+      || `${currentParametricWingDesign.rootProfileName} ${currentParametricWingDesign.rootChord}–${currentParametricWingDesign.tipChord}`
+    const wing = createImportedWing({
+      name,
+      span: currentAssemblyCandidate.span,
+      leftPoints: currentAssemblyCandidate.cutLeft,
+      rightPoints: currentAssemblyCandidate.cutRight,
+      sourceFile: 'Внутрішній конструктор ЖАРТ',
+      recoveryMethod: 'parametric',
+      // The constructor already produced the complete synchronized route,
+      // including every requested hole and channel. Preserve it verbatim.
+      cutStrategy: 'section-hole-first',
+      design: {
+        ...currentParametricWingDesign,
+        straightSparRods: currentAssemblyCandidate.straightSparRods,
+        servoChannels: currentAssemblyCandidate.servoChannels
+      }
+    })
+    importedWings.push(wing)
+    importedWings = saveImportedWings(importedWings)
+    renderImportedWingLibrary(wing.id)
+    loadImportedWingSparInputs()
+    importedWingLibraryStatus.className = 'profile-library-valid'
+    importedWingLibraryStatus.textContent = `«${wing.name}» збережено у внутрішній бібліотеці разом із геометрією, отворами та параметрами конструктора.`
+  } catch (error) {
+    importedWingLibraryStatus.className = 'profile-library-error'
+    importedWingLibraryStatus.textContent = `Крило не збережено: ${error.message}`
   }
 })
 
@@ -4655,6 +4730,45 @@ const renderImportedWingLibrary = (selectedId = importedWingSelect.value) => {
   saveImportedWingSparsButton.disabled = false
   buildWingInsertButton.disabled = false
 }
+
+exportWingLibraryButton.addEventListener('click', () => {
+  try {
+    if (!importedWings.length) throw new Error('Внутрішня бібліотека поки порожня')
+    const backup = createWingLibraryBackup(importedWings)
+    const date = new Date().toISOString().slice(0, 10)
+    downloadTextFile(
+      `${JSON.stringify(backup, null, 2)}\n`,
+      `ЖАРТ-бібліотека-крил-${date}.zhart-library.json`,
+      'application/json'
+    )
+    importedWingLibraryStatus.className = 'profile-library-valid'
+    importedWingLibraryStatus.textContent = `Копію бібліотеки збережено: ${importedWings.length} деталей. Перемістіть файл на диск GURT для переносного архіву.`
+  } catch (error) {
+    importedWingLibraryStatus.className = 'profile-library-error'
+    importedWingLibraryStatus.textContent = error.message
+  }
+})
+
+importWingLibraryButton.addEventListener('click', () => {
+  wingLibraryFileInput.value = ''
+  wingLibraryFileInput.click()
+})
+
+wingLibraryFileInput.addEventListener('change', async () => {
+  const [file] = wingLibraryFileInput.files || []
+  if (!file) return
+  try {
+    const imported = parseWingLibraryBackup(await file.text())
+    importedWings = saveImportedWings(mergeWingLibraries(importedWings, imported))
+    renderImportedWingLibrary(imported[0]?.id)
+    loadImportedWingSparInputs()
+    importedWingLibraryStatus.className = 'profile-library-valid'
+    importedWingLibraryStatus.textContent = `З диска додано або оновлено ${imported.length} деталей. У внутрішній бібліотеці тепер ${importedWings.length}.`
+  } catch (error) {
+    importedWingLibraryStatus.className = 'profile-library-error'
+    importedWingLibraryStatus.textContent = `Бібліотеку не відкрито: ${error.message}`
+  }
+})
 
 const loadImportedWingSparInputs = () => {
   const wing = importedWings.find(item => item.id === importedWingSelect.value)

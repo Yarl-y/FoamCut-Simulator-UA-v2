@@ -514,6 +514,26 @@ code {
   width: 100%;
 }
 
+.library-save-row,
+.library-transfer-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: end;
+  justify-content: center;
+  gap: 8px;
+  margin: 10px 0;
+}
+
+.library-save-row label {
+  display: flex;
+  min-width: 250px;
+  flex: 1;
+  flex-direction: column;
+  gap: 4px;
+  text-align: left;
+  font-size: 13px;
+}
+
 .spar-hole-controls {
   margin: 14px 0;
   padding: 12px;
