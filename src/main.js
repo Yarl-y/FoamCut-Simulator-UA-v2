@@ -81,12 +81,14 @@ document.querySelector('#app').innerHTML = `
         <div class="profile-library-grid">
           <label>Кореневий профіль
             <select id="rootLibraryProfile"></select>
+            <span id="rootProfileHint" class="profile-hint"></span>
           </label>
           <label>Хорда кореня, мм
             <input id="rootLibraryChord" type="number" min="1" step="1" value="300">
           </label>
           <label>Кінцевий профіль
             <select id="tipLibraryProfile"></select>
+            <span id="tipProfileHint" class="profile-hint"></span>
           </label>
           <label>Хорда кінця, мм
             <input id="tipLibraryChord" type="number" min="1" step="1" value="150">
@@ -965,6 +967,8 @@ const toggleProfileLibraryButton = document.querySelector('#toggleProfileLibrary
 const profileLibraryPanel = document.querySelector('#profileLibraryPanel')
 const rootLibraryProfileInput = document.querySelector('#rootLibraryProfile')
 const tipLibraryProfileInput = document.querySelector('#tipLibraryProfile')
+const rootProfileHint = document.querySelector('#rootProfileHint')
+const tipProfileHint = document.querySelector('#tipProfileHint')
 const rootLibraryChordInput = document.querySelector('#rootLibraryChord')
 const tipLibraryChordInput = document.querySelector('#tipLibraryChord')
 const halfSpanInput = document.querySelector('#halfSpan')
@@ -1414,6 +1418,19 @@ for (const { id, name } of profileLibraryEntries) {
 }
 rootLibraryProfileInput.value = 'naca2412'
 tipLibraryProfileInput.value = 'naca2412'
+const updateProfileHints = () => {
+  const renderHint = (select, element) => {
+    const profile = profileLibraryEntries.find(item => item.id === select.value)
+    element.textContent = profile
+      ? `${profile.description} Застосування: ${profile.use}; товщина ${profile.thickness}%.`
+      : ''
+  }
+  renderHint(rootLibraryProfileInput, rootProfileHint)
+  renderHint(tipLibraryProfileInput, tipProfileHint)
+}
+rootLibraryProfileInput.addEventListener('change', updateProfileHints)
+tipLibraryProfileInput.addEventListener('change', updateProfileHints)
+updateProfileHints()
 
 const readFuselageStations = () => [...fuselageStationsElement.querySelectorAll('.fuselage-station-row')].map(
   row => ({

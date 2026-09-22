@@ -9,7 +9,7 @@ import {
   mergeWingLibraries,
   parseWingLibraryBackup
 } from '../src/wing-library.js'
-import { createLibraryProfile } from '../src/profile-library.js'
+import { createLibraryProfile, profileLibraryEntries } from '../src/profile-library.js'
 
 const ellipse = (centerX, centerY, radiusX, radiusY, count = 80) => Array.from(
   { length: count },
@@ -179,4 +179,21 @@ test('library import updates matching ids and keeps local-only wings', () => {
 
 test('library import rejects unrelated json', () => {
   assert.throws(() => parseWingLibraryBackup('{"version":1,"wings":[]}'), /не підтримуваний/)
+})
+
+test('extended base catalog provides useful hints and valid closed profiles', () => {
+  const ids = ['clarky', 'naca23012', 'e205', 'mh32', 's1223', 'e325']
+  ids.forEach(id => {
+    const entry = profileLibraryEntries.find(profile => profile.id === id)
+    assert.ok(entry?.description)
+    assert.ok(entry?.use)
+    assert.ok(entry?.thickness > 0)
+    const points = createLibraryProfile(id, 160)
+    assert.equal(points.length, 160)
+    assert.ok(points.every(point => Number.isFinite(point.x) && Number.isFinite(point.y)))
+    const width = Math.max(...points.map(point => point.x)) - Math.min(...points.map(point => point.x))
+    const height = Math.max(...points.map(point => point.y)) - Math.min(...points.map(point => point.y))
+    assert.ok(width > 0.95 && width < 1.02)
+    assert.ok(height > 0.07 && height < 0.2)
+  })
 })

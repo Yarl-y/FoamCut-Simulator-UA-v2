@@ -514,6 +514,14 @@ code {
   width: 100%;
 }
 
+.profile-hint {
+  display: block;
+  min-height: 3.2em;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.35;
+}
+
 .library-save-row,
 .library-transfer-row {
   display: flex;
