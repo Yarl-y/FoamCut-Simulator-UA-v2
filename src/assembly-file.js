@@ -22,6 +22,11 @@ const readFeatureList = (features, fields, label) => {
   ))
 }
 
+const optionalPositiveNumber = (value, label) => {
+  if (value == null || value === '') return null
+  return Math.max(2, finiteNumber(value, label))
+}
+
 const sanitizeFuselageDesign = (design, label) => {
   if (design == null) return null
   const template = design?.template
@@ -43,7 +48,14 @@ const sanitizeFuselageDesign = (design, label) => {
     hollow: Boolean(template.sectionSettings?.[index]?.hollow),
     wallThickness: Math.max(1, finiteNumber(template.sectionSettings?.[index]?.wallThickness ?? 5, `${label}, стінка ${index + 1}`)),
     bottomThickness: Math.max(1, finiteNumber(template.sectionSettings?.[index]?.bottomThickness ?? 5, `${label}, днище ${index + 1}`)),
-    ceilingThickness: Math.max(1, finiteNumber(template.sectionSettings?.[index]?.ceilingThickness ?? template.sectionSettings?.[index]?.wallThickness ?? 5, `${label}, стеля ${index + 1}`))
+    ceilingThickness: Math.max(1, finiteNumber(template.sectionSettings?.[index]?.ceilingThickness ?? template.sectionSettings?.[index]?.wallThickness ?? 5, `${label}, стеля ${index + 1}`)),
+    jointBase: ['bottom', 'center', 'top'].includes(template.sectionSettings?.[index]?.jointBase)
+      ? template.sectionSettings[index].jointBase
+      : 'station',
+    startScale: Math.max(0.1, finiteNumber(template.sectionSettings?.[index]?.startScale ?? 1, `${label}, масштаб початку ${index + 1}`)),
+    endScale: Math.max(0.1, finiteNumber(template.sectionSettings?.[index]?.endScale ?? 1, `${label}, масштаб кінця ${index + 1}`)),
+    innerStartCeilingHeight: optionalPositiveNumber(template.sectionSettings?.[index]?.innerStartCeilingHeight, `${label}, стеля порожнини на початку ${index + 1}`),
+    innerEndCeilingHeight: optionalPositiveNumber(template.sectionSettings?.[index]?.innerEndCeilingHeight, `${label}, стеля порожнини в кінці ${index + 1}`)
   }))
   const tube = template.tube || {}
   const sanitizeTube = (source, tubeLabel) => ({
@@ -101,6 +113,16 @@ const sanitizePart = (part, index) => {
     innerRight: part.innerRight ? readPoints(part.innerRight, `Деталь ${index + 1}, внутрішній A/Z`) : null,
     cutLeft,
     cutRight,
+    sparHolePairs: Array.isArray(part.sparHolePairs)
+      ? part.sparHolePairs.map((hole, holeIndex) => {
+          const left = readPoints(hole.left, `Деталь ${index + 1}, отвір ${holeIndex + 1} X/Y`)
+          const right = readPoints(hole.right, `Деталь ${index + 1}, отвір ${holeIndex + 1} A/Z`)
+          if (left.length !== right.length) {
+            throw new Error(`Деталь ${index + 1}, отвір ${holeIndex + 1}: кількість точок X/Y та A/Z не збігається`)
+          }
+          return { left, right }
+        })
+      : [],
     straightSparRods: readFeatureList(
       kind === 'fuselage'
         ? (part.straightSparRods || []).map(rod => ({ ...rod, start: rod.start ?? 0, length: rod.length ?? span }))

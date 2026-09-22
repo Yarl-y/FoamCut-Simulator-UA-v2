@@ -178,6 +178,42 @@ const centerSectionHorizontally = points => {
   return points.map(point => ({ ...point, x: point.x - centerX }))
 }
 
+const alignSectionVertically = (points, base) => {
+  if (base === 'station') return { points, shiftY: 0 }
+  const minimum = Math.min(...points.map(point => point.y))
+  const maximum = Math.max(...points.map(point => point.y))
+  const anchor = base === 'bottom' ? minimum : base === 'top' ? maximum : (minimum + maximum) / 2
+  return {
+    points: points.map(point => ({ ...point, y: point.y - anchor })),
+    shiftY: -anchor
+  }
+}
+
+// Keep the bottom and the useful lower side walls unchanged while moving only
+// the roof.  This lets two neighbouring parts share their bottom and sides,
+// but still have a deliberate step or slope on top.
+const reshapeSectionRoof = (points, roofScale, fixedSideRatio = 0.7) => {
+  const minimum = Math.min(...points.map(point => point.y))
+  const maximum = Math.max(...points.map(point => point.y))
+  const height = maximum - minimum
+  const targetHeight = height * roofScale
+  // Above 70% keep the full lower 70% intact. For a lower requested roof,
+  // reduce the fixed side portion automatically so the contour remains valid.
+  const effectiveFixedRatio = roofScale > fixedSideRatio
+    ? fixedSideRatio
+    : roofScale * 0.8
+  const fixedHeight = height * effectiveFixedRatio
+  const shoulder = minimum + fixedHeight
+  const movableHeight = height - fixedHeight
+  const targetMovableHeight = targetHeight - fixedHeight
+  return points.map(point => ({
+    ...point,
+    y: point.y <= shoulder
+      ? point.y
+      : shoulder + (point.y - shoulder) * targetMovableHeight / movableHeight
+  }))
+}
+
 export const createGliderFuselageSegment = ({
   segmentId,
   segmentIndex: requestedSegmentIndex,
@@ -230,24 +266,41 @@ export const createGliderFuselageSegment = ({
   }
   const leftStation = normalizedStations[segmentIndex]
   const rightStation = normalizedStations[segmentIndex + 1]
+  const geometrySettings = sectionSettings?.[segmentIndex] || {}
+  const jointBase = ['bottom', 'center', 'top'].includes(geometrySettings.jointBase)
+    ? geometrySettings.jointBase
+    : 'station'
+  const startScale = Math.max(0.1, Number(geometrySettings.startScale) || 1)
+  const endScale = Math.max(0.1, Number(geometrySettings.endScale) || 1)
+  const innerStartCeilingHeight = geometrySettings.innerStartCeilingHeight != null
+    && geometrySettings.innerStartCeilingHeight !== ''
+    && Number.isFinite(Number(geometrySettings.innerStartCeilingHeight))
+    ? Number(geometrySettings.innerStartCeilingHeight)
+    : null
+  const innerEndCeilingHeight = geometrySettings.innerEndCeilingHeight != null
+    && geometrySettings.innerEndCeilingHeight !== ''
+    && Number.isFinite(Number(geometrySettings.innerEndCeilingHeight))
+    ? Number(geometrySettings.innerEndCeilingHeight)
+    : null
   const stationDimensions = station => ({
     width: maximumWidth * station.width,
     height: maximumHeight * station.height,
     lift: maximumHeight * station.lift
   })
-  const makeSection = station => {
+  const makeSection = (station, roofScale) => {
     const dimensions = stationDimensions(station)
-    return createGliderSection(
+    const section = createGliderSection(
       dimensions.width, dimensions.height, dimensions.lift, pointCount, station
     )
+    return reshapeSectionRoof(section, roofScale)
   }
   // Fuselage stations share one longitudinal centreline.  Center each face
   // before the common positive-coordinate translation; otherwise profiles of
   // different widths are aligned by their left edges and a straight tube
   // becomes diagonal through the foam block.
-  const rawLeft = centerSectionHorizontally(makeSection(leftStation))
-  const rawRight = centerSectionHorizontally(makeSection(rightStation))
-  const pair = normalizeProfilePair(rawLeft, rawRight)
+  const alignedLeft = alignSectionVertically(centerSectionHorizontally(makeSection(leftStation, startScale)), jointBase)
+  const alignedRight = alignSectionVertically(centerSectionHorizontally(makeSection(rightStation, endScale)), jointBase)
+  const pair = normalizeProfilePair(alignedLeft.points, alignedRight.points)
   let innerLeftPoints = null
   let innerRightPoints = null
 
@@ -265,21 +318,28 @@ export const createGliderFuselageSegment = ({
         ceiling: Math.max(...candidates.map(settings => Number(settings.ceilingThickness ?? settings.wallThickness ?? ceilingThickness)))
       }
     }
-    const makeInnerSection = (station, stationIndex, label) => {
+    const makeInnerSection = (station, stationIndex, label, alignedOuter, explicitCeilingHeight) => {
       const dimensions = stationDimensions(station)
       const { wall, bottom, ceiling } = sharedSettings(stationIndex)
       if (![wall, bottom, ceiling].every(value => Number.isFinite(value) && value > 0)) {
         throw new Error('Товщина стінки, днища та стелі повинна бути більшою за нуль')
       }
       const innerWidth = dimensions.width - wall * 2
-      const innerHeight = dimensions.height - ceiling - bottom
+      const outerMinimum = Math.min(...alignedOuter.points.map(point => point.y))
+      const outerMaximum = Math.max(...alignedOuter.points.map(point => point.y))
+      const outerHeight = outerMaximum - outerMinimum
+      const ceilingHeight = explicitCeilingHeight ?? (outerHeight - ceiling)
+      const innerHeight = ceilingHeight - bottom
       if (innerWidth < 2 || innerHeight < 2) {
         throw new Error(`${label}: недостатньо місця для порожнини при заданій товщині`)
+      }
+      if (ceilingHeight > outerHeight - 1) {
+        throw new Error(`${label}: стеля порожнини виходить за зовнішній верх профілю`)
       }
       const inner = centerSectionHorizontally(createGliderSection(
         innerWidth,
         innerHeight,
-        dimensions.lift + bottom,
+        outerMinimum + bottom,
         pointCount,
         station
       ))
@@ -288,8 +348,8 @@ export const createGliderFuselageSegment = ({
         y: point.y + pair.translation.y
       }))
     }
-    innerLeftPoints = makeInnerSection(leftStation, segmentIndex, leftStation.name)
-    innerRightPoints = makeInnerSection(rightStation, segmentIndex + 1, rightStation.name)
+    innerLeftPoints = makeInnerSection(leftStation, segmentIndex, leftStation.name, alignedLeft, innerStartCeilingHeight)
+    innerRightPoints = makeInnerSection(rightStation, segmentIndex + 1, rightStation.name, alignedRight, innerEndCeilingHeight)
   }
 
   return {
@@ -299,7 +359,12 @@ export const createGliderFuselageSegment = ({
     segmentStart: totalLength * leftStation.position,
     segmentLength: totalLength * (rightStation.position - leftStation.position),
     leftName: leftStation.name,
-    rightName: rightStation.name
+    rightName: rightStation.name,
+    jointBase,
+    startScale,
+    endScale,
+    innerStartCeilingHeight,
+    innerEndCeilingHeight
   }
 }
 
@@ -402,7 +467,8 @@ export const createPairedHollowCutPath = (
   outerLeft,
   outerRight,
   innerLeft,
-  innerRight
+  innerRight,
+  options = {}
 ) => {
   if (
     outerLeft.length !== outerRight.length
@@ -416,12 +482,20 @@ export const createPairedHollowCutPath = (
   outerLeft.forEach((point, index) => {
     if (point.y < outerLeft[bottomIndex].y) bottomIndex = index
   })
+  if (Number.isInteger(options.outerStartIndex)
+    && options.outerStartIndex >= 0 && options.outerStartIndex < outerLeft.length) {
+    bottomIndex = options.outerStartIndex
+  }
   const buildSide = (outer, inner) => {
     const orderedOuter = rotatePoints(outer, bottomIndex)
     let innerBottomIndex = 0
     inner.forEach((point, index) => {
       if (point.y < inner[innerBottomIndex].y) innerBottomIndex = index
     })
+    if (Number.isInteger(options.innerStartIndex)
+      && options.innerStartIndex >= 0 && options.innerStartIndex < inner.length) {
+      innerBottomIndex = options.innerStartIndex
+    }
     const orderedInner = rotatePoints(inner, innerBottomIndex)
     const outerStart = orderedOuter[0]
     const innerStart = orderedInner[0]

@@ -2,8 +2,12 @@ import './style.css'
 import { createAssemblyFile, parseAssemblyFile } from './assembly-file.js'
 import { renderAssemblyView } from './assembly-view.js'
 import { createBlockPlanFile, parseBlockPlanFile } from './block-plan.js'
+import { validateManualBatchNc } from './batch-safety.js'
 import {
   createBatchCutRoute,
+  createFreeBatchRoute,
+  applyManualFuselageLayout,
+  rebaseManualRouteMargin,
   createBatchMach3Nc,
   createBatchSetupMapSvg,
   createMultiBlockLayouts,
@@ -19,6 +23,7 @@ import {
   detectCircularHoles,
   recoverNcProfiles,
   removeInteriorCutLoops,
+  parseNcBlockSetup,
   parseNcTrajectories
 } from './nc-dxf.js'
 import { createFoamCutProject, parseFoamCutProject } from './project-file.js'
@@ -219,6 +224,26 @@ document.querySelector('#app').innerHTML = `
             <label>Товщина стелі, мм
               <input id="fuselageCeilingThickness" type="number" min="1" step="1" value="5">
             </label>
+            <label>Спільна база вибраної секції
+              <select id="fuselageJointBase">
+                <option value="station">Як у станціях</option>
+                <option value="bottom">По низу</option>
+                <option value="center">По центру</option>
+                <option value="top">По верху</option>
+              </select>
+            </label>
+            <label>Висота зовнішнього верху на початку, %
+              <input id="fuselageStartScale" type="number" min="10" max="300" step="1" value="100">
+            </label>
+            <label>Висота зовнішнього верху в кінці, %
+              <input id="fuselageEndScale" type="number" min="10" max="300" step="1" value="100">
+            </label>
+            <label>Стеля порожнини на початку від низу, мм
+              <input id="fuselageInnerStartCeilingHeight" type="number" min="2" step="1" placeholder="Автоматично">
+            </label>
+            <label>Стеля порожнини в кінці від низу, мм
+              <input id="fuselageInnerEndCeilingHeight" type="number" min="2" step="1" placeholder="Автоматично">
+            </label>
             <label class="fuselage-tube-toggle"><input id="fuselageTube" type="checkbox"> Карбонова трубка №1</label>
             <label>Зовнішній Ø трубки, мм
               <input id="fuselageTubeDiameter" type="number" min="1" step="0.1" value="8">
@@ -258,6 +283,7 @@ document.querySelector('#app').innerHTML = `
               <input id="fuselageTube2Length" type="number" min="1" step="1" value="850">
             </label>
           </div>
+          <p class="fuselage-joint-help">При висоті верху від 70% низ і нижні 70% боків не змінюються. Нижче 70% програма плавно зменшує незмінну частину боків, щоб профіль не ламався. Висоти стелі порожнини задаються окремо від спільного низу; порожнє поле залишає автоматичну товщину стелі.</p>
           <div class="fuselage-stations-toolbar">
             <strong>Поперечні станції та стики</strong>
             <button id="addFuselageSection" type="button">+ Додати секцію</button>
@@ -360,8 +386,14 @@ document.querySelector('#app').innerHTML = `
             <option value="bottom">Знизу</option>
           </select>
         </label>
+        <label>Маршрут від робочого нуля
+          <select id="profileRouteMode">
+            <option value="block-corner">Звичайний — від нижнього кута блока</option>
+            <option value="center-top-home">Серійний конус — нуль над центром</option>
+          </select>
+        </label>
         <label><input id="profileAutoStart" type="checkbox" checked> Автоматично перенести старт у крайню точку профілю</label>
-        <p id="profileEntryStatus">Орієнтація буде застосована однаково до X/Y та A/Z; DXF-файли не змінюються.</p>
+        <p id="profileEntryStatus">Орієнтація буде застосована однаково до X/Y та A/Z; DXF-файли не змінюються. Серійний режим використовує робочий нуль, а не машинний Ref Home.</p>
       </div>
       <div class="dxf-profile-grid">
         <section id="dxfLeftPanel" class="dxf-profile-panel" data-side="left">
@@ -541,13 +573,34 @@ view3d.innerHTML = `
       <label>Ширина блока, мм <input id="batchBlockWidth" type="number" min="1" step="1" value="600"></label>
       <label>Висота блока, мм <input id="batchBlockHeight" type="number" min="1" step="1" value="600"></label>
       <label>Товщина вздовж струни, мм <input id="batchBlockThickness" type="number" min="1" step="1" value="100"></label>
-      <label>Секцій у ряду <input id="batchColumns" type="text" value="Автоматично" readonly></label>
+      <label>Спосіб розкладки <select id="batchPlacementMode">
+        <option value="free">Вільна розкладка + пошук маршруту (пробний)</option>
+        <option value="manual">Ручний розклад і маршрут</option>
+        <option value="legacy">Попередня розкладка з NC</option>
+      </select></label>
+      <label hidden>Секцій у ряду <input id="batchColumns" type="text" value="Автоматично" readonly></label>
       <label>Безпечний коридор, мм <input id="batchCorridor" type="number" min="0" step="1" value="20"></label>
       <button id="buildBatchLayout" type="button">Автоматично розподілити секції</button>
       <button id="expandBatchView" type="button">На весь екран</button>
     </div>
+    <div id="batchManualTools" class="batch-manual-tools" hidden>
+      <strong>Ручний розклад: <span id="batchManualSelected">виберіть секцію на схемі</span></strong>
+      <button id="batchManualRotateLeft" type="button">↶ 90°</button>
+      <button id="batchManualRotateRight" type="button">↷ 90°</button>
+      <button id="batchManualFlipX" type="button">Перевернути ліво/право</button>
+      <button id="batchManualFlipY" type="button">Перевернути верх/низ</button>
+      <button id="batchManualRouteMode" type="button">Прокласти маршрут</button>
+      <button id="batchManualExitBottom" type="button">Вниз поза блоком → технічний нуль</button>
+      <button id="batchManualAddHome" type="button">До технічного нуля</button>
+      <button id="batchManualUndoRoute" type="button">↶ Скасувати останній клік</button>
+      <button id="batchManualRebaseRoute" type="button">Оновити відступ 20→5 мм</button>
+      <button id="batchManualClearRoute" type="button">Очистити маршрут</button>
+      <button id="batchManualResetLayout" type="button">Скинути ручні зміни блока</button>
+      <span id="batchManualRouteStatus">Перетягніть секції, потім прокладіть маршрут.</span>
+    </div>
     <p id="batchLayoutStatus">Додайте секції до збірки та натисніть «Розкласти секції»</p>
-    <p class="batch-drag-help">Секції розкладаються за реальними габаритами. Перетягніть секцію мишкою, щоб поміняти місця в щільній розкладці.</p>
+    <p class="batch-drag-help">Вільний пошук пробує повороти без сітки рядів, розсуває секції у блоці та порівнює «павутину», периметр і «ромашку». Пробний NC потребує холодного прогону й контролю оператором. Попередній режим залишено без змін.</p>
+    <p class="batch-drag-help">На схемі: суцільна лінія — зовнішній профіль, фіолетовий пунктир — порожнина, зелений контур — отвір трубки. Якщо секція суцільна або трубка через неї не проходить, відповідного отвору немає.</p>
     <div class="batch-layout-previews">
       <div><h3>Ліва сторона X/Y</h3><svg id="batchLeftSvg"></svg></div>
       <div><h3>Права сторона A/Z</h3><svg id="batchRightSvg"></svg></div>
@@ -560,6 +613,7 @@ view3d.innerHTML = `
       <button id="downloadAllBatchNc" type="button" disabled>Завантажити всі NC</button>
       <span>Швидкість береться з поля «Швидкість різання» біля профілів DXF.</span>
     </div>
+    <p id="batchMotionWarning" class="batch-layout-warning" hidden></p>
     <textarea id="batchNcPreview" rows="10" readonly
       placeholder="Після безпечної розкладки тут з’явиться спільний NC/G-code"></textarea>
   </section>
@@ -641,7 +695,13 @@ view3d.innerHTML = `
         <div id="machineProgramLines" class="machine-program-lines" aria-label="NC-програма з поточним рядком"></div>
       </section>
       <section class="machine-live-preview">
-        <div><h3>Живе положення струни на траєкторії</h3><small>Синій — X/Y; червоний — A/Z; зелений — поточне положення струни</small></div>
+        <div class="machine-live-preview__header">
+          <div><h3>Живе положення струни на траєкторії</h3><small>Синій — X/Y; червоний — A/Z; зелений — поточне положення струни</small></div>
+          <div class="machine-risk-legend" aria-label="Позначення зон ризику пропалу">
+            <span data-level="danger"><i></i> небезпека ≤5%</span>
+            <span data-level="warning"><i></i> увага 5–25%</span>
+          </div>
+        </div>
         <svg id="machineLivePreview" viewBox="0 0 640 300" role="img" aria-label="Поточне положення струни на NC-траєкторії"></svg>
         <p id="machineLivePreviewStatus">Завантажте NC для побудови траєкторії</p>
       </section>
@@ -732,26 +792,34 @@ view3d.innerHTML = `
             <textarea id="operatorAiQuestion" rows="3" placeholder="Наприклад: поясни головне попередження простими словами"></textarea>
           </label>
           <button id="operatorAiAsk" type="button" disabled>Запитати помічника</button>
+          <button id="operatorAiRestart" type="button">Перезапустити AI</button>
           <button id="operatorAiSpeak" type="button" disabled>Озвучити відповідь</button>
           <p class="operator-ai__guard">AI лише пояснює результати перевірок і не керує станком.</p>
           <pre id="operatorAiAnswer">Тут з’явиться відповідь локального помічника.</pre>
         </article>
-        <article class="operator-experience"><h3>9. Журнал досвіду ГУРТ</h3>
-          <p>Записуйте фактичний результат пробного або робочого різу. Цей досвід буде доступний локальному AI.</p>
+        <article class="operator-experience"><h3>9. Картка контрольного різу ГУРТ</h3>
+          <p>Створіть картку зараз, а після холодного прогону й різу доповніть її фактичними вимірами. Локальний AI використовує лише оцінені практичні різи.</p>
           <div class="operator-experience__fields">
+            <label>Деталь <select id="operatorExperienceCutType"><option>Конус</option><option>Крило</option><option>Інше</option></select></label>
+            <label>Етап <select id="operatorExperienceCutStage"><option>Підготовка</option><option>Холодний прогін</option><option>Пробний різ</option><option>Робочий різ</option></select></label>
+            <label>Назва NC-файлу <input id="operatorExperienceNcFile" type="text" maxlength="180" placeholder="Наприклад, ос12НИЗ-ВЕРХ-ТОРЦЮВАННЯ-ted.nc"></label>
             <label>Матеріал <select id="operatorExperienceMaterial"><option>EPS</option><option>XPS</option><option>EPP</option><option>Інше</option></select></label>
-            <label>Товщина, мм <input id="operatorExperienceThickness" type="number" min="1" value="100"></label>
-            <label>Струна, мм <input id="operatorExperienceWire" type="number" min="0.05" step="0.05" value="0.3"></label>
-            <label>Швидкість F <input id="operatorExperienceFeed" type="number" min="1" value="300"></label>
-            <label>Нагрів, % <input id="operatorExperienceHeat" type="number" min="0" max="100" value="40"></label>
-            <label>Пропал великого, мм <input id="operatorExperienceLargeKerf" type="number" min="0" max="10" step="0.1" value="0.8"></label>
-            <label>Пропал малого, мм <input id="operatorExperienceSmallKerf" type="number" min="0" max="10" step="0.1" value="1.2"></label>
+            <label>Товщина блока, мм <input id="operatorExperienceThickness" type="number" min="1" placeholder="Фактична товщина"></label>
+            <label>Струна, мм <input id="operatorExperienceWire" type="number" min="0.05" step="0.05" placeholder="Наприклад, 0,3"></label>
+            <label>Швидкість F <input id="operatorExperienceFeed" type="number" min="1" placeholder="З NC або фактична"></label>
+            <label>Нагрів, % <input id="operatorExperienceHeat" type="number" min="0" max="100" placeholder="Якщо відомо"></label>
+            <label>Пропал великого, мм <input id="operatorExperienceLargeKerf" type="number" min="0" max="10" step="0.1" placeholder="Після вимірювання"></label>
+            <label>Пропал малого, мм <input id="operatorExperienceSmallKerf" type="number" min="0" max="10" step="0.1" placeholder="Після вимірювання"></label>
             <label>Синхронність, % <input id="operatorExperienceSynchrony" type="number" min="0" max="100" step="0.1" placeholder="Наприклад, 20"></label>
-            <label>Результат <select id="operatorExperienceResult"><option>Добре</option><option>Потребує корекції</option><option>Невдало</option></select></label>
+            <label>Результат <select id="operatorExperienceResult"><option>Не оцінено</option><option>Добре</option><option>Потребує корекції</option><option>Невдало</option></select></label>
           </div>
+          <label>Фактичні розміри <textarea id="operatorExperienceDimensions" rows="2" maxlength="400" placeholder="Наприклад: великий профіль 200×200 мм; малий 61×61 мм; отвір 50×50 мм"></textarea></label>
+          <label>Якість поверхні <textarea id="operatorExperienceSurface" rows="2" maxlength="400" placeholder="Наприклад: зріз чистий; на малому торці є пропал"></textarea></label>
           <label>Примітка оператора <textarea id="operatorExperienceNote" rows="2" maxlength="500" placeholder="Наприклад: чистий зріз, без хвилі; наступного разу залишити ці параметри"></textarea></label>
-          <button id="operatorExperienceAdd" type="button">Додати досвід</button>
+          <button id="operatorExperienceAdd" type="button">Зберегти картку</button>
           <button id="operatorExperienceExport" type="button" disabled>Зберегти копію журналу</button>
+          <label>Відновити картки з копії <input id="operatorExperienceImport" type="file" accept=".json,application/json"></label>
+          <p id="operatorExperienceFeedback" role="status"></p>
           <ol id="operatorExperienceList" class="operator-experience__list"></ol>
           <p class="operator-ai__guard">Запис оператора є довідкою, а не автоматичним дозволом на різання.</p>
         </article>
@@ -923,6 +991,11 @@ const fuselageHollowInput = document.querySelector('#fuselageHollow')
 const fuselageWallThicknessInput = document.querySelector('#fuselageWallThickness')
 const fuselageBottomThicknessInput = document.querySelector('#fuselageBottomThickness')
 const fuselageCeilingThicknessInput = document.querySelector('#fuselageCeilingThickness')
+const fuselageJointBaseInput = document.querySelector('#fuselageJointBase')
+const fuselageStartScaleInput = document.querySelector('#fuselageStartScale')
+const fuselageEndScaleInput = document.querySelector('#fuselageEndScale')
+const fuselageInnerStartCeilingHeightInput = document.querySelector('#fuselageInnerStartCeilingHeight')
+const fuselageInnerEndCeilingHeightInput = document.querySelector('#fuselageInnerEndCeilingHeight')
 const fuselageTubeInput = document.querySelector('#fuselageTube')
 const fuselageTubeDiameterInput = document.querySelector('#fuselageTubeDiameter')
 const fuselageTubeClearanceInput = document.querySelector('#fuselageTubeClearance')
@@ -986,6 +1059,7 @@ const cutPassModeInput = document.querySelector('#cutPassMode')
 const leadDistanceInput = document.querySelector('#leadDistance')
 const profileOrientationInput = document.querySelector('#profileOrientation')
 const profileEntrySideInput = document.querySelector('#profileEntrySide')
+const profileRouteModeInput = document.querySelector('#profileRouteMode')
 const profileAutoStartInput = document.querySelector('#profileAutoStart')
 const profileEntryStatus = document.querySelector('#profileEntryStatus')
 const cutFeedRateInput = document.querySelector('#cutFeedRate')
@@ -1045,6 +1119,7 @@ const batchBlockWidthInput = document.getElementById('batchBlockWidth')
 const batchBlockHeightInput = document.getElementById('batchBlockHeight')
 const batchBlockThicknessInput = document.getElementById('batchBlockThickness')
 const batchColumnsInput = document.getElementById('batchColumns')
+const batchPlacementModeInput = document.getElementById('batchPlacementMode')
 const batchCorridorInput = document.getElementById('batchCorridor')
 const batchBlockSelect = document.getElementById('batchBlockSelect')
 const addBatchBlockButton = document.getElementById('addBatchBlock')
@@ -1059,12 +1134,17 @@ const expandBatchViewButton = document.getElementById('expandBatchView')
 const batchLayoutStatus = document.getElementById('batchLayoutStatus')
 const batchLeftSvg = document.getElementById('batchLeftSvg')
 const batchRightSvg = document.getElementById('batchRightSvg')
+const batchManualTools = document.getElementById('batchManualTools')
+const batchManualSelected = document.getElementById('batchManualSelected')
+const batchManualRouteStatus = document.getElementById('batchManualRouteStatus')
+const batchManualRouteModeButton = document.getElementById('batchManualRouteMode')
 const simulateBatchButton = document.getElementById('simulateBatch')
 const downloadBatchMapButton = document.getElementById('downloadBatchMap')
 const downloadAllBatchMapsButton = document.getElementById('downloadAllBatchMaps')
 const downloadBatchNcButton = document.getElementById('downloadBatchNc')
 const downloadAllBatchNcButton = document.getElementById('downloadAllBatchNc')
 const batchNcPreview = document.getElementById('batchNcPreview')
+const batchMotionWarning = document.getElementById('batchMotionWarning')
 let renderActiveFoamBlock = null
 const preparedDxfProfiles = { left: null, right: null }
 const cuttingSettings = { feedRate: 300 }
@@ -1091,6 +1171,10 @@ let nextBatchBlockId = 2
 const batchBlocks = [{ id: 1, name: 'Блок 1', width: 600, height: 600, thickness: 100, columns: 3 }]
 const batchAssignments = new Map()
 const batchSlotAssignments = new Map()
+const batchManualPlacements = new Map()
+const batchManualRoutes = new Map()
+let batchManualSelectedId = null
+let batchManualRouteEditing = false
 let currentBatchPackages = []
 let recoveredNcProfiles = null
 let recoveredNcSourceFile = ''
@@ -1105,7 +1189,12 @@ let fuselageSectionSettings = Array.from({ length: defaultFuselageStations.lengt
   hollow: false,
   wallThickness: 5,
   bottomThickness: 5,
-  ceilingThickness: 5
+  ceilingThickness: 5,
+  jointBase: 'station',
+  startScale: 1,
+  endScale: 1,
+  innerStartCeilingHeight: null,
+  innerEndCeilingHeight: null
 }))
 let nextFuselageStationId = 1
 let userFuselageTemplates = loadUserFuselageTemplates()
@@ -1409,7 +1498,22 @@ const applyFuselageTemplate = (template, selectedSegment = 0) => {
     hollow: Boolean(copy.sectionSettings?.[index]?.hollow),
     wallThickness: Math.max(1, Number(copy.sectionSettings?.[index]?.wallThickness) || 5),
     bottomThickness: Math.max(1, Number(copy.sectionSettings?.[index]?.bottomThickness) || 5),
-    ceilingThickness: Math.max(1, Number(copy.sectionSettings?.[index]?.ceilingThickness ?? copy.sectionSettings?.[index]?.wallThickness) || 5)
+    ceilingThickness: Math.max(1, Number(copy.sectionSettings?.[index]?.ceilingThickness ?? copy.sectionSettings?.[index]?.wallThickness) || 5),
+    jointBase: ['bottom', 'center', 'top'].includes(copy.sectionSettings?.[index]?.jointBase)
+      ? copy.sectionSettings[index].jointBase
+      : 'station',
+    startScale: Math.max(0.1, Number(copy.sectionSettings?.[index]?.startScale) || 1),
+    endScale: Math.max(0.1, Number(copy.sectionSettings?.[index]?.endScale) || 1),
+    innerStartCeilingHeight: copy.sectionSettings?.[index]?.innerStartCeilingHeight != null
+      && copy.sectionSettings[index].innerStartCeilingHeight !== ''
+      && Number.isFinite(Number(copy.sectionSettings[index].innerStartCeilingHeight))
+      ? Number(copy.sectionSettings[index].innerStartCeilingHeight)
+      : null,
+    innerEndCeilingHeight: copy.sectionSettings?.[index]?.innerEndCeilingHeight != null
+      && copy.sectionSettings[index].innerEndCeilingHeight !== ''
+      && Number.isFinite(Number(copy.sectionSettings[index].innerEndCeilingHeight))
+      ? Number(copy.sectionSettings[index].innerEndCeilingHeight)
+      : null
   }))
   const tube = copy.tubes?.[0] || copy.tube || {}
   const tube2 = copy.tubes?.[1] || {}
@@ -1619,9 +1723,13 @@ const renderLibraryPreview = () => {
         .flat()
       const selectedName = `${fuselageStations[selectedSegment].name} → ${fuselageStations[selectedSegment + 1].name}`
       const selectedSettings = fuselageSectionSettings[selectedSegment]
+      const baseLabel = {
+        station: 'за станціями', bottom: 'по низу', center: 'по центру', top: 'по верху'
+      }[selectedSettings.jointBase || 'station']
       libraryPreviewStatus.textContent = `Фюзеляж: ${fuselageStations.length - 1} секц.; вибрано ${selectedName}`
+        + `; база ${baseLabel}; зовнішній верх ${Math.round((selectedSettings.startScale || 1) * 1000) / 10}% → ${Math.round((selectedSettings.endScale || 1) * 1000) / 10}%`
         + (selectedSettings.hollow
-          ? `; порожниста — стінка ${selectedSettings.wallThickness} мм, днище ${selectedSettings.bottomThickness} мм, стеля ${selectedSettings.ceilingThickness} мм`
+          ? `; порожниста — стінка ${selectedSettings.wallThickness} мм, днище ${selectedSettings.bottomThickness} мм, стеля ${selectedSettings.innerStartCeilingHeight ?? 'авто'} → ${selectedSettings.innerEndCeilingHeight ?? 'авто'} мм від низу`
           : '; суцільна')
     }
     renderAssemblyView(libraryPreviewSvg, parts, libraryPreviewCamera, libraryMeasurement)
@@ -1697,7 +1805,12 @@ resetFuselageSectionsButton.addEventListener('click', () => {
     hollow: false,
     wallThickness: 5,
     bottomThickness: 5,
-    ceilingThickness: 5
+    ceilingThickness: 5,
+    jointBase: 'station',
+    startScale: 1,
+    endScale: 1,
+    innerStartCeilingHeight: null,
+    innerEndCeilingHeight: null
   }))
   selectedFuselageTransferSegments.clear()
   fuselageTransferSelectionInitialized = false
@@ -1778,6 +1891,11 @@ const loadSelectedSectionSettings = () => {
   fuselageWallThicknessInput.value = settings.wallThickness
   fuselageBottomThicknessInput.value = settings.bottomThickness
   fuselageCeilingThicknessInput.value = settings.ceilingThickness ?? settings.wallThickness
+  fuselageJointBaseInput.value = settings.jointBase || 'station'
+  fuselageStartScaleInput.value = Math.round((settings.startScale || 1) * 1000) / 10
+  fuselageEndScaleInput.value = Math.round((settings.endScale || 1) * 1000) / 10
+  fuselageInnerStartCeilingHeightInput.value = settings.innerStartCeilingHeight ?? ''
+  fuselageInnerEndCeilingHeightInput.value = settings.innerEndCeilingHeight ?? ''
   syncHollowFuselageControls()
 }
 fuselageSegmentInput.addEventListener('change', () => {
@@ -1795,7 +1913,9 @@ wingPreviewInputs.forEach(input => {
 })
 ;[
   fuselageLengthInput, fuselageWidthInput, fuselageHeightInput, fuselageHollowInput,
-  fuselageWallThicknessInput, fuselageBottomThicknessInput, fuselageCeilingThicknessInput
+  fuselageWallThicknessInput, fuselageBottomThicknessInput, fuselageCeilingThicknessInput,
+  fuselageJointBaseInput, fuselageStartScaleInput, fuselageEndScaleInput,
+  fuselageInnerStartCeilingHeightInput, fuselageInnerEndCeilingHeightInput
 ].forEach(input => {
   input.addEventListener('input', () => scheduleLibraryPreview('fuselage'))
   input.addEventListener('change', () => scheduleLibraryPreview('fuselage'))
@@ -1817,6 +1937,8 @@ const syncHollowFuselageControls = () => {
   fuselageWallThicknessInput.disabled = !fuselageHollowInput.checked
   fuselageBottomThicknessInput.disabled = !fuselageHollowInput.checked
   fuselageCeilingThicknessInput.disabled = !fuselageHollowInput.checked
+  fuselageInnerStartCeilingHeightInput.disabled = !fuselageHollowInput.checked
+  fuselageInnerEndCeilingHeightInput.disabled = !fuselageHollowInput.checked
 }
 fuselageHollowInput.addEventListener('change', syncHollowFuselageControls)
 syncHollowFuselageControls()
@@ -1827,10 +1949,26 @@ const saveSelectedSectionSettings = () => {
     hollow: fuselageHollowInput.checked,
     wallThickness: Math.max(1, Number(fuselageWallThicknessInput.value) || 5),
     bottomThickness: Math.max(1, Number(fuselageBottomThicknessInput.value) || 5),
-    ceilingThickness: Math.max(1, Number(fuselageCeilingThicknessInput.value) || 5)
+    ceilingThickness: Math.max(1, Number(fuselageCeilingThicknessInput.value) || 5),
+    jointBase: ['bottom', 'center', 'top'].includes(fuselageJointBaseInput.value)
+      ? fuselageJointBaseInput.value
+      : 'station',
+    startScale: Math.max(0.1, Number(fuselageStartScaleInput.value) / 100 || 1),
+    endScale: Math.max(0.1, Number(fuselageEndScaleInput.value) / 100 || 1),
+    innerStartCeilingHeight: fuselageInnerStartCeilingHeightInput.value === ''
+      ? null
+      : Math.max(2, Number(fuselageInnerStartCeilingHeightInput.value) || 2),
+    innerEndCeilingHeight: fuselageInnerEndCeilingHeightInput.value === ''
+      ? null
+      : Math.max(2, Number(fuselageInnerEndCeilingHeightInput.value) || 2)
   }
 }
-;[fuselageHollowInput, fuselageWallThicknessInput, fuselageBottomThicknessInput, fuselageCeilingThicknessInput].forEach(input => {
+;[
+  fuselageHollowInput, fuselageWallThicknessInput, fuselageBottomThicknessInput,
+  fuselageCeilingThicknessInput, fuselageJointBaseInput,
+  fuselageStartScaleInput, fuselageEndScaleInput,
+  fuselageInnerStartCeilingHeightInput, fuselageInnerEndCeilingHeightInput
+].forEach(input => {
   input.addEventListener('input', saveSelectedSectionSettings)
   input.addEventListener('change', saveSelectedSectionSettings)
 })
@@ -2046,6 +2184,7 @@ const getProjectSettings = () => ({
   leadDistance: Number(leadDistanceInput.value),
   profileOrientation: profileOrientationInput.value,
   profileEntrySide: profileEntrySideInput.value,
+  profileRouteMode: profileRouteModeInput.value,
   profileAutoStart: profileAutoStartInput.checked,
   feedRate: Number(cutFeedRateInput.value),
   foamLength: Number(foamLengthInput.value),
@@ -2093,6 +2232,7 @@ const applyProjectSettings = settings => {
   if (['single', 'double'].includes(settings.passMode)) cutPassModeInput.value = settings.passMode
   if (['none', 'rotate180', 'mirrorX', 'mirrorY'].includes(settings.profileOrientation)) profileOrientationInput.value = settings.profileOrientation
   if (['auto', 'right', 'left', 'top', 'bottom'].includes(settings.profileEntrySide)) profileEntrySideInput.value = settings.profileEntrySide
+  if (['block-corner', 'center-top-home'].includes(settings.profileRouteMode)) profileRouteModeInput.value = settings.profileRouteMode
   if (typeof settings.profileAutoStart === 'boolean') profileAutoStartInput.checked = settings.profileAutoStart
   blockCompensationInput.checked = settings.blockCompensation === true
   if (['center', 'manual', 'auto'].includes(settings.blockPlacementMode)) {
@@ -2252,6 +2392,62 @@ const buildCuttingPath = (points, passMode = cutPassModeInput.value, entrySide =
   ]
 }
 
+const buildCenteredTopHomePath = (leftSource, rightSource, leadDistance) => {
+  if (!leftSource.length || leftSource.length !== rightSource.length) {
+    throw new Error('Для серійного конуса потрібні відповідні точки X/Y та A/Z')
+  }
+  const bounds = points => ({
+    minX: Math.min(...points.map(point => point.x)),
+    maxX: Math.max(...points.map(point => point.x)),
+    minY: Math.min(...points.map(point => point.y)),
+    maxY: Math.max(...points.map(point => point.y))
+  })
+  const leftBounds = bounds(leftSource)
+  const rightBounds = bounds(rightSource)
+  const centerX = sideBounds => (sideBounds.minX + sideBounds.maxX) / 2
+  const score = index => {
+    const left = leftSource[index]
+    const right = rightSource[index]
+    const leftWidth = Math.max(1, leftBounds.maxX - leftBounds.minX)
+    const rightWidth = Math.max(1, rightBounds.maxX - rightBounds.minX)
+    const leftHeight = Math.max(1, leftBounds.maxY - leftBounds.minY)
+    const rightHeight = Math.max(1, rightBounds.maxY - rightBounds.minY)
+    return (leftBounds.maxY - left.y) / leftHeight * 4
+      + (rightBounds.maxY - right.y) / rightHeight * 4
+      + Math.abs(left.x - centerX(leftBounds)) / leftWidth
+      + Math.abs(right.x - centerX(rightBounds)) / rightWidth
+  }
+  const topIndex = leftSource.reduce((best, point, index) => (
+    score(index) < score(best) ? index : best
+  ), 0)
+  const rotate = points => [...points.slice(topIndex), ...points.slice(0, topIndex)]
+  const leftOrdered = rotate(leftSource)
+  const rightOrdered = rotate(rightSource)
+  const clearance = Math.max(0, Number(leadDistance) || 0)
+  const placeBelowHome = (points, sideBounds) => {
+    return points.map(point => ({
+      x: point.x - centerX(sideBounds),
+      y: point.y - sideBounds.maxY - clearance
+    }))
+  }
+  const wrapWithHome = (points, sideBounds) => {
+    const home = { x: 0, y: 0 }
+    const placed = placeBelowHome(points, sideBounds)
+    const entry = placed[0]
+    return [
+      home,
+      ...interpolateMove(home, entry),
+      ...placed.slice(1),
+      { ...entry },
+      ...interpolateMove(entry, home)
+    ]
+  }
+  return {
+    leftPoints: wrapWithHome(leftOrdered, leftBounds),
+    rightPoints: wrapWithHome(rightOrdered, rightBounds)
+  }
+}
+
 const calculateBlockSetup = (blockWidthOverride = Number(foamWidthInput.value)) => {
   const blockWidth = Number(blockWidthOverride)
   if (!Number.isFinite(blockWidth) || blockWidth <= 0) throw new Error('Довжина блока має бути більшою за нуль')
@@ -2305,8 +2501,9 @@ const createMach3Nc = trajectory => {
     const value = Number(input.value)
     return Number.isFinite(value) ? Math.max(0, value) : 0
   }
-  const offsetX = readNcOffset(profileLengthOffsetInput)
-  const offsetY = readNcOffset(profileHeightOffsetInput)
+  const useProfileOffsets = trajectory.applyProfileOffsets !== false
+  const offsetX = useProfileOffsets ? readNcOffset(profileLengthOffsetInput) : 0
+  const offsetY = useProfileOffsets ? readNcOffset(profileHeightOffsetInput) : 0
   const lines = [
     '%',
     '(Zhart CAD/CAM Studio UA - 4 axis X/Y + A/Z)',
@@ -2317,6 +2514,10 @@ const createMach3Nc = trajectory => {
       + `left gap ${formatNcNumber(trajectory.blockSetup.leftGap)} mm, `
       + `block ${formatNcNumber(trajectory.blockSetup.blockWidth)} mm, `
       + `right gap ${formatNcNumber(trajectory.blockSetup.rightGap)} mm)`)
+  }
+  if (trajectory.routeMode === 'center-top-home') {
+    lines.push('(ZHART_ROUTE:CENTER_TOP_HOME)')
+    lines.push('(Work zero X/Y/A/Z is above the centre; negative work coordinates are expected)')
   }
 
   // A controller file must contain only the short machine header and motion.
@@ -2366,8 +2567,10 @@ const validateMachineEnvelope = trajectory => {
     if (travel > limit + 0.0005) {
       errors.push(`${labels[axis]}: потрібно ${formatNcNumber(travel)} мм, доступно ${limit} мм`)
     }
-    if (minimum < -0.0005) errors.push(`${labels[axis]}: мінімум ${formatNcNumber(minimum)} мм нижче нуля`)
-    if (maximum > limit + 0.0005) errors.push(`${labels[axis]}: максимум ${formatNcNumber(maximum)} мм перевищує ${limit} мм`)
+    if (!trajectory.allowNegativeWorkCoordinates) {
+      if (minimum < -0.0005) errors.push(`${labels[axis]}: мінімум ${formatNcNumber(minimum)} мм нижче нуля`)
+      if (maximum > limit + 0.0005) errors.push(`${labels[axis]}: максимум ${formatNcNumber(maximum)} мм перевищує ${limit} мм`)
+    }
   }
 
   const configuredWireSpan = Number(trajectory.blockSetup?.wireSpan ?? wireSpanInput.value)
@@ -2433,6 +2636,7 @@ const renderPreparedDxfSimulation = () => {
   ) : null
   let sourceLeftPoints = orientedPair?.leftPoints || orientProfile(preparedDxfProfiles.left.points, profileOrientationInput.value)
   let sourceRightPoints = orientedPair?.rightPoints || orientProfile(preparedDxfProfiles.right.points, profileOrientationInput.value)
+  const centerTopHome = profileRouteModeInput.value === 'center-top-home'
   const requestedEntrySide = profileEntrySideInput.value
   const entrySide = requestedEntrySide === 'auto'
     ? chooseEntrySide(sourceLeftPoints, sourceRightPoints, {
@@ -2452,12 +2656,19 @@ const renderPreparedDxfSimulation = () => {
       sourceRightPoints = startProfileAtSide(sourceRightPoints, entrySide)
     }
   }
-  const faceLeftPoints = buildCuttingPath(sourceLeftPoints, effectivePassMode, entrySide, paired)
-  const faceRightPoints = buildCuttingPath(sourceRightPoints, effectivePassMode, entrySide, paired)
+  const centeredHomePath = centerTopHome
+    ? buildCenteredTopHomePath(sourceLeftPoints, sourceRightPoints, leadDistanceInput.value)
+    : null
+  const faceLeftPoints = centeredHomePath?.leftPoints
+    || buildCuttingPath(sourceLeftPoints, effectivePassMode, entrySide, paired)
+  const faceRightPoints = centeredHomePath?.rightPoints
+    || buildCuttingPath(sourceRightPoints, effectivePassMode, entrySide, paired)
   const sideLabels = { right: 'справа', left: 'зліва', top: 'зверху', bottom: 'знизу' }
   const orientationLabels = { none: 'як у DXF', rotate180: 'поворот 180°', mirrorX: 'дзеркально ліворуч/праворуч', mirrorY: 'дзеркально вгору/вниз' }
-  profileEntryStatus.textContent = `Застосовано до обох сторін: ${orientationLabels[profileOrientationInput.value]}; `
-    + `безпечний вхід ${sideLabels[entrySide]} від X0/Y0 уздовж зовнішніх граней блока${internalFirst ? '; автоматичний старт вимкнено для складеної траєкторії порожнин' : ''}.`
+  profileEntryStatus.textContent = centerTopHome
+    ? `Серійний конус: робочий нуль X0/Y0/A0/Z0 над центром; спуск ${Math.max(0, Number(leadDistanceInput.value) || 0)} мм до верхньої точки, різ і повернення в той самий нуль. Машинний Ref Home виконується окремо.`
+    : `Застосовано до обох сторін: ${orientationLabels[profileOrientationInput.value]}; `
+      + `безпечний вхід ${sideLabels[entrySide]} від X0/Y0 уздовж зовнішніх граней блока${internalFirst ? '; автоматичний старт вимкнено для складеної траєкторії порожнин' : ''}.`
   if (preserveOrder && !internalFirst) {
     profileEntryStatus.textContent += ' Порядок крила збережено: задня кромка → низ та отвори → носик → верх → вихід.'
   }
@@ -2499,11 +2710,16 @@ const renderPreparedDxfSimulation = () => {
     sourceRightPoints: sourceRightPoints.map(point => ({ ...point })),
     feedRate: cuttingSettings.feedRate,
     passMode: effectivePassMode,
-    blockSetup
+    blockSetup,
+    applyProfileOffsets: !centerTopHome,
+    allowNegativeWorkCoordinates: centerTopHome,
+    routeMode: centerTopHome ? 'center-top-home' : 'block-corner'
   }
   updateGeneratedNcPreview()
 
-  const passLabel = internalFirst
+  const passLabel = centerTopHome
+    ? 'серійний конус від верхнього робочого нуля'
+    : internalFirst
     ? 'порожнина спочатку, потім зовнішній контур'
     : effectivePassMode === 'double'
     ? 'два проходи (верх/низ)'
@@ -2512,7 +2728,8 @@ const renderPreparedDxfSimulation = () => {
     leftPoints,
     rightPoints,
     `DXF-траєкторія — ${passLabel}; X/Y і A/Z: ${leftPoints.length} синхронних точок; `
-      + `швидкість різання: ${cuttingSettings.feedRate} мм/хв`
+      + `швидкість різання: ${cuttingSettings.feedRate} мм/хв`,
+    blockSetup
   )
 }
 
@@ -2809,6 +3026,10 @@ buildFuselageSegmentButton.addEventListener('click', () => {
       innerRight: segment.innerRightPoints?.map(point => ({ ...point })) || null,
       cutLeft: cutProfiles.leftPoints.map(point => ({ ...point })),
       cutRight: cutProfiles.rightPoints.map(point => ({ ...point })),
+      sparHolePairs: tubeHoles.map(hole => ({
+        left: hole.left.map(point => ({ ...point })),
+        right: hole.right.map(point => ({ ...point }))
+      })),
       straightSparRods: crossingTubes.map(tube => ({
         x: tube.sideOffset,
         y: tube.height + segment.translation.y,
@@ -2833,7 +3054,9 @@ buildFuselageSegmentButton.addEventListener('click', () => {
     fuselageLibraryStatus.className = 'profile-library-valid'
     fuselageLibraryStatus.textContent = `Секцію ${segment.leftName} → ${segment.rightName} побудовано; `
       + `довжина блока ${foamWidthInput.value} мм`
-      + (hollow ? `; порожнина: стінка ${wallThickness} мм, днище ${bottomThickness} мм, стеля ${ceilingThickness} мм; внутрішній контур ріжеться першим` : '')
+      + `; база ${segment.jointBase === 'bottom' ? 'по низу' : segment.jointBase === 'center' ? 'по центру' : segment.jointBase === 'top' ? 'по верху' : 'за станціями'}`
+      + `; зовнішній верх ${Math.round(segment.startScale * 1000) / 10}% → ${Math.round(segment.endScale * 1000) / 10}%`
+      + (hollow ? `; порожнина: стінка ${wallThickness} мм, днище ${bottomThickness} мм, стеля ${segment.innerStartCeilingHeight ?? 'авто'} → ${segment.innerEndCeilingHeight ?? 'авто'} мм від низу; внутрішній контур ріжеться першим` : '')
       + (crossingTubes.length ? `; трубок у секції: ${crossingTubes.length}` : '')
   } catch (error) {
     fuselageLibraryStatus.className = 'profile-library-error'
@@ -2933,7 +3156,11 @@ const reconstructFuselageFromAssembly = parts => {
   })
   const sectionSettings = ordered.map(part => {
     if (!part.innerLeft || !part.innerRight) {
-      return { hollow: false, wallThickness: 5, bottomThickness: 5, ceilingThickness: 5 }
+      return {
+        hollow: false, wallThickness: 5, bottomThickness: 5, ceilingThickness: 5,
+        jointBase: 'station', startScale: 1, endScale: 1,
+        innerStartCeilingHeight: null, innerEndCeilingHeight: null
+      }
     }
     const outerBounds = [contourBounds(part.outerLeft), contourBounds(part.outerRight)]
     const innerBounds = [contourBounds(part.innerLeft), contourBounds(part.innerRight)]
@@ -2947,7 +3174,12 @@ const reconstructFuselageFromAssembly = parts => {
       hollow: true,
       wallThickness: Math.max(1, Math.round(wallThickness * 10) / 10),
       bottomThickness: Math.max(1, Math.round(bottomThickness * 10) / 10),
-      ceilingThickness: Math.max(1, Math.round(wallThickness * 10) / 10)
+      ceilingThickness: Math.max(1, Math.round(wallThickness * 10) / 10),
+      jointBase: 'station',
+      startScale: 1,
+      endScale: 1,
+      innerStartCeilingHeight: Math.max(2, Math.round((innerBounds[0].maxY - outerBounds[0].minY) * 10) / 10),
+      innerEndCeilingHeight: Math.max(2, Math.round((innerBounds[1].maxY - outerBounds[1].minY) * 10) / 10)
     }
   })
   let sectionStart = 0
@@ -3082,6 +3314,7 @@ function renderBatchSectionAssignments () {
       if (blockId) batchAssignments.set(part.id, blockId)
       else batchAssignments.delete(part.id)
       batchSlotAssignments.delete(part.id)
+      batchManualPlacements.delete(part.id)
       batchPlanFileStatus.textContent = 'Ручний розподіл змінено — збережіть план блоків'
       clearBatchResult()
     })
@@ -3141,6 +3374,7 @@ const renderBatchBlockSelect = () => {
 }
 
 const clearBatchResult = (message = 'Параметри блоків змінено — виконайте розподіл повторно') => {
+  batchManualTools.hidden = batchPlacementModeInput.value !== 'manual'
   currentBatchPackages = []
   generatedBatchNcText = ''
   currentBatchSimulation = null
@@ -3160,16 +3394,33 @@ const clearBatchResult = (message = 'Параметри блоків зміне�
 const createBatchPackage = layout => {
   let preparedLayout = layout
   let blockSetup = null
+  const manualSteps = layout.manualPlacement ? (batchManualRoutes.get(layout.block.id) || []) : null
+  if (layout.manualPlacement && !manualSteps.length) {
+    return { layout, faceRoute: null, machineEvents: [], feedRate: 0, blockSetup: null,
+      validation: { valid: false, errors: ['Ручний маршрут ще не задано: увімкніть «Прокласти маршрут» і клацніть кожну секцію'] },
+      nc: '' }
+  }
   if (blockCompensationInput.checked) {
     blockSetup = calculateBlockSetup(layout.blockThickness)
-    preparedLayout = optimizeBatchLayoutForCarriages(layout, blockSetup, {
+    if (!layout.freePlacement) preparedLayout = optimizeBatchLayoutForCarriages(layout, blockSetup, {
       x: Number(machineLimitInputs.x.value),
       y: Number(machineLimitInputs.y.value),
       a: Number(machineLimitInputs.a.value),
       z: Number(machineLimitInputs.z.value)
     })
   }
-  const faceRoute = createBatchCutRoute(preparedLayout)
+  let faceRoute
+  try {
+    faceRoute = layout.freePlacement
+      ? createFreeBatchRoute(preparedLayout, manualSteps ? { steps: manualSteps } : {})
+      : createBatchCutRoute(preparedLayout)
+  } catch (error) {
+    if (!layout.freePlacement) throw error
+    return {
+      layout: preparedLayout, faceRoute: null, machineEvents: [], feedRate: 0, blockSetup,
+      validation: { valid: false, errors: [error.message] }, nc: ''
+    }
+  }
   let events = faceRoute.events
   if (blockSetup) {
     const carriage = projectProfilesToCarriages(
@@ -3181,17 +3432,67 @@ const createBatchPackage = layout => {
       ...event, left: carriage.leftPoints[index], right: carriage.rightPoints[index]
     }))
   }
+  if (layout.manualPlacement) {
+    // The operator zeros both carriages 5 mm left and below the foam corner.
+    // Keep faceRoute in block coordinates for the drawing; NC uses work coordinates.
+    events = events.map(event => ({
+      ...event,
+      left: { ...event.left, x: event.left.x + 5, y: event.left.y + 5 },
+      right: { ...event.right, x: event.right.x + 5, y: event.right.y + 5 }
+    }))
+  }
   const feedRate = Math.max(1, Number(cutFeedRateInput.value) || 300)
   const trajectory = {
     leftPoints: events.map(event => event.left),
     rightPoints: events.map(event => event.right),
     feedRate, blockSetup, applyProfileOffsets: false
   }
+  const nc = createBatchMach3Nc(events, feedRate, blockSetup)
+  const envelope = validateMachineEnvelope(trajectory)
+  const manualSafety = layout.manualPlacement ? validateManualBatchNc({
+    nc, maximumFeed: feedRate,
+    limits: Object.fromEntries(['x', 'y', 'a', 'z'].map(axis => [axis, machineLimitInputs[axis].value]))
+  }) : { valid: true, errors: [], warnings: [] }
+  const errors = [...envelope.errors, ...manualSafety.errors]
   return {
     layout: preparedLayout, faceRoute, machineEvents: events, feedRate, blockSetup,
-    validation: validateMachineEnvelope(trajectory),
-    nc: createBatchMach3Nc(events, feedRate, blockSetup)
+    validation: { ...envelope, valid: errors.length === 0, errors, warnings: manualSafety.warnings },
+    nc: errors.length ? '' : nc
   }
+}
+
+const renderBatchManualOverlay = (svg, layout, side) => {
+  if (!layout.manualPlacement) return
+  svg.querySelectorAll('[data-batch-part-id]').forEach(group => {
+    if (String(group.dataset.batchPartId) === String(batchManualSelectedId)) {
+      group.classList.add('batch-manual-selected')
+    }
+  })
+  const steps = batchManualRoutes.get(layout.block.id) || []
+  const points = [{ x: -5, y: -5 }]
+  steps.forEach(step => {
+    if (step.type === 'home') points.push({ x: -5, y: -5 })
+    if (step.type === 'point') points.push({ x: step.x, y: step.y })
+    if (step.type === 'exitBottom') points.push(
+      { x: layout.blockWidth + 5, y: -5 }, { x: -5, y: -5 }
+    )
+    if (step.type === 'section') {
+      const item = layout.items.find(candidate => String(candidate.part.id) === String(step.partId))
+      if (item) points.push(step.entryHint && step.entryHint.side === side
+        ? { x: step.entryHint.x, y: step.entryHint.y }
+        : (side === 'left' ? item.outerLeft : item.outerRight)[0])
+    }
+  })
+  if (points.length < 2) return
+  const line = document.createElementNS('http://www.w3.org/2000/svg', 'polyline')
+  line.setAttribute('points', points.map(point => `${point.x},${layout.blockHeight - point.y}`).join(' '))
+  line.setAttribute('fill', 'none')
+  line.setAttribute('stroke', '#9333ea')
+  line.setAttribute('stroke-width', '2.5')
+  line.setAttribute('stroke-dasharray', '8 5')
+  line.setAttribute('pointer-events', 'none')
+  line.setAttribute('vector-effect', 'non-scaling-stroke')
+  svg.appendChild(line)
 }
 
 const showSelectedBatchPackage = () => {
@@ -3205,28 +3506,43 @@ const showSelectedBatchPackage = () => {
     simulateBatchButton.disabled = true
     downloadBatchMapButton.disabled = true
     downloadBatchNcButton.disabled = true
+    batchMotionWarning.hidden = true
     return
   }
   const { layout, faceRoute, machineEvents, feedRate, validation, nc } = packageData
+  batchMotionWarning.textContent = validation.warnings?.join(' ') || ''
+  batchMotionWarning.hidden = !validation.warnings?.length
   renderBatchLayoutPreview(batchLeftSvg, layout, 'left')
   renderBatchLayoutPreview(batchRightSvg, layout, 'right')
-  renderBatchRouteOverlay(batchLeftSvg, faceRoute, layout.blockHeight, 'left')
-  renderBatchRouteOverlay(batchRightSvg, faceRoute, layout.blockHeight, 'right')
+  renderBatchManualOverlay(batchLeftSvg, layout, 'left')
+  renderBatchManualOverlay(batchRightSvg, layout, 'right')
+  if (faceRoute) {
+    renderBatchRouteOverlay(batchLeftSvg, faceRoute, layout.blockHeight, 'left')
+    renderBatchRouteOverlay(batchRightSvg, faceRoute, layout.blockHeight, 'right')
+  }
   generatedBatchNcText = nc
-  currentBatchSimulation = {
+  currentBatchSimulation = faceRoute ? {
     leftPoints: machineEvents.map(event => ({ ...event.left })),
     rightPoints: machineEvents.map(event => ({ ...event.right })),
-    layout, feedRate
-  }
-  batchNcPreview.value = nc
-  simulateBatchButton.disabled = false
-  downloadBatchMapButton.disabled = false
+    layout, feedRate, blockSetup: packageData.blockSetup
+  } : null
+  batchNcPreview.value = nc || validation.errors.join('\n')
+  simulateBatchButton.disabled = !faceRoute
+  downloadBatchMapButton.disabled = !validation.valid
   downloadBatchNcButton.disabled = !validation.valid
 }
 
 let batchLayoutDrag = null
 
 const batchPointerPosition = (svg, event, layout) => {
+  const matrix = svg.getScreenCTM?.()
+  if (matrix && svg.createSVGPoint) {
+    const point = svg.createSVGPoint()
+    point.x = event.clientX
+    point.y = event.clientY
+    const local = point.matrixTransform(matrix.inverse())
+    return { x: local.x, screenY: local.y }
+  }
   const rectangle = svg.getBoundingClientRect()
   return {
     x: (event.clientX - rectangle.left) * layout.blockWidth / rectangle.width,
@@ -3284,6 +3600,48 @@ const batchSlotAtPointer = (svg, event, layout) => {
 const attachBatchLayoutDragging = svg => {
   svg.addEventListener('pointerdown', event => {
     const packageData = currentBatchPackages.find(item => item.layout.block.id === selectedBatchBlock().id)
+    if (packageData?.layout.manualPlacement) {
+      const itemElement = event.target.closest?.('[data-batch-part-id]')
+      const item = packageData.layout.items.find(candidate => String(candidate.part.id) === itemElement?.dataset.batchPartId)
+      if (batchManualRouteEditing) {
+        const steps = [...(batchManualRoutes.get(packageData.layout.block.id) || [])]
+        if (item) {
+          if (steps.some(step => step.type === 'section' && String(step.partId) === String(item.part.id))) {
+            batchManualRouteStatus.textContent = `${item.part.name} уже є в маршруті — кожну секцію проходимо один раз`
+            return
+          }
+          const click = batchPointerPosition(svg, event, packageData.layout)
+          steps.push({ type: 'section', partId: item.part.id, entryHint: {
+            x: Math.round(click.x),
+            y: Math.round(packageData.layout.blockHeight - click.screenY),
+            side: svg === batchRightSvg ? 'right' : 'left'
+          } })
+          batchManualRouteStatus.textContent = `До маршруту додано: ${item.part.name}`
+        } else {
+          const point = batchPointerPosition(svg, event, packageData.layout)
+          steps.push({ type: 'point', x: Math.round(point.x),
+            y: Math.round(packageData.layout.blockHeight - point.screenY) })
+          batchManualRouteStatus.textContent = 'До маршруту додано контрольну точку коридору'
+        }
+        batchManualRoutes.set(packageData.layout.block.id, steps)
+        batchPlanFileStatus.textContent = 'Ручний маршрут змінено — збережіть план блоків'
+        buildBatchLayoutPreview()
+        event.preventDefault()
+        return
+      }
+      if (!item) return
+      batchManualSelectedId = item.part.id
+      batchManualSelected.textContent = item.part.name
+      batchLayoutDrag = { manual: true, svg, packageData, item,
+        start: batchPointerPosition(svg, event, packageData.layout), group: itemElement }
+      svg.setPointerCapture(event.pointerId)
+      ;[batchLeftSvg, batchRightSvg].forEach(panel => panel.querySelectorAll('[data-batch-part-id]').forEach(group => {
+        group.classList.toggle('batch-manual-selected', group.dataset.batchPartId === String(item.part.id))
+      }))
+      event.preventDefault()
+      return
+    }
+    if (packageData?.layout.freePlacement) return
     const itemElement = event.target.closest?.('[data-batch-part-id]')
     if (!packageData || !itemElement) return
     const item = packageData.layout.items.find(candidate => String(candidate.part.id) === itemElement.dataset.batchPartId)
@@ -3296,11 +3654,64 @@ const attachBatchLayoutDragging = svg => {
   })
   svg.addEventListener('pointermove', event => {
     if (!batchLayoutDrag || batchLayoutDrag.svg !== svg) return
+    if (batchLayoutDrag.manual) {
+      const point = batchPointerPosition(svg, event, batchLayoutDrag.packageData.layout)
+      const dx = point.x - batchLayoutDrag.start.x
+      const dy = point.screenY - batchLayoutDrag.start.screenY
+      batchLayoutDrag.group.setAttribute('transform', `translate(${dx} ${dy})`)
+      return
+    }
     batchLayoutDrag.targetSlot = batchSlotAtPointer(svg, event, batchLayoutDrag.packageData.layout)
     showBatchDropHighlight(batchLayoutDrag.packageData.layout, batchLayoutDrag.targetSlot)
   })
   const finishDrag = event => {
     if (!batchLayoutDrag || batchLayoutDrag.svg !== svg) return
+    if (batchLayoutDrag.manual) {
+      const { packageData, item, start, group } = batchLayoutDrag
+      const point = batchPointerPosition(svg, event, packageData.layout)
+      const dx = point.x - start.x
+      const dy = start.screenY - point.screenY
+      group.removeAttribute('transform')
+      batchLayoutDrag = null
+      if (svg.hasPointerCapture(event.pointerId)) svg.releasePointerCapture(event.pointerId)
+      if (Math.hypot(dx, dy) < 0.5) return
+      const old = batchManualPlacements.get(item.part.id)
+      const dropX = point.x
+      const dropY = packageData.layout.blockHeight - point.screenY
+      const occupant = packageData.layout.items.find(candidate => candidate.part.id !== item.part.id
+        && dropX >= candidate.bounds.minX && dropX <= candidate.bounds.maxX
+        && dropY >= candidate.bounds.minY && dropY <= candidate.bounds.maxY)
+      const originalCenterX = (item.bounds.minX + item.bounds.maxX) / 2
+      const originalCenterY = (item.bounds.minY + item.bounds.maxY) / 2
+      const next = { centerX: occupant ? (occupant.bounds.minX + occupant.bounds.maxX) / 2 : originalCenterX + dx,
+        centerY: occupant ? (occupant.bounds.minY + occupant.bounds.maxY) / 2 : originalCenterY + dy,
+        turns: old?.turns ?? (item.rotated ? 1 : 0),
+        mirrorX: old?.mirrorX ?? false, mirrorY: old?.mirrorY ?? false }
+      const oldOccupant = occupant ? batchManualPlacements.get(occupant.part.id) : null
+      const swapped = occupant ? { centerX: originalCenterX, centerY: originalCenterY,
+        turns: oldOccupant?.turns ?? (occupant.rotated ? 1 : 0),
+        mirrorX: oldOccupant?.mirrorX ?? false, mirrorY: oldOccupant?.mirrorY ?? false } : null
+      try {
+        applyManualFuselageLayout(packageData.layout, new Map([
+          [item.part.id, next], ...(occupant ? [[occupant.part.id, swapped]] : [])
+        ]))
+        batchManualPlacements.set(item.part.id, next)
+        batchAssignments.set(item.part.id, packageData.layout.block.id)
+        if (occupant) {
+          batchManualPlacements.set(occupant.part.id, swapped)
+          batchAssignments.set(occupant.part.id, packageData.layout.block.id)
+        }
+        batchPlanFileStatus.textContent = occupant
+          ? `${item.part.name} та ${occupant.part.name} поміняно місцями — збережіть план`
+          : `${item.part.name}: нове місце — збережіть план`
+        buildBatchLayoutPreview()
+      } catch (error) {
+        batchManualRouteStatus.textContent = `Рух відхилено: ${error.message}`
+        if (old) batchManualPlacements.set(item.part.id, old)
+        showSelectedBatchPackage()
+      }
+      return
+    }
     const { packageData, item, targetSlot } = batchLayoutDrag
     const occupant = packageData.layout.items.find(candidate => candidate.index === targetSlot && candidate.part.id !== item.part.id)
     batchAssignments.set(item.part.id, packageData.layout.block.id)
@@ -3320,6 +3731,7 @@ const attachBatchLayoutDragging = svg => {
   }
   svg.addEventListener('pointerup', finishDrag)
   svg.addEventListener('pointercancel', event => {
+    if (batchLayoutDrag?.manual) batchLayoutDrag.group.removeAttribute('transform')
     batchLayoutDrag = null
     svg.classList.remove('batch-layout-dragging')
     clearBatchDropHighlight()
@@ -3330,6 +3742,115 @@ const attachBatchLayoutDragging = svg => {
 attachBatchLayoutDragging(batchLeftSvg)
 attachBatchLayoutDragging(batchRightSvg)
 
+const editSelectedManualSection = change => {
+  const packageData = currentBatchPackages.find(entry => entry.layout.block.id === selectedBatchBlock().id)
+  const item = packageData?.layout.items.find(entry => String(entry.part.id) === String(batchManualSelectedId))
+  if (!item || !packageData.layout.manualPlacement) {
+    batchManualRouteStatus.textContent = 'Спочатку клацніть потрібну секцію на схемі'
+    return
+  }
+  const old = batchManualPlacements.get(item.part.id)
+  const next = { centerX: (item.bounds.minX + item.bounds.maxX) / 2,
+    centerY: (item.bounds.minY + item.bounds.maxY) / 2,
+    turns: old?.turns ?? (item.rotated ? 1 : 0),
+    mirrorX: old?.mirrorX ?? false, mirrorY: old?.mirrorY ?? false }
+  change(next)
+  try {
+    applyManualFuselageLayout(packageData.layout, new Map([[item.part.id, next]]))
+    batchManualPlacements.set(item.part.id, next)
+    batchAssignments.set(item.part.id, packageData.layout.block.id)
+    batchManualRouteStatus.textContent = `${item.part.name}: орієнтацію змінено; маршрут перевірено повторно`
+    batchPlanFileStatus.textContent = 'Ручний розклад змінено — збережіть план'
+    buildBatchLayoutPreview()
+  } catch (error) {
+    batchManualRouteStatus.textContent = `Поворот відхилено: ${error.message}`
+  }
+}
+document.getElementById('batchManualRotateLeft').addEventListener('click', () => editSelectedManualSection(
+  setting => { setting.turns = (setting.turns + 3) % 4 }
+))
+document.getElementById('batchManualRotateRight').addEventListener('click', () => editSelectedManualSection(
+  setting => { setting.turns = (setting.turns + 1) % 4 }
+))
+document.getElementById('batchManualFlipX').addEventListener('click', () => editSelectedManualSection(
+  setting => { setting.mirrorX = !setting.mirrorX }
+))
+document.getElementById('batchManualFlipY').addEventListener('click', () => editSelectedManualSection(
+  setting => { setting.mirrorY = !setting.mirrorY }
+))
+batchManualRouteModeButton.addEventListener('click', () => {
+  batchManualRouteEditing = !batchManualRouteEditing
+  batchManualRouteModeButton.classList.toggle('active', batchManualRouteEditing)
+  batchManualRouteStatus.textContent = batchManualRouteEditing
+    ? 'Ведіть струну кліками до секції, клацніть потрібну сторону профілю. Програма виріже отвір і контур та поверне в точку входу. Останній клік можна скасувати.'
+    : 'Прокладання маршруту вимкнено; секції знову можна перетягувати.'
+})
+document.getElementById('batchManualAddHome').addEventListener('click', () => {
+  const block = selectedBatchBlock()
+  batchManualRoutes.set(block.id, [...(batchManualRoutes.get(block.id) || []), { type: 'home' }])
+  batchPlanFileStatus.textContent = 'Ручний маршрут змінено — збережіть план блоків'
+  batchManualRouteStatus.textContent = 'Додано повернення до технічного нуля (5 мм ліворуч і нижче блока)'
+  buildBatchLayoutPreview()
+})
+document.getElementById('batchManualExitBottom').addEventListener('click', () => {
+  const block = selectedBatchBlock()
+  const steps = (batchManualRoutes.get(block.id) || []).filter(step => step.type !== 'exitBottom')
+  batchManualRoutes.set(block.id, [...steps, { type: 'exitBottom' }])
+  batchManualRouteStatus.textContent = 'Вихід праворуч від блока вниз до рівня технічного нуля, потім горизонтально додому; низ не торцюється'
+  batchPlanFileStatus.textContent = 'Ручний маршрут змінено — збережіть план блоків'
+  buildBatchLayoutPreview()
+})
+document.getElementById('batchManualUndoRoute').addEventListener('click', () => {
+  const block = selectedBatchBlock()
+  const steps = [...(batchManualRoutes.get(block.id) || [])]
+  if (!steps.length) {
+    batchManualRouteStatus.textContent = 'Скасовувати нічого — маршрут порожній'
+    return
+  }
+  steps.pop()
+  if (steps.length) batchManualRoutes.set(block.id, steps)
+  else batchManualRoutes.delete(block.id)
+  batchManualRouteStatus.textContent = 'Останній клік маршруту скасовано'
+  batchPlanFileStatus.textContent = 'Ручний маршрут змінено — збережіть план блоків'
+  buildBatchLayoutPreview()
+})
+document.getElementById('batchManualRebaseRoute').addEventListener('click', () => {
+  const block = selectedBatchBlock()
+  const steps = batchManualRoutes.get(block.id) || []
+  try {
+    const result = rebaseManualRouteMargin(steps, Number(block.width), Number(block.height))
+    if (!result.changed) {
+      batchManualRouteStatus.textContent = 'Старих контрольних точок із відступом 20 мм не знайдено'
+      return
+    }
+    batchManualRoutes.set(block.id, result.steps)
+    batchManualRouteStatus.textContent = `Оновлено ${result.changed} координат відступу 20→5 мм; перевірте маршрут на обох схемах`
+    batchPlanFileStatus.textContent = 'Маршрут оновлено — збережіть план блоків'
+    buildBatchLayoutPreview()
+  } catch (error) {
+    batchManualRouteStatus.textContent = error.message
+  }
+})
+document.getElementById('batchManualClearRoute').addEventListener('click', () => {
+  batchManualRoutes.delete(selectedBatchBlock().id)
+  batchPlanFileStatus.textContent = 'Ручний маршрут очищено — збережіть план блоків'
+  batchManualRouteStatus.textContent = 'Ручний маршрут очищено; розклад секцій збережено'
+  buildBatchLayoutPreview()
+})
+document.getElementById('batchManualResetLayout').addEventListener('click', () => {
+  const block = selectedBatchBlock()
+  const packageData = currentBatchPackages.find(entry => entry.layout.block.id === block.id)
+  for (const partId of batchManualPlacements.keys()) {
+    if (batchAssignments.get(partId) === block.id
+      || packageData?.layout.items.some(item => item.part.id === partId)) batchManualPlacements.delete(partId)
+  }
+  batchManualRoutes.delete(block.id)
+  batchManualSelectedId = null
+  batchManualSelected.textContent = 'виберіть секцію на схемі'
+  batchManualRouteStatus.textContent = 'Ручні зміни цього блока скинуто'
+  buildBatchLayoutPreview()
+})
+
 const buildBatchLayoutPreview = () => {
   try {
     const fuselageParts = assemblyParts.filter(part => part.visible && part.kind === 'fuselage')
@@ -3338,22 +3859,50 @@ const buildBatchLayoutPreview = () => {
       batchBlocks,
       Math.max(0, Number(batchCorridorInput.value) || 0),
       batchAssignments,
-      batchSlotAssignments
+      batchSlotAssignments,
+      { placementMode: batchPlacementModeInput.value, manualPlacements: batchManualPlacements }
     )
+    if (batchPlacementModeInput.value === 'manual') {
+      layouts.forEach(layout => layout.items.forEach(item => {
+        if (!batchManualPlacements.has(item.part.id)) batchManualPlacements.set(item.part.id, {
+          centerX: (item.bounds.minX + item.bounds.maxX) / 2,
+          centerY: (item.bounds.minY + item.bounds.maxY) / 2,
+          turns: item.rotated ? 1 : 0, mirrorX: false, mirrorY: false
+        })
+        batchAssignments.set(item.part.id, layout.block.id)
+      }))
+    }
     currentBatchPackages = layouts.filter(layout => layout.items.length).map(createBatchPackage)
     renderBatchBlockSelect()
     showSelectedBatchPackage()
     const invalid = currentBatchPackages.filter(item => !item.validation.valid)
-    downloadAllBatchMapsButton.disabled = currentBatchPackages.length === 0
+    const freePlacement = batchPlacementModeInput.value !== 'legacy'
+    const manualPlacement = batchPlacementModeInput.value === 'manual'
+    batchManualTools.hidden = !manualPlacement
+    downloadAllBatchMapsButton.disabled = currentBatchPackages.length === 0 || invalid.length > 0
     downloadAllBatchNcButton.disabled = currentBatchPackages.length === 0 || invalid.length > 0
-    batchLayoutStatus.className = invalid.length ? 'batch-layout-error' : 'batch-layout-valid'
+    const warned = currentBatchPackages.filter(item => item.validation.warnings?.length)
+    batchLayoutStatus.className = invalid.length ? 'batch-layout-error'
+      : warned.length ? 'batch-layout-warning' : 'batch-layout-valid'
     batchLayoutStatus.textContent = `${fuselageParts.length} секцій розподілено між ${currentBatchPackages.length} із ${batchBlocks.length} блоків: `
       + currentBatchPackages.map(item => {
           const rotated = item.layout.items.filter(section => section.rotated).length
-          return `${item.layout.block.name} — ${item.layout.items.length} секц. у ${item.layout.rows} рядах`
+          return `${item.layout.block.name} — ${item.layout.items.length} секц.`
+            + (manualPlacement ? ' у ручному розташуванні'
+              : freePlacement ? ' у вільному розташуванні' : ` у ${item.layout.rows} рядах`)
             + (rotated ? `, повернуто 90°: ${rotated}` : '')
         }).join('; ')
-      + (invalid.length ? `. NC заблоковано для: ${invalid.map(item => item.layout.block.name).join(', ')}` : '. Усі NC пройшли перевірку.')
+      + (freePlacement
+        ? `. Маршрут: ${currentBatchPackages.map(item => {
+          const route = item.faceRoute
+          const chosen = route?.candidates.find(candidate => candidate.kind === route.strategy)
+          return `${item.layout.block.name} — ${route?.strategy || 'не знайдено'}`
+            + (chosen ? ` (${Math.round(chosen.corridorLength)} мм коридору, порівняно ${route.candidates.length} варіанти)` : '')
+        }).join('; ')}.`
+          + (invalid.length ? ` NC заблоковано: ${invalid.map(item => `${item.layout.block.name}: ${item.validation.errors.join(', ')}`).join('; ')}`
+            : ` Пробний NC: обов’язковий холодний прогін і перевірка оператором.${warned.length
+              ? ` ${warned.map(item => `${item.layout.block.name}: ${item.validation.warnings.join(', ')}`).join('; ')}` : ''}`)
+        : invalid.length ? `. NC заблоковано для: ${invalid.map(item => item.layout.block.name).join(', ')}` : '. Усі NC пройшли перевірку.')
   } catch (error) {
     clearBatchResult(`Розкладку не побудовано: ${error.message}`)
     batchLayoutStatus.className = 'batch-layout-error'
@@ -3506,6 +4055,10 @@ const addCurrentCandidateToAssembly = side => {
     innerRight: candidate.innerRight?.map(point => ({ ...point })) || null,
     cutLeft: candidate.cutLeft.map(point => ({ ...point })),
     cutRight: candidate.cutRight.map(point => ({ ...point })),
+    sparHolePairs: candidate.sparHolePairs?.map(hole => ({
+      left: hole.left.map(point => ({ ...point })),
+      right: hole.right.map(point => ({ ...point }))
+    })) || [],
     straightSparRods: candidate.straightSparRods.map(rod => ({ ...rod })),
     servoChannels: candidate.servoChannels.map(channel => ({ ...channel })),
     designSource: candidate.designSource ? cloneFuselageTemplate(candidate.designSource) : null,
@@ -3632,8 +4185,10 @@ removeBatchBlockButton.addEventListener('click', () => {
     if (blockId === block.id) {
       batchAssignments.delete(partId)
       batchSlotAssignments.delete(partId)
+      batchManualPlacements.delete(partId)
     }
   }
+  batchManualRoutes.delete(block.id)
   batchBlocks.splice(batchBlocks.indexOf(block), 1)
   batchPlanFileStatus.textContent = 'План блоків змінено — збережіть його'
   clearBatchResult(`${block.name} видалено — виконайте автоматичний розподіл`)
@@ -3645,7 +4200,17 @@ saveBatchPlanButton.addEventListener('click', () => {
       blockNumber: batchBlocks.findIndex(block => block.id === blockId) + 1,
       slot: batchSlotAssignments.get(partId) ?? null
     })).filter(assignment => assignment.blockNumber > 0)
-    const plan = createBlockPlanFile(batchBlocks, batchCorridorInput.value, assignmentRecords)
+    const manualPlacements = [...batchManualPlacements].map(([partId, placement]) => {
+      const assignedBlockId = batchAssignments.get(partId)
+        || currentBatchPackages.find(entry => entry.layout.items.some(item => item.part.id === partId))?.layout.block.id
+      return { partId, blockNumber: batchBlocks.findIndex(block => block.id === assignedBlockId) + 1,
+        ...placement }
+    }).filter(placement => placement.blockNumber > 0)
+    const manualRoutes = [...batchManualRoutes].map(([blockId, steps]) => ({
+      blockNumber: batchBlocks.findIndex(block => block.id === blockId) + 1, steps
+    })).filter(route => route.blockNumber > 0)
+    const plan = createBlockPlanFile(batchBlocks, batchCorridorInput.value, assignmentRecords,
+      { manualPlacements, manualRoutes })
     const date = new Date().toISOString().slice(0, 10)
     downloadTextFile(`${JSON.stringify(plan, null, 2)}\n`, `foamcut-block-plan-${date}.foamcut-blocks.json`, 'application/json')
     batchPlanFileStatus.textContent = `План збережено: ${plan.blocks.length} блоків`
@@ -3666,6 +4231,8 @@ loadBatchPlanButton.addEventListener('click', async () => {
     })))
     batchAssignments.clear()
     batchSlotAssignments.clear()
+    batchManualPlacements.clear()
+    batchManualRoutes.clear()
     plan.assignments.forEach(assignment => {
       const block = batchBlocks[assignment.blockNumber - 1]
       if (block) {
@@ -3673,6 +4240,20 @@ loadBatchPlanButton.addEventListener('click', async () => {
         if (assignment.slot != null) batchSlotAssignments.set(assignment.partId, assignment.slot)
       }
     })
+    plan.manualPlacements.forEach(placement => {
+      const block = batchBlocks[placement.blockNumber - 1]
+      if (!block) return
+      batchAssignments.set(placement.partId, block.id)
+      batchManualPlacements.set(placement.partId, {
+        centerX: placement.centerX, centerY: placement.centerY,
+        turns: placement.turns, mirrorX: placement.mirrorX, mirrorY: placement.mirrorY
+      })
+    })
+    plan.manualRoutes.forEach(route => {
+      const block = batchBlocks[route.blockNumber - 1]
+      if (block) batchManualRoutes.set(block.id, route.steps)
+    })
+    if (plan.manualPlacements.length || plan.manualRoutes.length) batchPlacementModeInput.value = 'manual'
     batchCorridorInput.value = plan.corridor
     renderBatchBlockSelect()
     clearBatchResult(`План ${file.name} відкрито — виконується розподіл`)
@@ -3683,9 +4264,13 @@ loadBatchPlanButton.addEventListener('click', async () => {
   }
 })
 buildBatchLayoutButton.addEventListener('click', buildBatchLayoutPreview)
+batchPlacementModeInput.addEventListener('change', () => {
+  clearBatchResult('Спосіб розкладки змінено — побудуйте розкладку ще раз')
+  if (assemblyParts.some(part => part.visible && part.kind === 'fuselage')) buildBatchLayoutPreview()
+})
 simulateBatchButton.addEventListener('click', () => {
   if (!currentBatchSimulation) return
-  const { layout, leftPoints, rightPoints, feedRate } = currentBatchSimulation
+  const { layout, leftPoints, rightPoints, feedRate, blockSetup } = currentBatchSimulation
   foamLengthInput.value = layout.blockWidth
   foamWidthInput.value = layout.blockThickness
   foamHeightInput.value = layout.blockHeight
@@ -3697,7 +4282,8 @@ simulateBatchButton.addEventListener('click', () => {
     leftPoints,
     rightPoints,
     `${layout.block.name}: пакетне різання ${layout.items.length} секцій; змійка ${layout.columns}×${layout.rows}; `
-      + `блок ${layout.blockWidth}×${layout.blockHeight}×${layout.blockThickness} мм; F${formatNcNumber(feedRate)} мм/хв`
+      + `блок ${layout.blockWidth}×${layout.blockHeight}×${layout.blockThickness} мм; F${formatNcNumber(feedRate)} мм/хв`,
+    blockSetup
   )
   batchLayoutStatus.className = 'batch-layout-valid'
   batchLayoutStatus.textContent = 'Пакетну траєкторію передано у 2D/3D. Керуйте проходом кнопками Пауза, Стоп і На початок.'
@@ -4006,6 +4592,16 @@ leadDistanceInput.addEventListener('input', renderPreparedDxfSimulation)
 profileOrientationInput.addEventListener('change', renderPreparedDxfSimulation)
 profileEntrySideInput.addEventListener('change', renderPreparedDxfSimulation)
 profileAutoStartInput.addEventListener('change', renderPreparedDxfSimulation)
+const syncProfileRouteControls = () => {
+  const centeredHome = profileRouteModeInput.value === 'center-top-home'
+  profileEntrySideInput.disabled = centeredHome
+  profileAutoStartInput.disabled = centeredHome
+}
+profileRouteModeInput.addEventListener('change', () => {
+  syncProfileRouteControls()
+  renderPreparedDxfSimulation()
+})
+syncProfileRouteControls()
 cutFeedRateInput.addEventListener('input', renderPreparedDxfSimulation)
 Object.values(machineLimitInputs).forEach(input => {
   input.addEventListener('input', updateGeneratedNcPreview)
@@ -4385,6 +4981,7 @@ downloadNcDxfRightButton.disabled = true
 downloadNcDxfPairButton.disabled = true
 ncToDxfStatus.textContent = 'Пошук профілів у NC...'
 const parsedNc = parseNcTrajectories(text)
+const parsedBlockSetup = parseNcBlockSetup(text)
 const { leftPoints, rightPoints } = parsedNc
    if (leftPoints.length < 2 || rightPoints.length < 2) {
         status.textContent = 'У файлі не знайдено траєкторію 4 осей'
@@ -4392,6 +4989,41 @@ const { leftPoints, rightPoints } = parsedNc
         ncWingImportStatus.className = 'profile-library-error'
         ncWingImportStatus.textContent = 'Деталь не можна зберегти: у NC немає повної траєкторії X/Y/A/Z.'
         return
+    }
+
+    const readyCenterTopProgram = /\(ZHART_ROUTE:CENTER_TOP_HOME\)/i.test(text)
+    if (readyCenterTopProgram) {
+      // This file already contains final carriage coordinates. Recovering its
+      // service descent as a design profile and generating NC again would apply
+      // the route/installation compensation twice and produce a false preview.
+      preparedDxfProfiles.left = null
+      preparedDxfProfiles.right = null
+      preparedCuttingTrajectory = null
+      if (parsedBlockSetup) {
+        wireSpanInput.value = parsedBlockSetup.wireSpan
+        foamWidthInput.value = parsedBlockSetup.blockWidth
+        blockLeftGapInput.value = parsedBlockSetup.leftGap
+      }
+      updateGeneratedNcPreview()
+      for (const state of Object.values(dxfSides)) {
+        state.model = null
+        state.svg.replaceChildren()
+        state.tools.hidden = true
+        state.status.textContent = 'Готовий серійний NC — профіль повторно не відновлюється'
+      }
+      updateDxfAssignmentStatus()
+      updateProjectSaveAvailability()
+      ncToDxfStatus.textContent = 'Готовий NC відкрито без повторної побудови. Службовий спуск не є частиною профілю.'
+      ncWingImportStatus.className = 'profile-library-valid'
+      ncWingImportStatus.textContent = 'Це готова програма для станка. Перевірте її у 2D/3D, потім виконайте холодний прогін; новий NC з неї не створюйте.'
+      renderSimulation(
+        leftPoints,
+        rightPoints,
+        `Готовий серійний NC: ${file.name} — показано фактичні рухи кареток; X/Y і A/Z: ${leftPoints.length} точок`,
+        parsedBlockSetup
+      )
+      activateWorkspaceTab('simulation')
+      return
     }
 
     recoveredNcProfiles = recoverNcProfiles(text, leftPoints, rightPoints)
@@ -4446,11 +5078,12 @@ const { leftPoints, rightPoints } = parsedNc
     renderSimulation(
       leftPoints,
       rightPoints,
-      `Файл: ${file.name} — X/Y: ${leftPoints.length} точок, A/Z: ${rightPoints.length} точок`
+      `Файл: ${file.name} — X/Y: ${leftPoints.length} точок, A/Z: ${rightPoints.length} точок`,
+      parsedBlockSetup
     )
 })
 
-const renderSimulation = (leftPoints, rightPoints, simulationStatus) => {
+const renderSimulation = (leftPoints, rightPoints, simulationStatus, blockSetup = null) => {
     const allPoints = [...leftPoints, ...rightPoints]
 
     const minX = Math.min(...allPoints.map(p => p.x))
@@ -4633,6 +5266,8 @@ const maxY3d = Math.max(...allY3d)
 const machineScene = {
   leftDepth: 0,
   rightDepth: 200,
+  foamNearDepth: 0,
+  foamFarDepth: 200,
   foam: {
     defaultLength: 500,
     defaultWidth: 200,
@@ -4691,40 +5326,53 @@ let cutSurfaceLayer = null
 let lastCutSurfaceIndex = 0
 let activeFoamBounds = null
 
+const pointOnWireAtDepth = (left, right, depth) => {
+  const span = machineScene.rightDepth - machineScene.leftDepth
+  const ratio = span > 0 ? (depth - machineScene.leftDepth) / span : 0
+  return {
+    x: left.x + (right.x - left.x) * ratio,
+    y: left.y + (right.y - left.y) * ratio
+  }
+}
+
 const appendCutSurfaceSegment = index => {
   if (!cutSurfaceLayer || !showCutSurfaceInput.checked || index <= 0 || index >= count3d) return
 
   const offsetX = machineScene.profileOffset.x
   const offsetY = machineScene.profileOffset.y
-  const previousLeft = {
+  const previousCarriageLeft = {
     x: leftPoints[index - 1].x + offsetX,
     y: leftPoints[index - 1].y + offsetY
   }
-  const currentLeft = {
+  const currentCarriageLeft = {
     x: leftPoints[index].x + offsetX,
     y: leftPoints[index].y + offsetY
   }
-  const previousRight = {
+  const previousCarriageRight = {
     x: rightPoints[index - 1].x + offsetX,
     y: rightPoints[index - 1].y + offsetY
   }
-  const currentRight = {
+  const currentCarriageRight = {
     x: rightPoints[index].x + offsetX,
     y: rightPoints[index].y + offsetY
   }
+  const previousNear = pointOnWireAtDepth(previousCarriageLeft, previousCarriageRight, machineScene.foamNearDepth)
+  const currentNear = pointOnWireAtDepth(currentCarriageLeft, currentCarriageRight, machineScene.foamNearDepth)
+  const previousFar = pointOnWireAtDepth(previousCarriageLeft, previousCarriageRight, machineScene.foamFarDepth)
+  const currentFar = pointOnWireAtDepth(currentCarriageLeft, currentCarriageRight, machineScene.foamFarDepth)
   const insideFoam = point => activeFoamBounds
     && point.x >= activeFoamBounds.minX
     && point.x <= activeFoamBounds.maxX
     && point.y >= activeFoamBounds.minY
     && point.y <= activeFoamBounds.maxY
 
-  if (![previousLeft, currentLeft, previousRight, currentRight].every(insideFoam)) return
+  if (![previousNear, currentNear, previousFar, currentFar].every(insideFoam)) return
 
   const corners = [
-    project3d(previousLeft.x, previousLeft.y, machineScene.leftDepth),
-    project3d(currentLeft.x, currentLeft.y, machineScene.leftDepth),
-    project3d(currentRight.x, currentRight.y, machineScene.rightDepth),
-    project3d(previousRight.x, previousRight.y, machineScene.rightDepth)
+    project3d(previousNear.x, previousNear.y, machineScene.foamNearDepth),
+    project3d(currentNear.x, currentNear.y, machineScene.foamNearDepth),
+    project3d(currentFar.x, currentFar.y, machineScene.foamFarDepth),
+    project3d(previousFar.x, previousFar.y, machineScene.foamFarDepth)
   ]
   svgElement("polygon", {
     points: polygonPoints(corners),
@@ -4790,7 +5438,16 @@ const updateMachineCoordinates = positions => {
 
 const renderMachineScene = () => {
   const length = readBlockDimension(foamLengthInput, machineScene.foam.defaultLength)
-  const width = readBlockDimension(foamWidthInput, machineScene.foam.defaultWidth)
+  const requestedWidth = readBlockDimension(foamWidthInput, machineScene.foam.defaultWidth)
+  const setupValid = blockSetup
+    && Number(blockSetup.wireSpan) > 0
+    && Number(blockSetup.blockWidth) > 0
+    && Number(blockSetup.leftGap) >= 0
+    && Number(blockSetup.rightGap) >= 0
+  const width = setupValid ? Number(blockSetup.blockWidth) : requestedWidth
+  const wireSpan = setupValid ? Number(blockSetup.wireSpan) : width
+  const leftGap = setupValid ? Number(blockSetup.leftGap) : 0
+  const rightGap = setupValid ? Number(blockSetup.rightGap) : 0
   const height = readBlockDimension(foamHeightInput, machineScene.foam.defaultHeight)
   const profileOffsetX = readProfileOffset(profileLengthOffsetInput)
   const profileOffsetY = readProfileOffset(profileHeightOffsetInput)
@@ -4805,7 +5462,9 @@ const renderMachineScene = () => {
   const camera = machineScene.camera
   const rawCorners = []
 
-  machineScene.rightDepth = width
+  machineScene.rightDepth = wireSpan
+  machineScene.foamNearDepth = leftGap
+  machineScene.foamFarDepth = leftGap + width
   machineScene.profileOffset.x = profileOffsetX
   machineScene.profileOffset.y = profileOffsetY
   activeFoamBounds = { minX: 0, maxX: length, minY: 0, maxY: height }
@@ -4910,15 +5569,21 @@ const renderMachineScene = () => {
   drawMachineSide(machineScene.leftDepth, "Ліва сторона X/Y", "#2563eb")
   drawMachineSide(machineScene.rightDepth, "Права сторона A/Z", "#dc2626")
 
+  if (setupValid) {
+    svgElement("text", {
+      x: "20", y: "24", fill: "#374151", "font-size": "14", "font-weight": "700"
+    }, frameLayer).textContent = `Струна ${formatNcNumber(wireSpan)} мм = виступ ${formatNcNumber(leftGap)} + блок ${formatNcNumber(width)} + виступ ${formatNcNumber(rightGap)} мм`
+  }
+
   const foamCorners = {
-    nearBottomLeft: project3d(0, 0, machineScene.leftDepth),
-    nearBottomRight: project3d(length, 0, machineScene.leftDepth),
-    nearTopLeft: project3d(0, height, machineScene.leftDepth),
-    nearTopRight: project3d(length, height, machineScene.leftDepth),
-    farBottomLeft: project3d(0, 0, machineScene.rightDepth),
-    farBottomRight: project3d(length, 0, machineScene.rightDepth),
-    farTopLeft: project3d(0, height, machineScene.rightDepth),
-    farTopRight: project3d(length, height, machineScene.rightDepth)
+    nearBottomLeft: project3d(0, 0, machineScene.foamNearDepth),
+    nearBottomRight: project3d(length, 0, machineScene.foamNearDepth),
+    nearTopLeft: project3d(0, height, machineScene.foamNearDepth),
+    nearTopRight: project3d(length, height, machineScene.foamNearDepth),
+    farBottomLeft: project3d(0, 0, machineScene.foamFarDepth),
+    farBottomRight: project3d(length, 0, machineScene.foamFarDepth),
+    farTopLeft: project3d(0, height, machineScene.foamFarDepth),
+    farTopRight: project3d(length, height, machineScene.foamFarDepth)
   }
 
   svgElement("polygon", {
@@ -4950,12 +5615,12 @@ const renderMachineScene = () => {
     const leftEnd = project3d(
       rod.x + machineScene.profileOffset.x,
       rod.y + machineScene.profileOffset.y,
-      machineScene.leftDepth
+      machineScene.foamNearDepth
     )
     const rightEnd = project3d(
       rod.x + machineScene.profileOffset.x,
       rod.y + machineScene.profileOffset.y,
-      machineScene.rightDepth
+      machineScene.foamFarDepth
     )
     svgElement("line", {
       x1: leftEnd[0],
@@ -4980,12 +5645,12 @@ const renderMachineScene = () => {
     const rootEnd = project3d(
       channel.rootX + machineScene.profileOffset.x,
       channel.rootY + machineScene.profileOffset.y,
-      machineScene.leftDepth
+      machineScene.foamNearDepth
     )
     const tipEnd = project3d(
       channel.tipX + machineScene.profileOffset.x,
       channel.tipY + machineScene.profileOffset.y,
-      machineScene.rightDepth
+      machineScene.foamFarDepth
     )
     const averageDiameter = (channel.rootDiameter + channel.tipDiameter) / 2
     svgElement("line", {

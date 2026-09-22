@@ -6,16 +6,21 @@ const cleanLine = source => source
   .trim()
 
 export class VirtualFluidNC {
-  constructor(limits = {}, startPositions = {}) {
+  constructor(limits = {}, startPositions = {}, options = {}) {
     this.positions = Object.fromEntries(VIRTUAL_AXES.map(axis => [axis, Number(startPositions[axis]) || 0]))
     this.limits = Object.fromEntries(VIRTUAL_AXES.map(axis => [axis, Math.max(0, Number(limits[axis]) || (axis === 'B' ? 360 : 600))]))
     this.absolute = true
+    this.allowNegativeWorkCoordinates = options.allowNegativeWorkCoordinates === true
     this.state = 'Idle'
     this.alarm = ''
   }
 
   setLimits(limits) {
     VIRTUAL_AXES.forEach(axis => { this.limits[axis] = Math.max(0, Number(limits[axis]) || this.limits[axis]) })
+  }
+
+  setAllowNegativeWorkCoordinates(enabled) {
+    this.allowNegativeWorkCoordinates = enabled === true
   }
 
   home() {
@@ -59,8 +64,12 @@ export class VirtualFluidNC {
       if (Number.isFinite(value)) targets[axis] = incremental ? targets[axis] + value : value
     })
     for (const axis of VIRTUAL_AXES) {
-      if (targets[axis] < 0 || targets[axis] > this.limits[axis]) {
-        this.emergencyStop(`ALARM: ${axis}=${targets[axis].toFixed(3)} мм поза межами 0…${this.limits[axis]} мм`)
+      const minimum = this.allowNegativeWorkCoordinates ? -this.limits[axis] : 0
+      if (targets[axis] < minimum || targets[axis] > this.limits[axis]) {
+        const range = this.allowNegativeWorkCoordinates
+          ? `${-this.limits[axis]}…${this.limits[axis]}`
+          : `0…${this.limits[axis]}`
+        this.emergencyStop(`ALARM: ${axis}=${targets[axis].toFixed(3)} мм поза межами ${range} мм`)
         return this.result(false, this.alarm)
       }
     }
@@ -76,7 +85,9 @@ export class VirtualFluidNC {
 
 export function validateVirtualProgram(source, options = {}) {
   const limits = options.limits || {}
-  const controller = new VirtualFluidNC(limits, options.startPositions)
+  const controller = new VirtualFluidNC(limits, options.startPositions, {
+    allowNegativeWorkCoordinates: options.allowNegativeWorkCoordinates === true
+  })
   const errors = []
   const warnings = []
   let movements = 0

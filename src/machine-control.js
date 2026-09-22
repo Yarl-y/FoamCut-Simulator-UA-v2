@@ -5,7 +5,7 @@ import { analyzeMachineJob, formatMachineSetupCard } from './machine-job-setup.j
 import { analyzeMotionDynamics, formatMotionFindingsForAi, groupMotionFindings } from './motion-analysis.js'
 import { assessOperatorState, buildOperatorSignals, buildOperatorSteps, formatOperatorReport } from './operator-assistant.js'
 import { assessWire, createResumePlan, estimateCutTime, formatCompletedRun, prioritizeWarnings, recommendHeat, simulationDelayMs } from './operator-advanced.js'
-import { formatExperienceForAi, loadExperiences, normalizeExperience, saveExperiences } from './experience-journal.js'
+import { formatExperienceForAi, loadExperiences, mergeExperiences, normalizeExperience, saveExperiences } from './experience-journal.js'
 
 const AXES = VIRTUAL_AXES
 const STATUS_AXES = ['X', 'Y', 'Z', 'A', 'B']
@@ -125,9 +125,13 @@ export function initializeMachineControl({ getNcText, getBlockSetup, onPositionC
   const aiModel = el('operatorAiModel')
   const aiQuestion = el('operatorAiQuestion')
   const aiAsk = el('operatorAiAsk')
+  const aiRestart = el('operatorAiRestart')
   const aiSpeak = el('operatorAiSpeak')
   const aiAnswer = el('operatorAiAnswer')
   const experienceMaterial = el('operatorExperienceMaterial')
+  const experienceCutType = el('operatorExperienceCutType')
+  const experienceCutStage = el('operatorExperienceCutStage')
+  const experienceNcFile = el('operatorExperienceNcFile')
   const experienceThickness = el('operatorExperienceThickness')
   const experienceWire = el('operatorExperienceWire')
   const experienceFeed = el('operatorExperienceFeed')
@@ -136,9 +140,13 @@ export function initializeMachineControl({ getNcText, getBlockSetup, onPositionC
   const experienceSmallKerf = el('operatorExperienceSmallKerf')
   const experienceSynchrony = el('operatorExperienceSynchrony')
   const experienceResult = el('operatorExperienceResult')
+  const experienceDimensions = el('operatorExperienceDimensions')
+  const experienceSurface = el('operatorExperienceSurface')
   const experienceNote = el('operatorExperienceNote')
+  const experienceFeedback = el('operatorExperienceFeedback')
   const experienceAdd = el('operatorExperienceAdd')
   const experienceExport = el('operatorExperienceExport')
+  const experienceImport = el('operatorExperienceImport')
   const experienceList = el('operatorExperienceList')
   const RHVOICE_URI = 'rhvoice:volodymyr'
 
@@ -168,6 +176,7 @@ export function initializeMachineControl({ getNcText, getBlockSetup, onPositionC
   let runReportText = ''
   let resumePlanText = ''
   let experiences = loadExperiences(localStorage)
+  let editingExperienceId = null
 
   const renderExperiences = () => {
     experienceList.replaceChildren(...experiences.map(entry => {
@@ -176,10 +185,12 @@ export function initializeMachineControl({ getNcText, getBlockSetup, onPositionC
       const kerf = entry.largeKerfMm !== null || entry.smallKerfMm !== null
         ? `, пропал великий ${entry.largeKerfMm ?? '?'} мм / малий ${entry.smallKerfMm ?? '?'} мм, синхронність ${entry.synchronyPercent ?? '?'}%`
         : ''
-      text.textContent = `${new Date(entry.createdAt).toLocaleDateString('uk-UA')}: ${entry.material}, ${entry.thicknessMm ?? '?'} мм, струна ${entry.wireDiameterMm ?? '?'} мм, F${entry.feed ?? '?'}, нагрів ${entry.heatPercent ?? '?'}%${kerf} — ${entry.result}${entry.note ? `. ${entry.note}` : ''}`
+      text.textContent = `${new Date(entry.createdAt).toLocaleDateString('uk-UA')}: ${entry.cutType}, ${entry.cutStage}; NC: ${entry.ncFile || 'не зазначено'}; ${entry.material}, ${entry.thicknessMm ?? '?'} мм, струна ${entry.wireDiameterMm ?? '?'} мм, F${entry.feed ?? '?'}, нагрів ${entry.heatPercent ?? '?'}%${kerf} — ${entry.result}${entry.dimensions ? `. Розміри: ${entry.dimensions}` : ''}${entry.surface ? `. Поверхня: ${entry.surface}` : ''}${entry.note ? `. ${entry.note}` : ''}`
+      const edit = document.createElement('button')
+      edit.type = 'button'; edit.textContent = 'Доповнити'; edit.dataset.experienceEdit = entry.id
       const remove = document.createElement('button')
       remove.type = 'button'; remove.textContent = 'Видалити'; remove.dataset.experienceRemove = entry.id
-      item.append(text, remove)
+      item.append(text, edit, remove)
       return item
     }))
     if (!experiences.length) {
@@ -291,22 +302,33 @@ export function initializeMachineControl({ getNcText, getBlockSetup, onPositionC
   const loadAiModels = async () => {
     if (!window.hurtAi) {
       aiStatus.textContent = 'Локальний AI доступний лише у desktop EXE.'
+      aiRestart.disabled = true
       return
     }
-    const result = await window.hurtAi.models()
+    let result
+    try {
+      result = await window.hurtAi.models()
+    } catch (error) {
+      aiStatus.textContent = `Локальний AI не відповідає. ${error.message}`
+      aiAsk.disabled = true
+      return
+    }
     if (!result.available) {
-      aiStatus.textContent = 'Ollama не запущена. Встановимо рушій і модель на комп’ютері станка.'
+      aiStatus.textContent = `Локальний AI не запущено. ${result.error || 'Не знайдено llama.cpp або Ollama.'}`
+      aiAsk.disabled = true
       return
     }
     if (!result.models.length) {
-      aiStatus.textContent = 'Ollama працює, але локальну модель ще не завантажено.'
+      aiStatus.textContent = `${result.provider || 'Локальний AI'} працює, але модель ще не знайдено.`
       return
     }
     const savedModel = localStorage.getItem('hurt-ai-model') || ''
     aiModel.replaceChildren(...result.models.map(name => new Option(name, name)))
     aiModel.value = result.models.includes(savedModel) ? savedModel : result.models[0]
     aiAsk.disabled = false
-    aiStatus.textContent = `Локальний AI готовий. Доступно моделей: ${result.models.length}.`
+    aiStatus.textContent = result.autonomous
+      ? `Автономний режим: ${result.provider} працює з локального диска. Для відповідей інтернет не використовується. Доступно моделей: ${result.models.length}.`
+      : `Локальний AI готовий: ${result.provider}. Доступно моделей: ${result.models.length}.`
   }
 
   const renderAssistant = () => {
@@ -501,19 +523,10 @@ export function initializeMachineControl({ getNcText, getBlockSetup, onPositionC
       marker.append(markerTitle)
       riskLayer.append(marker)
     })
-    const legend = svgNode('g', { class: 'machine-risk-legend', transform: 'translate(28 22)' })
-    const legendBackground = svgNode('rect', { x: -8, y: -15, width: 250, height: 25, rx: 5, fill: '#ffffff', 'fill-opacity': '0.9', stroke: '#cbd5e1' })
-    const dangerDot = svgNode('circle', { cx: 6, cy: -2, r: 5, fill: '#dc2626' })
-    const warningDot = svgNode('circle', { cx: 116, cy: -2, r: 5, fill: '#f59e0b' })
-    const dangerText = svgNode('text', { x: 16, y: 2, fill: '#7f1d1d', 'font-size': 11, 'font-weight': 700 })
-    dangerText.textContent = 'небезпека ≤5%'
-    const warningText = svgNode('text', { x: 126, y: 2, fill: '#92400e', 'font-size': 11, 'font-weight': 700 })
-    warningText.textContent = 'увага 5–25%'
-    legend.append(legendBackground, dangerDot, dangerText, warningDot, warningText)
     const wire = svgNode('line', { 'data-live-wire': '', stroke: '#22c55e', 'stroke-width': 4, 'stroke-linecap': 'round' })
     const leftPoint = svgNode('circle', { 'data-live-left': '', r: 5, fill: '#22c55e', stroke: '#14532d' })
     const rightPoint = svgNode('circle', { 'data-live-right': '', r: 5, fill: '#22c55e', stroke: '#14532d' })
-    livePreview.replaceChildren(grid, leftPath, rightPath, riskLayer, legend, wire, leftPoint, rightPoint)
+    livePreview.replaceChildren(grid, leftPath, rightPath, riskLayer, wire, leftPoint, rightPoint)
     updateLivePreviewPosition()
   }
 
@@ -560,10 +573,13 @@ export function initializeMachineControl({ getNcText, getBlockSetup, onPositionC
   }
 
   const runValidation = () => {
+    const centeredTopHome = /\(ZHART_ROUTE:CENTER_TOP_HOME\)/i.test(ncText.value)
+    virtualController.setAllowNegativeWorkCoordinates(centeredTopHome)
     const report = validateVirtualProgram(ncText.value, {
       limits: getLimits(), startPositions: positions, maximumFeed: maximumFeed.value,
       zeroConfirmed, coldRun: coldRun.checked,
-      enabledAxes: axisBEnabled.checked ? AXES : AXES.filter(axis => axis !== 'B')
+      enabledAxes: axisBEnabled.checked ? AXES : AXES.filter(axis => axis !== 'B'),
+      allowNegativeWorkCoordinates: centeredTopHome
     })
     const final = AXES.map(axis => `${axis}${report.finalPositions[axis].toFixed(3)}`).join(' ')
     validationReport.className = report.valid ? 'machine-validation valid' : 'machine-validation invalid'
@@ -814,6 +830,7 @@ export function initializeMachineControl({ getNcText, getBlockSetup, onPositionC
 
   loadCurrentNc.addEventListener('click', () => {
     ncText.value = getNcText?.() || ''
+    experienceNcFile.value = ''
     invalidateJobPreparation()
     log(ncText.value ? 'Поточний NC завантажено у пульт' : 'У Simulator ще немає готового NC', ncText.value ? 'success' : 'error')
     runValidation()
@@ -824,6 +841,7 @@ export function initializeMachineControl({ getNcText, getBlockSetup, onPositionC
     const file = ncFile.files?.[0]
     if (!file) return
     ncText.value = await file.text()
+    experienceNcFile.value = file.name
     invalidateJobPreparation()
     log(`Відкрито ${file.name}`, 'success')
     runValidation()
@@ -963,6 +981,18 @@ export function initializeMachineControl({ getNcText, getBlockSetup, onPositionC
   })
   voiceTest.addEventListener('click', () => speak('Помічник оператора ГУРТ на зв’язку. Голос налаштовано.', true))
   aiModel.addEventListener('change', () => localStorage.setItem('hurt-ai-model', aiModel.value))
+  aiRestart.addEventListener('click', async () => {
+    aiRestart.disabled = true; aiAsk.disabled = true; aiSpeak.disabled = true
+    aiStatus.textContent = 'Перезапускаю локальний AI…'
+    try {
+      const result = await window.hurtAi.restart()
+      await loadAiModels()
+      aiAnswer.textContent = result.message || 'Локальний AI готовий до роботи.'
+    } catch (error) {
+      aiStatus.textContent = `Не вдалося перезапустити AI. ${error.message}`
+      aiAnswer.textContent = 'Перевірте, чи підключений диск ГУРТ із папкою 01-AI-МОДЕЛЬ.'
+    } finally { aiRestart.disabled = false }
+  })
   aiAsk.addEventListener('click', async () => {
     aiAsk.disabled = true; aiSpeak.disabled = true
     aiAnswer.textContent = 'Помічник думає…'
@@ -984,8 +1014,20 @@ export function initializeMachineControl({ getNcText, getBlockSetup, onPositionC
   })
   aiSpeak.addEventListener('click', () => speak(aiAnswer.textContent, true))
   experienceAdd.addEventListener('click', () => {
+    if (!experienceNcFile.value.trim()) {
+      experienceFeedback.textContent = 'Вкажіть назву NC-файлу, щоб згодом знати, яку саме програму перевіряли.'
+      experienceNcFile.focus()
+      return
+    }
+    const previous = experiences.find(entry => entry.id === editingExperienceId)
     const note = experienceNote.value.trim()
     const entry = normalizeExperience({
+      id: previous?.id,
+      createdAt: previous?.createdAt,
+      updatedAt: new Date().toISOString(),
+      cutType: experienceCutType.value,
+      cutStage: experienceCutStage.value,
+      ncFile: experienceNcFile.value,
       material: experienceMaterial.value,
       thicknessMm: experienceThickness.value,
       wireDiameterMm: experienceWire.value,
@@ -995,25 +1037,68 @@ export function initializeMachineControl({ getNcText, getBlockSetup, onPositionC
       smallKerfMm: experienceSmallKerf.value,
       synchronyPercent: experienceSynchrony.value,
       result: experienceResult.value,
+      dimensions: experienceDimensions.value,
+      surface: experienceSurface.value,
       note
     })
-    if (!entry.thicknessMm || !entry.wireDiameterMm || !entry.feed || entry.heatPercent === null) {
-      experienceNote.setCustomValidity('Заповніть товщину, струну, швидкість і нагрів.')
-      experienceNote.reportValidity(); return
-    }
-    experienceNote.setCustomValidity('')
-    experiences = saveExperiences(localStorage, [entry, ...experiences])
+    experiences = saveExperiences(localStorage, [entry, ...experiences.filter(item => item.id !== entry.id)])
+    editingExperienceId = null
+    experienceAdd.textContent = 'Зберегти картку'
+    experienceFeedback.textContent = `Картку «${entry.cutType}» збережено: ${entry.cutStage}. Резервну копію можна зберегти кнопкою поруч.`
+    experienceDimensions.value = ''
+    experienceSurface.value = ''
     experienceNote.value = ''
     renderExperiences()
-    addJournal('Досвід', `Збережено: ${entry.material}, ${entry.thicknessMm} мм, ${entry.result}`)
+    addJournal('Досвід', `Збережено картку: ${entry.cutType}, ${entry.cutStage}, ${entry.result}`)
   })
   experienceList.addEventListener('click', event => {
+    const editId = event.target.dataset.experienceEdit
+    if (editId) {
+      const entry = experiences.find(item => item.id === editId)
+      if (!entry) return
+      editingExperienceId = entry.id
+      experienceCutType.value = entry.cutType
+      experienceCutStage.value = entry.cutStage
+      experienceNcFile.value = entry.ncFile
+      experienceMaterial.value = entry.material
+      experienceThickness.value = entry.thicknessMm ?? ''
+      experienceWire.value = entry.wireDiameterMm ?? ''
+      experienceFeed.value = entry.feed ?? ''
+      experienceHeat.value = entry.heatPercent ?? ''
+      experienceLargeKerf.value = entry.largeKerfMm ?? ''
+      experienceSmallKerf.value = entry.smallKerfMm ?? ''
+      experienceSynchrony.value = entry.synchronyPercent ?? ''
+      experienceResult.value = entry.result
+      experienceDimensions.value = entry.dimensions
+      experienceSurface.value = entry.surface
+      experienceNote.value = entry.note
+      experienceAdd.textContent = 'Зберегти зміни картки'
+      experienceFeedback.textContent = 'Картку завантажено у форму. Доповніть її та збережіть зміни.'
+      experienceNcFile.focus()
+      return
+    }
     const id = event.target.dataset.experienceRemove
     if (!id) return
     experiences = saveExperiences(localStorage, experiences.filter(entry => entry.id !== id))
+    if (editingExperienceId === id) { editingExperienceId = null; experienceAdd.textContent = 'Зберегти картку' }
     renderExperiences()
   })
-  experienceExport.addEventListener('click', () => saveText(`${JSON.stringify({ version: 2, exportedAt: new Date().toISOString(), experiences }, null, 2)}\n`, `hurt-experience-${new Date().toISOString().slice(0, 10)}.json`))
+  experienceExport.addEventListener('click', () => saveText(`${JSON.stringify({ version: 3, exportedAt: new Date().toISOString(), experiences }, null, 2)}\n`, `hurt-experience-${new Date().toISOString().slice(0, 10)}.json`))
+  experienceImport.addEventListener('change', async () => {
+    const file = experienceImport.files?.[0]
+    if (!file) return
+    try {
+      const parsed = JSON.parse(await file.text())
+      if (!parsed || !Array.isArray(parsed.experiences)) throw new Error('Це не копія журналу ГУРТ.')
+      const merged = mergeExperiences(experiences, parsed.experiences)
+      const added = merged.length - experiences.length
+      experiences = saveExperiences(localStorage, merged)
+      renderExperiences()
+      experienceFeedback.textContent = `Копію завантажено: ${experiences.length} карток у журналі${added > 0 ? `, нових ${added}` : ''}.`
+    } catch (error) {
+      experienceFeedback.textContent = `Не вдалося відновити журнал: ${error.message}`
+    } finally { experienceImport.value = '' }
+  })
   assistantDownload.addEventListener('click', () => {
     renderAssistant()
     const report = formatOperatorReport({

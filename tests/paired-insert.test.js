@@ -4,7 +4,7 @@ import { readFileSync } from 'node:fs'
 import vm from 'node:vm'
 import { createStraightSparHoleContour, insertPairedSparHoles } from '../src/profile-library.js'
 import { preparePairedProfiles } from '../src/profile-entry.js'
-import { createPairedDxf, parseNcTrajectories, recoverNcProfiles, removeInteriorCutLoops, detectCircularHoles } from '../src/nc-dxf.js'
+import { createPairedDxf, parseNcBlockSetup, parseNcTrajectories, recoverNcProfiles, removeInteriorCutLoops, detectCircularHoles } from '../src/nc-dxf.js'
 import { validateVirtualProgram } from '../src/virtual-fluidnc.js'
 
 const near = (a, b) => assert.ok(Math.abs(a - b) < 1e-8, `${a} != ${b}`)
@@ -22,6 +22,17 @@ test('NC to DXF parser handles modal, relative and inch moves but ignores G92', 
   ;[[76.2, 101.6], [88.9, 88.9]].forEach(([x, y], index) => {
     near(parsed.rightPoints[index].x, x); near(parsed.rightPoints[index].y, y)
   })
+})
+
+test('NC block setup preserves carriage gaps around the foam block', () => {
+  assert.deepEqual(
+    parseNcBlockSetup('(Block setup: wire 330.000 mm, left gap 65.000 mm, block 200.000 mm, right gap 65.000 mm)'),
+    { wireSpan: 330, leftGap: 65, blockWidth: 200, rightGap: 65 }
+  )
+  assert.equal(
+    parseNcBlockSetup('(Block setup: wire 330 mm, left gap 50 mm, block 200 mm, right gap 65 mm)'),
+    null
+  )
 })
 
 test('paired DXF contains separate XY and AZ layers', () => {
@@ -68,7 +79,7 @@ const context = vm.createContext({
   machineLimitInputs: Object.fromEntries(['x', 'y', 'a', 'z'].map(axis => [axis, field(600)]))
 })
 vm.runInContext(source.slice(source.indexOf('const interpolateMove ='), source.indexOf('const updateGeneratedNcPreview ='))
-  + '\n globalThis.api = { buildCuttingPath, projectProfilesToCarriages, calculateBlockSetup, validateMachineEnvelope, createMach3Nc };', context)
+  + '\n globalThis.api = { buildCuttingPath, buildCenteredTopHomePath, projectProfilesToCarriages, calculateBlockSetup, validateMachineEnvelope, createMach3Nc };', context)
 
 test('paired approach stages stay aligned even if one boundary move is zero length', () => {
   for (const side of ['left', 'right', 'top', 'bottom']) {
@@ -78,6 +89,41 @@ test('paired approach stages stay aligned even if one boundary move is zero leng
     assert.deepEqual(JSON.parse(JSON.stringify(l.at(-1))), { x: 0, y: 0 })
     assert.deepEqual(JSON.parse(JSON.stringify(r.at(-1))), { x: 0, y: 0 })
   }
+})
+
+test('serial cone route starts above the centre and returns to the same work zero', () => {
+  const route = context.api.buildCenteredTopHomePath(left, right, 15)
+  ;[route.leftPoints, route.rightPoints].forEach(points => {
+    assert.deepEqual(JSON.parse(JSON.stringify(points[0])), { x: 0, y: 0 })
+    assert.deepEqual(JSON.parse(JSON.stringify(points.at(-1))), { x: 0, y: 0 })
+    assert.equal(points[12].y, -15)
+    assert.ok(points.every(point => point.y <= 1e-9))
+    const minimumX = Math.min(...points.map(point => point.x))
+    const maximumX = Math.max(...points.map(point => point.x))
+    assert.ok(Math.abs(minimumX + maximumX) < 1e-9)
+  })
+  const validation = context.api.validateMachineEnvelope({
+    ...route,
+    feedRate: 300,
+    applyProfileOffsets: false,
+    allowNegativeWorkCoordinates: true
+  })
+  assert.equal(validation.valid, true)
+  const nc = context.api.createMach3Nc({
+    ...route,
+    feedRate: 300,
+    applyProfileOffsets: false,
+    routeMode: 'center-top-home'
+  })
+  assert.match(nc, /ZHART_ROUTE:CENTER_TOP_HOME/)
+  assert.match(nc, /G1 X-?\d+\.\d{3} Y-15\.000 A-?\d+\.\d{3} Z-15\.000/)
+  assert.match(nc, /G1 X0\.000 Y0\.000 A0\.000 Z0\.000\nM30/)
+  const virtualReport = validateVirtualProgram(nc, {
+    zeroConfirmed: true,
+    coldRun: true,
+    allowNegativeWorkCoordinates: true
+  })
+  assert.equal(virtualReport.valid, true, virtualReport.errors.join('; '))
 })
 
 test('compensation preserves identical bore points; envelope rejects 601.630 mm', () => {

@@ -1,3 +1,5 @@
+import { createPairedHollowCutPath, insertPairedSparHoles } from './profile-library.js'
+
 const SVG_NS = 'http://www.w3.org/2000/svg'
 
 const boundsOf = points => ({
@@ -19,6 +21,15 @@ const rotateQuarter = points => points?.map(point => ({
   y: point.x
 })) || null
 
+const transformQuarter = (points, turns = 0, mirrorX = false, mirrorY = false) => {
+  let result = points?.map(point => ({ ...point,
+    x: mirrorX ? -point.x : point.x,
+    y: mirrorY ? -point.y : point.y
+  })) || null
+  for (let turn = 0; turn < turns; turn += 1) result = rotateQuarter(result)
+  return result
+}
+
 const centerXOf = points => {
   const bounds = boundsOf(points)
   return (bounds.minX + bounds.maxX) / 2
@@ -36,24 +47,39 @@ const alignFuselageFaces = part => {
     innerLeft: shift(part.innerLeft, leftShift),
     innerRight: shift(part.innerRight, rightShift),
     cutLeft: shift(part.cutLeft, leftShift),
-    cutRight: shift(part.cutRight, rightShift)
+    cutRight: shift(part.cutRight, rightShift),
+    sparHolePairs: part.sparHolePairs?.map(hole => ({
+      left: shift(hole.left, leftShift), right: shift(hole.right, rightShift)
+    }))
   }
 }
 
-const orientPart = (sourcePart, rotated) => {
+const orientPartManual = (sourcePart, turns = 0, mirrorX = false, mirrorY = false) => {
   const part = alignFuselageFaces(sourcePart)
-  return rotated
-  ? {
-      ...part,
-      outerLeft: rotateQuarter(part.outerLeft),
-      outerRight: rotateQuarter(part.outerRight),
-      innerLeft: rotateQuarter(part.innerLeft),
-      innerRight: rotateQuarter(part.innerRight),
-      cutLeft: rotateQuarter(part.cutLeft),
-      cutRight: rotateQuarter(part.cutRight)
-    }
-  : part
+  const move = points => transformQuarter(points, turns, mirrorX, mirrorY)
+  const oriented = turns || mirrorX || mirrorY ? {
+    ...part,
+    outerLeft: move(part.outerLeft), outerRight: move(part.outerRight),
+    innerLeft: move(part.innerLeft), innerRight: move(part.innerRight),
+    cutLeft: move(part.cutLeft), cutRight: move(part.cutRight),
+    sparHolePairs: part.sparHolePairs?.map(hole => ({ left: move(hole.left), right: move(hole.right) }))
+  } : part
+  if (oriented.straightSparRods?.length && !oriented.sparHolePairs?.length) {
+    throw new Error(`${oriented.name}: отвори трубок відсутні в даних секції; NC заблоковано`)
+  }
+  if (!oriented.innerLeft || !oriented.innerRight) return oriented
+  // Rebuild after rotation: rotating the old cut would leave the cavity entry
+  // on the old bottom, which is now a side of the section.
+  const hollow = createPairedHollowCutPath(
+    oriented.outerLeft, oriented.outerRight, oriented.innerLeft, oriented.innerRight
+  )
+  const cut = oriented.sparHolePairs?.length
+    ? insertPairedSparHoles(hollow.leftPoints, hollow.rightPoints, oriented.sparHolePairs)
+    : hollow
+  return { ...oriented, cutLeft: cut.leftPoints, cutRight: cut.rightPoints }
 }
+
+const orientPart = (sourcePart, rotated) => orientPartManual(sourcePart, rotated ? 1 : 0)
 
 export const createFuselageBatchLayout = (parts, settings = {}) => {
   const blockWidth = Number(settings.blockWidth) || 600
@@ -298,7 +324,7 @@ export const createFuselageBatchLayout = (parts, settings = {}) => {
   }
   if (!bestPacking && !slotAssignments.size) bestPacking = packBacktracking()
   if (!bestPacking) {
-    throw new Error(`не вистачає місця для ${parts.length} секцій навіть з автоповоротом 90°`)
+    throw new Error(`не вистачає місця для ${parts.length} секцій з обраним зазором`)
   }
   const { shelves } = bestPacking
 
@@ -401,13 +427,206 @@ export const createFuselageBatchLayout = (parts, settings = {}) => {
   }
 }
 
+// Placement only. Positions are chosen from the edges of already placed
+// envelopes, not from a row/column grid. Cutting order is deliberately absent.
+export const createFreeFuselageLayout = (parts, settings = {}) => {
+  const blockWidth = Number(settings.blockWidth)
+  const blockHeight = Number(settings.blockHeight)
+  const blockThickness = Number(settings.blockThickness)
+  const corridor = Math.max(0, Number(settings.corridor) || 0)
+  if (!parts.length) throw new Error('У збірці немає видимих секцій фюзеляжу')
+  if (![blockWidth, blockHeight, blockThickness].every(value => Number.isFinite(value) && value > 0)) {
+    throw new Error('Розміри блока мають бути більшими за нуль')
+  }
+  const margin = corridor / 2
+  const variants = parts.map(source => {
+    if (Number(source.span) - blockThickness > 0.001) {
+      throw new Error(`${source.name}: довжина секції більша за товщину блока`)
+    }
+    return [false, true].map(rotated => {
+      const part = orientPart(source, rotated)
+      const sourceBounds = boundsOf([...part.outerLeft, ...part.outerRight])
+      return {
+        part, rotated, sourceBounds,
+        width: sourceBounds.maxX - sourceBounds.minX,
+        height: sourceBounds.maxY - sourceBounds.minY
+      }
+    }).filter((variant, index, all) => index === 0
+      || Math.abs(variant.width - all[0].width) > 0.001
+      || Math.abs(variant.height - all[0].height) > 0.001)
+  })
+  for (const choices of variants) {
+    if (!choices.some(choice => choice.width + corridor <= blockWidth + 0.001
+      && choice.height + corridor <= blockHeight + 0.001)) {
+      throw new Error(`${choices[0].part.name}: секція не вміщується у блок навіть після повороту`)
+    }
+  }
+
+  const indices = parts.map((_, index) => index)
+  const area = index => variants[index][0].width * variants[index][0].height
+  const orders = [
+    [...indices].sort((a, b) => area(b) - area(a)),
+    [...indices].sort((a, b) => Math.max(variants[b][0].width, variants[b][0].height)
+      - Math.max(variants[a][0].width, variants[a][0].height)),
+    [...indices].sort((a, b) => variants[b][0].height - variants[a][0].height),
+    [...indices].sort((a, b) => variants[b][0].width - variants[a][0].width),
+    indices
+  ]
+  const score = placed => {
+    const maxX = Math.max(margin, ...placed.map(item => item.x + item.variant.width))
+    const maxY = Math.max(margin, ...placed.map(item => item.y + item.variant.height))
+    return (maxX - margin) * (maxY - margin) + maxY * 0.01 + maxX * 0.001
+  }
+  const fits = (candidate, placed) => candidate.x >= margin - 0.001
+    && candidate.y >= margin - 0.001
+    && candidate.x + candidate.variant.width <= blockWidth - margin + 0.001
+    && candidate.y + candidate.variant.height <= blockHeight - margin + 0.001
+    && placed.every(other => (
+      candidate.x >= other.x + other.variant.width + corridor - 0.001
+      || other.x >= candidate.x + candidate.variant.width + corridor - 0.001
+      || candidate.y >= other.y + other.variant.height + corridor - 0.001
+      || other.y >= candidate.y + candidate.variant.height + corridor - 0.001
+    ))
+  let best = null
+  for (const order of orders) {
+    let beam = [[]]
+    for (const index of order) {
+      const next = []
+      for (const placed of beam) {
+        for (const variant of variants[index]) {
+          const xs = new Set([margin])
+          const ys = new Set([margin])
+          placed.forEach(other => {
+            xs.add(other.x + other.variant.width + corridor)
+            xs.add(other.x - variant.width - corridor)
+            ys.add(other.y + other.variant.height + corridor)
+            ys.add(other.y - variant.height - corridor)
+          })
+          for (const x of xs) for (const y of ys) {
+            const candidate = { index, variant, x, y }
+            if (fits(candidate, placed)) next.push([...placed, candidate])
+          }
+        }
+      }
+      if (!next.length) { beam = []; break }
+      next.sort((a, b) => score(a) - score(b))
+      beam = next.slice(0, 24)
+    }
+    if (beam.length && (!best || score(beam[0]) < score(best))) best = beam[0]
+  }
+  if (!best) throw new Error(`не знайдено розкладки для ${parts.length} секцій із зазором ${corridor} мм`)
+  // Keep the geometry unchanged, but spend unused block area on wider passages.
+  // Expanding offsets (never shrinking them) preserves every proven clearance.
+  const minPlacedX = Math.min(...best.map(item => item.x))
+  const minPlacedY = Math.min(...best.map(item => item.y))
+  const stretch = (axis, minimum, limit) => {
+    const candidates = best.filter(item => item[axis] > minimum + 0.001)
+    if (!candidates.length) return 1
+    return Math.max(1, Math.min(...candidates.map(item => (
+      (limit - margin - item.variant[axis === 'x' ? 'width' : 'height'] - minimum)
+        / (item[axis] - minimum)
+    ))))
+  }
+  const stretchX = stretch('x', minPlacedX, blockWidth)
+  const stretchY = stretch('y', minPlacedY, blockHeight)
+  const items = best.map(({ variant, x: packedX, y: packedY }, index) => {
+    const x = margin + (packedX - minPlacedX) * stretchX
+    const y = margin + (packedY - minPlacedY) * stretchY
+    const { part, sourceBounds, rotated } = variant
+    const dx = x - sourceBounds.minX
+    const dy = y - sourceBounds.minY
+    return {
+      part, index, row: null, column: null, rotated, dx, dy,
+      sourcePart: parts[best[index].index],
+      outerLeft: translate(part.outerLeft, dx, dy),
+      outerRight: translate(part.outerRight, dx, dy),
+      innerLeft: part.innerLeft ? translate(part.innerLeft, dx, dy) : null,
+      innerRight: part.innerRight ? translate(part.innerRight, dx, dy) : null,
+      cutLeft: translate(part.cutLeft, dx, dy),
+      cutRight: translate(part.cutRight, dx, dy),
+      bounds: { minX: x, maxX: x + variant.width, minY: y, maxY: y + variant.height }
+    }
+  })
+  return {
+    blockWidth, blockHeight, blockThickness, corridor, items,
+    freePlacement: true, adaptive: true, rows: 0, columns: 0, rowLanes: [],
+    slotRects: items.map(item => ({
+      index: item.index,
+      minX: Math.max(0, item.bounds.minX - margin),
+      maxX: Math.min(blockWidth, item.bounds.maxX + margin),
+      minY: Math.max(0, item.bounds.minY - margin),
+      maxY: Math.min(blockHeight, item.bounds.maxY + margin)
+    }))
+  }
+}
+
+export const applyManualFuselageLayout = (layout, placements = new Map()) => {
+  if (!layout.freePlacement) throw new Error('Ручний розклад працює з вільною розкладкою')
+  const margin = layout.corridor / 2
+  const items = layout.items.map(item => {
+    const setting = placements.get(item.part.id)
+    if (!setting) return item
+    const source = item.sourcePart || item.part
+    const turns = ((Math.floor(Number(setting.turns) || 0) % 4) + 4) % 4
+    const mirrorX = Boolean(setting.mirrorX)
+    const mirrorY = Boolean(setting.mirrorY)
+    const part = orientPartManual(source, turns, mirrorX, mirrorY)
+    const sourceBounds = boundsOf([...part.outerLeft, ...part.outerRight])
+    const centerX = Number(setting.centerX)
+    const centerY = Number(setting.centerY)
+    if (!Number.isFinite(centerX) || !Number.isFinite(centerY)) {
+      throw new Error(`${part.name}: ручні координати некоректні`)
+    }
+    const dx = centerX - (sourceBounds.minX + sourceBounds.maxX) / 2
+    const dy = centerY - (sourceBounds.minY + sourceBounds.maxY) / 2
+    return {
+      ...item, part, dx, dy, rotated: turns % 2 === 1,
+      manualTurns: turns, manualMirrorX: mirrorX, manualMirrorY: mirrorY,
+      outerLeft: translate(part.outerLeft, dx, dy), outerRight: translate(part.outerRight, dx, dy),
+      innerLeft: part.innerLeft ? translate(part.innerLeft, dx, dy) : null,
+      innerRight: part.innerRight ? translate(part.innerRight, dx, dy) : null,
+      cutLeft: translate(part.cutLeft, dx, dy), cutRight: translate(part.cutRight, dx, dy),
+      bounds: {
+        minX: sourceBounds.minX + dx, maxX: sourceBounds.maxX + dx,
+        minY: sourceBounds.minY + dy, maxY: sourceBounds.maxY + dy
+      }
+    }
+  })
+  for (const item of items) {
+    if (item.bounds.minX < margin - 0.001 || item.bounds.maxX > layout.blockWidth - margin + 0.001
+      || item.bounds.minY < margin - 0.001 || item.bounds.maxY > layout.blockHeight - margin + 0.001) {
+      throw new Error(`${item.part.name}: секція виходить за межі блока із запасом ${margin} мм`)
+    }
+  }
+  for (let first = 0; first < items.length; first += 1) {
+    for (let second = first + 1; second < items.length; second += 1) {
+      const a = items[first].bounds
+      const b = items[second].bounds
+      if (!(a.minX >= b.maxX + layout.corridor - 0.001
+        || b.minX >= a.maxX + layout.corridor - 0.001
+        || a.minY >= b.maxY + layout.corridor - 0.001
+        || b.minY >= a.maxY + layout.corridor - 0.001)) {
+        throw new Error(`${items[first].part.name} і ${items[second].part.name}: перетин або коридор менший за ${layout.corridor} мм`)
+      }
+    }
+  }
+  return { ...layout, items, manualPlacement: true,
+    slotRects: items.map(item => ({ index: item.index,
+      minX: Math.max(0, item.bounds.minX - margin), maxX: Math.min(layout.blockWidth, item.bounds.maxX + margin),
+      minY: Math.max(0, item.bounds.minY - margin), maxY: Math.min(layout.blockHeight, item.bounds.maxY + margin)
+    })) }
+}
+
 export const createMultiBlockLayouts = (
   parts,
   blocks,
   corridor = 20,
   assignments = new Map(),
-  slotAssignments = new Map()
+  slotAssignments = new Map(),
+  options = {}
 ) => {
+  const freePlacement = options.placementMode === 'free' || options.placementMode === 'manual'
+  const createLayout = freePlacement ? createFreeFuselageLayout : createFuselageBatchLayout
   if (!blocks.length) throw new Error('Додайте хоча б один піноблок')
   const preparedParts = parts.map((part, sourceIndex) => ({ ...part, batchSourceIndex: sourceIndex }))
   let remaining = preparedParts.filter(part => !assignments.get(part.id))
@@ -418,7 +637,7 @@ export const createMultiBlockLayouts = (
     const selected = preparedParts.filter(part => assignments.get(part.id) === block.id)
     if (selected.length) {
       try {
-        createFuselageBatchLayout(selected, {
+        createLayout(selected, {
           blockWidth: block.width, blockHeight: block.height, blockThickness: block.thickness,
           columns: block.columns, corridor
         })
@@ -429,7 +648,7 @@ export const createMultiBlockLayouts = (
     const deferred = []
     for (const part of remaining) {
       try {
-        createFuselageBatchLayout([...selected, part], {
+        createLayout([...selected, part], {
           blockWidth: block.width,
           blockHeight: block.height,
           blockThickness: block.thickness,
@@ -444,15 +663,17 @@ export const createMultiBlockLayouts = (
     }
     remaining = deferred
     if (selected.length) {
-      layouts.push({
-        ...createFuselageBatchLayout(selected, {
+      const layout = createLayout(selected, {
           blockWidth: block.width,
           blockHeight: block.height,
           blockThickness: block.thickness,
           columns: block.columns,
           corridor,
           slotAssignments
-        }),
+        })
+      layouts.push({
+        ...(options.placementMode === 'manual'
+          ? applyManualFuselageLayout(layout, options.manualPlacements || new Map()) : layout),
         block
       })
     } else {
@@ -482,7 +703,8 @@ const addSvg = (parent, tag, attributes, text = '') => {
 
 export const renderBatchLayoutPreview = (svg, layout, side) => {
   svg.replaceChildren()
-  svg.setAttribute('viewBox', `0 0 ${layout.blockWidth} ${layout.blockHeight}`)
+  const outside = layout.manualPlacement ? 5 : 0
+  svg.setAttribute('viewBox', `${-outside} ${-outside} ${layout.blockWidth + outside * 2} ${layout.blockHeight + outside * 2}`)
   addSvg(svg, 'rect', {
     x: 0, y: 0, width: layout.blockWidth, height: layout.blockHeight,
     fill: '#fef3c7', stroke: '#92400e', 'stroke-width': 2
@@ -537,11 +759,24 @@ export const renderBatchLayoutPreview = (svg, layout, side) => {
         'vector-effect': 'non-scaling-stroke'
       })
     }
+    for (const hole of item.part.sparHolePairs || []) {
+      const holePoints = side === 'left' ? hole.left : hole.right
+      if (!holePoints?.length) continue
+      const located = holePoints.map(point => ({ x: point.x + item.dx, y: point.y + item.dy }))
+      addSvg(group, 'polyline', {
+        points: [...located, located[0]]
+          .map(point => `${point.x},${layout.blockHeight - point.y}`).join(' '),
+        fill: 'none', stroke: '#047857', 'stroke-width': 2.5,
+        'vector-effect': 'non-scaling-stroke'
+      })
+    }
     addSvg(group, 'text', {
       x: item.bounds.minX + 4,
       y: layout.blockHeight - item.bounds.maxY + 15,
       fill: '#111827', 'font-size': 12, 'font-weight': 700
-    }, `${sectionNumber(item)}. ${item.part.name}${item.rotated ? ' · 90°' : ''}`)
+    }, `${sectionNumber(item)}. ${item.part.name}`
+      + (item.manualTurns ? ` · ${item.manualTurns * 90}°` : item.rotated ? ' · 90°' : '')
+      + (item.manualMirrorX || item.manualMirrorY ? ' · переверн.' : ''))
   }
 }
 
@@ -707,9 +942,12 @@ export const createBatchCutRoute = layout => {
   const edgeInset = Math.max(1, layout.corridor / 2)
   const home = { x: edgeInset, y: edgeInset }
   const events = []
-  const addMove = (left, right = left, comment = '') => events.push({
-    left: { ...left }, right: { ...right }, comment
-  })
+  const addMove = (left, right = left, comment = '') => {
+    const previous = events.at(-1)
+    if (previous && previous.left.x === left.x && previous.left.y === left.y
+      && previous.right.x === right.x && previous.right.y === right.y) return
+    events.push({ left: { ...left }, right: { ...right }, comment })
+  }
   addMove(home, home, 'Безпечна початкова точка')
   let currentRow = layout.rows - 1
 
@@ -741,7 +979,7 @@ export const createBatchCutRoute = layout => {
     const portalLeft = { x: leftCut[0].x, y: laneY }
     const portalRight = { x: rightCut[0].x, y: laneY }
     addMove(portalLeft, portalRight, `Секція ${sectionNumber(item)}: ${item.part.name}${item.rotated ? ', поворот 90°' : ''}`)
-    addMove(leftCut[0], rightCut[0], 'Вхід у деталь')
+    addMove(leftCut[0], rightCut[0], item.innerLeft ? 'Короткий вхід знизу до порожнини' : 'Вхід у деталь')
     for (let index = 1; index < leftCut.length; index += 1) {
       let comment = ''
       const hasSparHoleRoute = Boolean(item.part.straightSparRods?.length)
@@ -763,8 +1001,8 @@ export const createBatchCutRoute = layout => {
       }
       addMove(leftCut[index], rightCut[index], comment)
     }
-    addMove(leftCut[0], rightCut[0], 'Замикання контуру')
-    addMove(portalLeft, portalRight, 'Безпечний вихід у коридор')
+    addMove(leftCut[0], rightCut[0], 'Одне замикання зовнішнього контуру')
+    addMove(portalLeft, portalRight, 'Вихід тією ж стежкою у коридор')
   })
 
   const finalLaneY = events.at(-1).left.y
@@ -775,6 +1013,404 @@ export const createBatchCutRoute = layout => {
   addMove({ x: finalEdgeX, y: edgeInset }, { x: finalEdgeX, y: edgeInset })
   addMove(home, home, 'Повернення на початок')
   return { events, orderedItems, home }
+}
+
+const pointInsideContour = (point, polygon) => {
+  let inside = false
+  for (let index = 0, previous = polygon.length - 1; index < polygon.length; previous = index++) {
+    const a = polygon[index]
+    const b = polygon[previous]
+    if ((a.y > point.y) !== (b.y > point.y)
+      && point.x < (b.x - a.x) * (point.y - a.y) / (b.y - a.y) + a.x) inside = !inside
+  }
+  return inside
+}
+
+const manualCutFromApproach = (item, approach, hint = null) => {
+  const leftOuter = item.outerLeft
+  const rightOuter = item.outerRight
+  if (!leftOuter.length || leftOuter.length !== rightOuter.length) {
+    throw new Error(`${item.part.name}: зовнішні контури X/Y та A/Z не синхронні`)
+  }
+  const visible = (start, end, contour) => {
+    for (let index = 1; index < 20; index += 1) {
+      const ratio = index / 20
+      if (pointInsideContour({ x: start.x + (end.x - start.x) * ratio,
+        y: start.y + (end.y - start.y) * ratio }, contour)) return false
+    }
+    return true
+  }
+  const side = hint?.side === 'right' ? 'right' : 'left'
+  const candidates = leftOuter.map((left, index) => {
+    const right = rightOuter[index]
+    if (!visible(approach, left, leftOuter) || !visible(approach, right, rightOuter)) return null
+    const closest = side === 'left' ? left : right
+    const hintDistance = hint && Number.isFinite(hint.x) && Number.isFinite(hint.y)
+      ? Math.hypot(closest.x - hint.x, closest.y - hint.y) : 0
+    return { index, score: Math.max(Math.hypot(left.x - approach.x, left.y - approach.y),
+      Math.hypot(right.x - approach.x, right.y - approach.y)) + hintDistance * 2 }
+  }).filter(Boolean).sort((a, b) => a.score - b.score)
+  if (!candidates.length) throw new Error(`${item.part.name}: з вибраної точки немає прямого видимого входу до профілю`)
+  const outerStartIndex = candidates[0].index
+  const outerLeft = leftOuter[outerStartIndex]
+  const outerRight = rightOuter[outerStartIndex]
+  if (!item.innerLeft || !item.innerRight) {
+    const left = rotateContour(leftOuter, outerStartIndex)
+    const right = rotateContour(rightOuter, outerStartIndex)
+    const holes = item.part.sparHolePairs?.map(hole => ({
+      left: translate(hole.left, item.dx, item.dy), right: translate(hole.right, item.dx, item.dy)
+    })) || []
+    const cut = holes.length ? insertPairedSparHoles(left, right, holes) : { leftPoints: left, rightPoints: right }
+    return { left: cut.leftPoints, right: cut.rightPoints, outerStartIndex }
+  }
+  if (item.innerLeft.length !== item.innerRight.length) {
+    throw new Error(`${item.part.name}: внутрішні контури X/Y та A/Z не синхронні`)
+  }
+  const innerCandidates = item.innerLeft.map((left, index) => {
+    const right = item.innerRight[index]
+    const wallOnly = (outerPoint, innerPoint, outerContour, innerContour) => {
+      for (let step = 1; step < 20; step += 1) {
+        const ratio = step / 20
+        const point = { x: outerPoint.x + (innerPoint.x - outerPoint.x) * ratio,
+          y: outerPoint.y + (innerPoint.y - outerPoint.y) * ratio }
+        if (!pointInsideContour(point, outerContour) || pointInsideContour(point, innerContour)) return false
+      }
+      return true
+    }
+    if (!wallOnly(outerLeft, left, leftOuter, item.innerLeft)
+      || !wallOnly(outerRight, right, rightOuter, item.innerRight)) return null
+    return { index, score: Math.max(Math.hypot(left.x - outerLeft.x, left.y - outerLeft.y),
+      Math.hypot(right.x - outerRight.x, right.y - outerRight.y)) }
+  }).filter(Boolean).sort((a, b) => a.score - b.score)
+  if (!innerCandidates.length) throw new Error(`${item.part.name}: не знайдено короткої щілини до порожнини`)
+  const cut = createPairedHollowCutPath(leftOuter, rightOuter, item.innerLeft, item.innerRight, {
+    outerStartIndex, innerStartIndex: innerCandidates[0].index
+  })
+  const holes = item.part.sparHolePairs?.map(hole => ({
+    left: translate(hole.left, item.dx, item.dy), right: translate(hole.right, item.dx, item.dy)
+  })) || []
+  const withHoles = holes.length ? insertPairedSparHoles(cut.leftPoints, cut.rightPoints, holes) : cut
+  return { left: withHoles.leftPoints, right: withHoles.rightPoints, outerStartIndex }
+}
+
+export const rebaseManualRouteMargin = (steps, blockWidth, blockHeight, from = 20, to = 5) => {
+  if (!Array.isArray(steps) || !Number.isFinite(blockWidth) || !Number.isFinite(blockHeight)) {
+    throw new Error('Немає коректного маршруту для оновлення')
+  }
+  if (steps.some(step => step.type === 'trimBottom')) {
+    throw new Error('Старе нижнє торцювання треба видалити з маршруту вручну')
+  }
+  let changed = 0
+  const remap = (value, maximum) => {
+    if (Math.abs(value + from) < 0.51) { changed += 1; return -to }
+    if (Math.abs(value - maximum - from) < 0.51) { changed += 1; return maximum + to }
+    return value
+  }
+  return { steps: steps.map(step => step.type === 'point'
+    ? { ...step, x: remap(Number(step.x), blockWidth), y: remap(Number(step.y), blockHeight) }
+    : { ...step }), changed }
+}
+
+// Experimental free-layout router. A rectilinear visibility grid is built from
+// actual section envelopes, not rows. Every portal must be reachable without
+// entering another section's envelope; otherwise no NC may be produced.
+export const createFreeBatchRoute = (layout, options = {}) => {
+  if (!layout.freePlacement) throw new Error('Цей пошук маршруту призначений для вільної розкладки')
+  const items = layout.items
+  if (!items.length) throw new Error('У блоці немає секцій')
+  const clearance = Math.max(1, layout.corridor / 8)
+  const laneGap = Math.max(clearance + 0.5, layout.corridor / 2)
+  const manualSteps = Array.isArray(options.steps) ? options.steps : null
+  const outsideMargin = manualSteps ? 5 : 0
+  const home = manualSteps ? { x: -outsideMargin, y: -outsideMargin } : { x: 0, y: 0 }
+  const exitSteps = (manualSteps || []).filter(step => step.type === 'exitBottom')
+  if (exitSteps.length > 1 || (exitSteps.length && manualSteps.at(-1).type !== 'exitBottom')) {
+    throw new Error('Вихід униз може бути лише останнім кроком маршруту')
+  }
+  const exitPoint = exitSteps.length ? { x: layout.blockWidth + outsideMargin, y: -outsideMargin } : null
+  const manualPortals = new Map()
+  if (manualSteps) {
+    let approach = home
+    manualSteps.forEach(step => {
+      if (step.type === 'point') approach = { x: Number(step.x), y: Number(step.y) }
+      if (step.type === 'home') approach = home
+      if (step.type === 'section') manualPortals.set(String(step.partId), approach)
+    })
+  }
+  const portals = items.map(item => {
+    const firstLeft = item.cutLeft[0]
+    const firstRight = item.cutRight[0]
+    if (!firstLeft || !firstRight || item.cutLeft.length !== item.cutRight.length) {
+      throw new Error(`${item.part.name}: несинхронні профілі X/Y та A/Z`)
+    }
+    if (!manualSteps && Math.abs(firstLeft.y - firstRight.y) > 0.5) {
+      throw new Error(`${item.part.name}: початок X/Y та A/Z не на одній висоті — горизонтальний вхід неможливий`)
+    }
+    if (manualSteps) return manualPortals.get(String(item.part.id)) || home
+    const y = item.bounds.minY - laneGap
+    if (y < -0.001) throw new Error(`${item.part.name}: під входом немає місця для коридору`)
+    return { x: (firstLeft.x + firstRight.x) / 2, y }
+  })
+  const waypoints = (manualSteps || []).filter(step => step.type === 'point').map(step => ({
+    x: Number(step.x), y: Number(step.y)
+  }))
+  if (exitPoint) waypoints.push(exitPoint)
+  const outsidePoint = waypoints.find(point => !Number.isFinite(point.x) || !Number.isFinite(point.y)
+    || point.x < -outsideMargin || point.x > layout.blockWidth + outsideMargin
+    || point.y < -outsideMargin || point.y > layout.blockHeight + outsideMargin)
+  if (outsidePoint) {
+    throw new Error(`Контрольна точка (${outsidePoint.x}; ${outsidePoint.y}) поза полем −${outsideMargin}…${layout.blockWidth + outsideMargin} / −${outsideMargin}…${layout.blockHeight + outsideMargin} мм. Якщо це старий маршрут 20 мм, натисніть «Оновити відступ 20→5»`)
+  }
+  const unique = values => [...new Set(values.filter(Number.isFinite).map(value => +value.toFixed(4)))].sort((a, b) => a - b)
+  const xs = unique([-outsideMargin, 0, layout.blockWidth, layout.blockWidth + outsideMargin,
+    ...portals.map(point => point.x), ...waypoints.map(point => point.x),
+    ...items.flatMap(item => [item.bounds.minX - clearance - 0.1, item.bounds.maxX + clearance + 0.1])])
+    .filter(value => value >= -outsideMargin && value <= layout.blockWidth + outsideMargin)
+  const ys = unique([-outsideMargin, 0, layout.blockHeight, layout.blockHeight + outsideMargin,
+    ...portals.map(point => point.y), ...waypoints.map(point => point.y),
+    ...items.flatMap(item => [item.bounds.minY - clearance - 0.1, item.bounds.maxY + clearance + 0.1])])
+    .filter(value => value >= -outsideMargin && value <= layout.blockHeight + outsideMargin)
+  const width = xs.length
+  const indexOf = (x, y) => ys.findIndex(value => Math.abs(value - y) < 0.0001) * width
+    + xs.findIndex(value => Math.abs(value - x) < 0.0001)
+  const inside = (x, y, bounds) => x > bounds.minX - clearance && x < bounds.maxX + clearance
+    && y > bounds.minY - clearance && y < bounds.maxY + clearance
+  const blocked = (x, y) => items.some(item => inside(x, y, item.bounds))
+  const valid = ys.flatMap(y => xs.map(x => !blocked(x, y)))
+  const routeBetween = (from, to) => {
+    const start = indexOf(from.x, from.y)
+    const goal = indexOf(to.x, to.y)
+    if (start < 0 || goal < 0 || !valid[start] || !valid[goal]) return null
+    const distance = Array(valid.length).fill(Infinity)
+    const previous = Array(valid.length).fill(-1)
+    const queue = []
+    const push = (node, cost) => {
+      queue.push({ node, cost })
+      let child = queue.length - 1
+      while (child > 0) {
+        const parent = Math.floor((child - 1) / 2)
+        if (queue[parent].cost <= cost) break
+        queue[child] = queue[parent]
+        child = parent
+      }
+      queue[child] = { node, cost }
+    }
+    const pop = () => {
+      const root = queue[0]
+      const tail = queue.pop()
+      if (queue.length) {
+        let parent = 0
+        while (parent * 2 + 1 < queue.length) {
+          let child = parent * 2 + 1
+          if (child + 1 < queue.length && queue[child + 1].cost < queue[child].cost) child += 1
+          if (queue[child].cost >= tail.cost) break
+          queue[parent] = queue[child]
+          parent = child
+        }
+        queue[parent] = tail
+      }
+      return root
+    }
+    distance[start] = 0
+    push(start, 0)
+    while (queue.length) {
+      const { node, cost } = pop()
+      if (cost > distance[node] + 0.0001) continue
+      if (node === goal) break
+      const xIndex = node % width
+      const yIndex = Math.floor(node / width)
+      const neighbors = [
+        xIndex > 0 ? node - 1 : -1,
+        xIndex + 1 < width ? node + 1 : -1,
+        yIndex > 0 ? node - width : -1,
+        yIndex + 1 < ys.length ? node + width : -1
+      ]
+      for (const next of neighbors) {
+        if (next < 0 || !valid[next]) continue
+        const nextX = xs[next % width]
+        const nextY = ys[Math.floor(next / width)]
+        const midpointX = (xs[xIndex] + nextX) / 2
+        const midpointY = (ys[yIndex] + nextY) / 2
+        if (blocked(midpointX, midpointY)) continue
+        const step = Math.abs(nextX - xs[xIndex]) + Math.abs(nextY - ys[yIndex])
+        if (cost + step >= distance[next] - 0.0001) continue
+        distance[next] = cost + step
+        previous[next] = node
+        push(next, distance[next])
+      }
+    }
+    if (!Number.isFinite(distance[goal])) return null
+    const path = []
+    for (let node = goal; node >= 0; node = previous[node]) {
+      path.push({ x: xs[node % width], y: ys[Math.floor(node / width)] })
+      if (node === start) break
+    }
+    path.reverse()
+    const simplified = path.filter((point, index) => index === 0 || index === path.length - 1
+      || Math.abs((point.x - path[index - 1].x) * (path[index + 1].y - point.y)
+        - (point.y - path[index - 1].y) * (path[index + 1].x - point.x)) > 0.0001)
+    return { path: simplified, length: distance[goal] }
+  }
+  const nodes = [home, ...portals, ...waypoints]
+  const paths = nodes.map((from, first) => nodes.map((to, second) => first === second
+    ? { path: [from], length: 0 } : routeBetween(from, to)))
+  for (let index = 0; index < items.length; index += 1) {
+    if (!paths[0][index + 1]) throw new Error(`${items[index].part.name}: вхід недоступний — змініть розкладку або коридор`)
+  }
+  const indices = items.map((_, index) => index)
+  const angular = [...indices].sort((a, b) => Math.atan2(portals[a].y - layout.blockHeight / 2,
+    portals[a].x - layout.blockWidth / 2) - Math.atan2(portals[b].y - layout.blockHeight / 2,
+    portals[b].x - layout.blockWidth / 2))
+  const greedy = first => {
+    const remaining = new Set(indices)
+    const order = []
+    let current = first
+    while (remaining.size) {
+      const next = [...remaining].sort((a, b) => (paths[current][a + 1]?.length ?? Infinity)
+        - (paths[current][b + 1]?.length ?? Infinity))[0]
+      order.push(next)
+      remaining.delete(next)
+      current = next + 1
+    }
+    return order
+  }
+  let candidates = [
+    { kind: 'павутина', order: greedy(0), petals: false },
+    { kind: 'по периметру', order: angular, petals: false },
+    { kind: 'по периметру навпаки', order: [...angular].reverse(), petals: false },
+    { kind: 'ромашка', order: [...indices].sort((a, b) => paths[0][a + 1].length
+      - paths[0][b + 1].length), petals: true }
+  ]
+  if (manualSteps) {
+    const selected = manualSteps.filter(step => step.type === 'section').map(step => step.partId)
+    if (selected.length !== items.length || new Set(selected).size !== items.length
+      || selected.some(id => !items.some(item => String(item.part.id) === String(id)))) {
+      throw new Error(`Ручний маршрут має відвідати кожну з ${items.length} секцій рівно один раз`)
+    }
+    let waypointIndex = 0
+    const steps = manualSteps.map(step => {
+      if (step.type === 'home') return { type: 'home', node: 0 }
+      if (step.type === 'point') return { type: 'point', node: items.length + 1 + waypointIndex++ }
+      if (step.type === 'exitBottom') return { type: 'exitBottom', node: items.length + waypoints.length }
+      const index = items.findIndex(item => String(item.part.id) === String(step.partId))
+      return { type: 'section', index, node: index + 1, entryHint: step.entryHint || null }
+    })
+    candidates = [{ kind: 'ручний', steps, order: steps.filter(step => step.type === 'section')
+      .map(step => step.index), petals: false }]
+  }
+  const costOf = candidate => {
+    if (candidate.steps) {
+      let cost = 0
+      let current = 0
+      for (const step of candidate.steps) {
+        const link = paths[current][step.node]
+        if (!link) return Infinity
+        cost += link.length
+        if (step.type === 'exitBottom') return cost + layout.blockWidth + outsideMargin * 2
+        current = step.node
+      }
+      return cost + (paths[current][0]?.length ?? Infinity)
+    }
+    let cost = 0
+    let current = 0
+    for (const index of candidate.order) {
+      const next = index + 1
+      const link = candidate.petals ? paths[0][next] : paths[current][next]
+      if (!link) return Infinity
+      cost += link.length
+      if (candidate.petals) cost += paths[next][0]?.length ?? Infinity
+      current = candidate.petals ? 0 : next
+    }
+    return cost + (candidate.petals ? 0 : paths[current][0]?.length ?? Infinity)
+  }
+  candidates.forEach(candidate => { candidate.corridorLength = costOf(candidate) })
+  const chosen = candidates.filter(candidate => Number.isFinite(candidate.corridorLength))
+    .sort((a, b) => a.corridorLength - b.corridorLength)[0]
+  if (!chosen) throw new Error('Жоден із варіантів коридору не дістається всіх секцій')
+  const events = []
+  const add = (left, right = left, comment = '', activeIndex = -1) => {
+    const last = events.at(-1)
+    if (last && Math.hypot(last.left.x - left.x, last.left.y - left.y,
+      last.right.x - right.x, last.right.y - right.y) < 0.0001) return
+    events.push({ left: { ...left }, right: { ...right }, comment, activeIndex })
+  }
+  const follow = path => path.slice(1).forEach(point => add(point))
+  add(home, home, manualSteps
+    ? 'ПРОБНИЙ МАРШРУТ: перевірити карту, симуляцію та холодний прогін. Технічний нуль: 5 мм ліворуч і нижче блока'
+    : 'ПРОБНИЙ МАРШРУТ: перевірити карту, симуляцію та холодний прогін. Робочий нуль: край блока')
+  let current = 0
+  const visitSteps = chosen.steps || chosen.order.map(index => ({ type: 'section', index, node: index + 1 }))
+  for (const step of visitSteps) {
+    const next = step.node
+    const link = paths[current][next]
+    if (!link) throw new Error('У ручному маршруті є непрохідний перехід')
+    follow(link.path)
+    current = next
+    if (step.type === 'exitBottom') {
+      add(home, undefined, 'Поза блоком: горизонтально до технічного нуля, без торцювання')
+      current = 0
+      continue
+    }
+    if (step.type !== 'section') continue
+    const index = step.index
+    const item = items[index]
+    if (manualSteps) {
+      const cut = manualCutFromApproach(item, portals[index], step.entryHint)
+      add(cut.left[0], cut.right[0], `Секція ${sectionNumber(item)}: вхід з вибраної точки`, index)
+      for (let pointIndex = 1; pointIndex < cut.left.length; pointIndex += 1) {
+        add(cut.left[pointIndex], cut.right[pointIndex], '', index)
+      }
+      add(cut.left[0], cut.right[0], 'Зовнішній контур замкнено один раз', index)
+      add(portals[index], portals[index], 'Вихід у ту саму точку маршруту', index)
+      continue
+    }
+    const laneY = portals[index].y
+    const leftPortal = { x: item.cutLeft[0].x, y: laneY }
+    const rightPortal = { x: item.cutRight[0].x, y: laneY }
+    add(leftPortal, rightPortal, `Секція ${sectionNumber(item)}: короткий вхід`, index)
+    item.cutLeft.forEach((point, pointIndex) => add(point, item.cutRight[pointIndex], '', index))
+    add(item.cutLeft[0], item.cutRight[0], 'Замкнути зовнішній контур один раз', index)
+    add(leftPortal, rightPortal, 'Вийти тією ж короткою щілиною', index)
+    add(portals[index], portals[index], '', index)
+    if (chosen.petals) {
+      follow(paths[current][0].path)
+      current = 0
+    }
+  }
+  if (current) follow(paths[current][0].path)
+  // A moving hot wire occupies the whole span between its two faces. Check
+  // sampled sweep, not just two endpoint polylines, against every other part.
+  for (let eventIndex = 1; eventIndex < events.length; eventIndex += 1) {
+    const before = events[eventIndex - 1]
+    const after = events[eventIndex]
+    const leftMotion = Math.hypot(after.left.x - before.left.x, after.left.y - before.left.y)
+    const rightMotion = Math.hypot(after.right.x - before.right.x, after.right.y - before.right.y)
+    if (after.activeIndex >= 0 && before.activeIndex === after.activeIndex
+      && Math.max(leftMotion, rightMotion) > 0.5 && Math.min(leftMotion, rightMotion) < 0.001) {
+      throw new Error(`${items[after.activeIndex].part.name}: один кінець струни стоїть, поки другий рухається; Закон КОНУСУ порушено`)
+    }
+    const motion = Math.max(leftMotion, rightMotion)
+    const samples = Math.max(1, Math.ceil(motion / 4))
+    for (let step = 0; step <= samples; step += 1) {
+      const time = step / samples
+      const left = { x: before.left.x + (after.left.x - before.left.x) * time,
+        y: before.left.y + (after.left.y - before.left.y) * time }
+      const right = { x: before.right.x + (after.right.x - before.right.x) * time,
+        y: before.right.y + (after.right.y - before.right.y) * time }
+      for (let fraction = 0; fraction <= 4; fraction += 1) {
+        const ratio = fraction / 4
+        const x = left.x + (right.x - left.x) * ratio
+        const y = left.y + (right.y - left.y) * ratio
+        const collided = items.findIndex((item, index) => index !== after.activeIndex
+          && index !== before.activeIndex && inside(x, y, item.bounds))
+        if (collided >= 0) {
+          throw new Error(`струна може зачепити ${items[collided].part.name} біля руху ${eventIndex}; NC заблоковано`)
+        }
+      }
+    }
+  }
+  return { events, orderedItems: chosen.order.map(index => items[index]), home,
+    strategy: chosen.kind, candidates: candidates.map(({ kind, corridorLength }) => ({ kind, corridorLength })) }
 }
 
 const formatNumber = value => (Math.abs(value) < 0.0005 ? 0 : value).toFixed(3)
@@ -908,7 +1544,7 @@ export const createBatchSetupMapSvg = (layout, route, options = {}) => {
     const type = item.innerLeft || item.innerRight ? 'порожниста' : 'суцільна'
     fragments.push(`<text x="${x}" y="${y}" font-family="Arial" font-size="14">${sectionNumber(item)}. ${xmlEscape(item.part.name)} · ${type}${item.rotated ? ' · поворот 90°' : ''} · X/Y ${leftBounds.minX.toFixed(1)};${leftBounds.minY.toFixed(1)} · A/Z ${rightBounds.minX.toFixed(1)};${rightBounds.minY.toFixed(1)} мм</text>`)
   })
-  fragments.push(`<text x="${pageWidth / 2}" y="${pageHeight - 22}" text-anchor="middle" font-family="Arial" font-size="13" fill="#475569">Зелений пунктир — безпечний маршрут; фіолетовий пунктир — внутрішній контур, який ріжеться першим.</text>`)
+  fragments.push(`<text x="${pageWidth / 2}" y="${pageHeight - 22}" text-anchor="middle" font-family="Arial" font-size="13" fill="#475569">Зелений пунктир — розрахований маршрут; перед різом обов'язкові симуляція й холодний прогін.</text>`)
   fragments.push('</svg>')
   return `${fragments.join('\n')}\n`
 }

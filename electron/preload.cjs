@@ -7,5 +7,6 @@ contextBridge.exposeInMainWorld('hurtSpeech', {
 
 contextBridge.exposeInMainWorld('hurtAi', {
   models: () => ipcRenderer.invoke('hurt-ai:models'),
+  restart: () => ipcRenderer.invoke('hurt-ai:restart'),
   ask: (model, question, context) => ipcRenderer.invoke('hurt-ai:ask', { model, question, context })
 })

@@ -2,6 +2,22 @@ const pointDistance = (first, second) => Math.hypot(first.x - second.x, first.y 
 
 const NC_NUMBER = '[+-]?(?:\\d+(?:\\.\\d*)?|\\.\\d+)'
 
+export const parseNcBlockSetup = text => {
+  const match = String(text || '').match(/Block setup:\s*wire\s+([-+]?\d*\.?\d+)\s*mm,\s*left gap\s+([-+]?\d*\.?\d+)\s*mm,\s*block\s+([-+]?\d*\.?\d+)\s*mm,\s*right gap\s+([-+]?\d*\.?\d+)\s*mm/i)
+  if (!match) return null
+  const setup = {
+    wireSpan: Number(match[1]),
+    leftGap: Number(match[2]),
+    blockWidth: Number(match[3]),
+    rightGap: Number(match[4])
+  }
+  if (!Object.values(setup).every(Number.isFinite)
+    || setup.wireSpan <= 0 || setup.blockWidth <= 0
+    || setup.leftGap < 0 || setup.rightGap < 0
+    || Math.abs(setup.leftGap + setup.blockWidth + setup.rightGap - setup.wireSpan) > 0.01) return null
+  return setup
+}
+
 export const parseNcTrajectories = text => {
   const leftPoints = []
   const rightPoints = []

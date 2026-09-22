@@ -6,7 +6,12 @@ const sections = (count, hollowFrom = Infinity) => Array.from({ length: count },
   hollow: index >= hollowFrom,
   wallThickness: 5,
   bottomThickness: 8,
-  ceilingThickness: 5
+  ceilingThickness: 5,
+  jointBase: 'station',
+  startScale: 1,
+  endScale: 1,
+  innerStartCeilingHeight: null,
+  innerEndCeilingHeight: null
 }))
 
 export const builtinFuselageTemplates = [
