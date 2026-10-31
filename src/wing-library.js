@@ -157,11 +157,29 @@ export const findSmallerProfileCenter = wingData => {
   return { ...center, side }
 }
 
-export const createImportedWingCutProfiles = wingData => {
+export const createImportedWingCutProfiles = (wingData, additionalHolePairs = []) => {
   const wing = sanitizeWing(wingData)
   const outerLeft = removeInteriorCutLoops(wing.leftPoints)
   const outerRight = removeInteriorCutLoops(wing.rightPoints)
-  if (!wing.straightSparRods.length && wing.cutStrategy !== 'wing-single') {
+  const designServoChannels = Array.isArray(wing.design?.servoChannels)
+    ? wing.design.servoChannels
+    : []
+  const storedSparHoles = Array.isArray(wing.design?.sparHoleContours)
+    ? wing.design.sparHoleContours.map((hole, index) => {
+        const left = points(hole?.left, `Отвір конструктора ${index + 1}, X/Y`)
+        const right = points(hole?.right, `Отвір конструктора ${index + 1}, A/Z`)
+        if (left.length !== right.length) {
+          throw new Error(`Отвір конструктора ${index + 1}: кількість точок X/Y та A/Z не збігається`)
+        }
+        if (!sparHoleFitsProfile(outerLeft, left) || !sparHoleFitsProfile(outerRight, right)) {
+          throw new Error(`Отвір конструктора ${index + 1} не вміщується у профілі`)
+        }
+        return { left, right }
+      })
+    : []
+  if (!wing.straightSparRods.length && !designServoChannels.length
+    && !storedSparHoles.length && !additionalHolePairs.length
+    && wing.cutStrategy !== 'wing-single') {
     return {
       outerLeft,
       outerRight,
@@ -170,7 +188,7 @@ export const createImportedWingCutProfiles = wingData => {
     }
   }
 
-  const holes = wing.straightSparRods.map((rod, index) => {
+  const sparHoles = wing.straightSparRods.map((rod, index) => {
     const contour = createStraightSparHoleContour(rod)
     if (!sparHoleFitsProfile(outerLeft, contour)) {
       throw new Error(`Отвір ${index + 1} не вміщується у профілі X/Y`)
@@ -183,6 +201,27 @@ export const createImportedWingCutProfiles = wingData => {
       right: contour.map(point => ({ ...point }))
     }
   })
+  const servoHoles = designServoChannels.map((channel, index) => {
+    const left = createStraightSparHoleContour({
+      x: channel.rootX,
+      y: channel.rootY,
+      diameter: channel.rootDiameter,
+      diameterX: channel.rootDiameterX ?? channel.rootDiameter,
+      diameterY: channel.rootDiameterY ?? channel.rootDiameter
+    })
+    const right = createStraightSparHoleContour({
+      x: channel.tipX,
+      y: channel.tipY,
+      diameter: channel.tipDiameter,
+      diameterX: channel.tipDiameterX ?? channel.tipDiameter,
+      diameterY: channel.tipDiameterY ?? channel.tipDiameter
+    })
+    if (!sparHoleFitsProfile(outerLeft, left) || !sparHoleFitsProfile(outerRight, right)) {
+      throw new Error(`Канал сервопроводу ${index + 1} не вміщується у профілі`)
+    }
+    return { left, right }
+  })
+  const holes = [...sparHoles, ...servoHoles, ...storedSparHoles, ...additionalHolePairs]
 
   if (wing.cutStrategy === 'wing-single') {
     const pairHasDuplicateEnd = Math.hypot(
@@ -261,7 +300,11 @@ export const createImportedWingCutProfiles = wingData => {
     }
   }
 
-  const firstHole = wing.straightSparRods[0]
+  const firstHoleCenter = holes[0]?.left.reduce((center, point) => ({
+    x: center.x + point.x / holes[0].left.length,
+    y: center.y + point.y / holes[0].left.length
+  }), { x: 0, y: 0 })
+  const firstHole = wing.straightSparRods[0] || firstHoleCenter
   const smallerProfile = polygonArea(outerLeft) <= polygonArea(outerRight) ? outerLeft : outerRight
   const ys = smallerProfile.map(point => point.y)
   const minY = Math.min(...ys)

@@ -212,6 +212,37 @@ export const renderAssemblyView = (svg, parts, camera = {}, measurement = null) 
           stroke: '#f97316', 'stroke-width': '4', 'stroke-dasharray': '7 4',
           'stroke-opacity': '0.8'
         }, partGroup)
+        for (const end of [
+          {
+            x: channel.rootX,
+            y: channel.rootY,
+            z: part.offsets.z,
+            diameterX: channel.rootDiameterX ?? channel.rootDiameter,
+            diameterY: channel.rootDiameterY ?? channel.rootDiameter
+          },
+          {
+            x: channel.tipX,
+            y: channel.tipY,
+            z: direction * part.span + part.offsets.z,
+            diameterX: channel.tipDiameterX ?? channel.tipDiameter,
+            diameterY: channel.tipDiameterY ?? channel.tipDiameter
+          }
+        ]) {
+          if (Math.abs(end.diameterX - end.diameterY) <= 0.001) continue
+          const ellipse = Array.from({ length: 24 }, (_, index) => {
+            const angle = Math.PI * 2 * index / 24
+            return project({
+              x: end.x + part.offsets.x + Math.cos(angle) * end.diameterX / 2,
+              y: end.y + part.offsets.y + Math.sin(angle) * end.diameterY / 2,
+              z: end.z
+            })
+          })
+          svgElement('polygon', {
+            points: ellipse.map(point => point.join(',')).join(' '),
+            fill: '#fff7ed', 'fill-opacity': '0.9',
+            stroke: '#f97316', 'stroke-width': '1.5'
+          }, partGroup)
+        }
       }
     }
 

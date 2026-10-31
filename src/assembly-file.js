@@ -134,7 +134,16 @@ const sanitizePart = (part, index) => {
       part.servoChannels,
       ['rootX', 'rootY', 'rootDiameter', 'tipX', 'tipY', 'tipDiameter'],
       `Деталь ${index + 1}, канали`
-    ),
+    ).map((channel, channelIndex) => {
+      const source = part.servoChannels[channelIndex] || {}
+      return {
+        ...channel,
+        rootDiameterX: finiteNumber(source.rootDiameterX ?? channel.rootDiameter, `Деталь ${index + 1}, канал ${channelIndex + 1}, ширина кореня`),
+        rootDiameterY: finiteNumber(source.rootDiameterY ?? channel.rootDiameter, `Деталь ${index + 1}, канал ${channelIndex + 1}, висота кореня`),
+        tipDiameterX: finiteNumber(source.tipDiameterX ?? channel.tipDiameter, `Деталь ${index + 1}, канал ${channelIndex + 1}, ширина кінця`),
+        tipDiameterY: finiteNumber(source.tipDiameterY ?? channel.tipDiameter, `Деталь ${index + 1}, канал ${channelIndex + 1}, висота кінця`)
+      }
+    }),
     offsets: {
       x: finiteNumber(part.offsets?.x ?? 0, `Деталь ${index + 1}, зміщення X`),
       y: finiteNumber(part.offsets?.y ?? 0, `Деталь ${index + 1}, зміщення Y`),

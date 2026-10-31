@@ -643,6 +643,37 @@ code {
   width: 58px;
 }
 
+.servo-channel-shape,
+.wing-cut-route {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 8px 10px;
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border);
+}
+
+.servo-channel-shape label,
+.wing-cut-route label {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12px;
+}
+
+.servo-channel-shape input[type='number'] {
+  width: 64px;
+}
+
+.wing-cut-route p {
+  flex-basis: 100%;
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+}
+
 #profileLibraryStatus {
   margin-top: 10px;
   font-size: 14px;

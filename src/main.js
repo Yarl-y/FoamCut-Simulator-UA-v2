@@ -156,6 +156,28 @@ document.querySelector('#app').innerHTML = `
             <label>Y кінця <input id="servo2TipY" type="number" step="1" value="0"></label>
             <label>Ø кінця <input id="servo2TipDiameter" type="number" min="1" step="1" value="6"></label>
           </div>
+          <div class="servo-channel-shape">
+            <label>Зробити еліпсом
+              <select id="servoEllipseChannel">
+                <option value="none">Жоден канал</option>
+                <option value="0">Канал 1</option>
+                <option value="1">Канал 2</option>
+              </select>
+            </label>
+            <label>Ширина X кореня, мм <input id="servoEllipseRootWidth" type="number" min="0.1" step="0.1" value="8"></label>
+            <label>Висота Y кореня, мм <input id="servoEllipseRootHeight" type="number" min="0.1" step="0.1" value="6"></label>
+            <label>Ширина X кінця, мм <input id="servoEllipseTipWidth" type="number" min="0.1" step="0.1" value="8"></label>
+            <label>Висота Y кінця, мм <input id="servoEllipseTipHeight" type="number" min="0.1" step="0.1" value="6"></label>
+          </div>
+        </div>
+        <div class="wing-cut-route">
+          <label>Траєкторія різання крила
+            <select id="wingCutRoute">
+              <option value="section-hole-first">Звичайна — контур та окремі входи у канали</option>
+              <option value="wing-single">Один прохід — задня крайка → низ з отворами й каналами → носик → верх → задня крайка</option>
+            </select>
+          </label>
+          <p>Один прохід можливий, коли всі отвори та канали розміщені на нижній частині профілю.</p>
         </div>
         <div class="library-save-row">
           <label>Назва власного крила
@@ -1006,6 +1028,12 @@ const saveLibraryWingButton = document.querySelector('#saveLibraryWing')
 const profileLibraryStatus = document.querySelector('#profileLibraryStatus')
 const sparHoleModeInput = document.querySelector('#sparHoleMode')
 const sparHoleHelp = document.querySelector('#sparHoleHelp')
+const servoEllipseChannelInput = document.querySelector('#servoEllipseChannel')
+const servoEllipseRootWidthInput = document.querySelector('#servoEllipseRootWidth')
+const servoEllipseRootHeightInput = document.querySelector('#servoEllipseRootHeight')
+const servoEllipseTipWidthInput = document.querySelector('#servoEllipseTipWidth')
+const servoEllipseTipHeightInput = document.querySelector('#servoEllipseTipHeight')
+const wingCutRouteInput = document.querySelector('#wingCutRoute')
 const sparHoleInputs = [1, 2].map(number => ({
   enabled: document.querySelector(`#spar${number}Enabled`),
   position: document.querySelector(`#spar${number}Position`),
@@ -1022,7 +1050,8 @@ const servoChannelInputs = [1, 2].map(number => ({
   rootDiameter: document.querySelector(`#servo${number}RootDiameter`),
   tipX: document.querySelector(`#servo${number}TipX`),
   tipY: document.querySelector(`#servo${number}TipY`),
-  tipDiameter: document.querySelector(`#servo${number}TipDiameter`)
+  tipDiameter: document.querySelector(`#servo${number}TipDiameter`),
+  number
 }))
 const fuselageSegmentInput = document.querySelector('#fuselageSegment')
 const fuselageTemplateInput = document.querySelector('#fuselageTemplate')
@@ -2893,15 +2922,33 @@ buildLibraryWingButton.addEventListener('click', () => {
           channel.tipDiameter,
           `Діаметр кінця каналу ${index + 1}`
         )
+        const ellipseIndex = Number(servoEllipseChannelInput.value)
+        const isEllipse = ellipseIndex === channel.number - 1
+        const rootDiameterX = isEllipse
+          ? readPositiveLibraryNumber(servoEllipseRootWidthInput, 'Ширина X еліпса сервоканалу на корені')
+          : rootDiameter
+        const rootDiameterY = isEllipse
+          ? readPositiveLibraryNumber(servoEllipseRootHeightInput, 'Висота Y еліпса сервоканалу на корені')
+          : rootDiameter
+        const tipDiameterX = isEllipse
+          ? readPositiveLibraryNumber(servoEllipseTipWidthInput, 'Ширина X еліпса сервоканалу на кінці')
+          : tipDiameter
+        const tipDiameterY = isEllipse
+          ? readPositiveLibraryNumber(servoEllipseTipHeightInput, 'Висота Y еліпса сервоканалу на кінці')
+          : tipDiameter
         const left = createStraightSparHoleContour({
           x: rootX,
           y: rootY,
-          diameter: rootDiameter
+          diameter: rootDiameter,
+          diameterX: rootDiameterX,
+          diameterY: rootDiameterY
         })
         const right = createStraightSparHoleContour({
           x: tipX,
           y: tipY,
-          diameter: tipDiameter
+          diameter: tipDiameter,
+          diameterX: tipDiameterX,
+          diameterY: tipDiameterY
         })
         if (!sparHoleFitsProfile(rootPoints, left)) {
           throw new Error(`Канал ${index + 1} не вміщується в кореневому профілі`)
@@ -2912,14 +2959,26 @@ buildLibraryWingButton.addEventListener('click', () => {
         return {
           left,
           right,
-          axis: { rootX, rootY, rootDiameter, tipX, tipY, tipDiameter }
+          axis: {
+            rootX, rootY, rootDiameter, rootDiameterX, rootDiameterY,
+            tipX, tipY, tipDiameter, tipDiameterX, tipDiameterY,
+            isEllipse
+          }
         }
       })
-    const profilesWithHoles = insertPairedSparHoles(
-      rootPoints,
-      tipPoints,
-      [...sparHoles, ...servoChannels]
-    )
+    const sparHolePairs = sparHoles.map(({ left, right }) => ({ left, right }))
+    const servoHolePairs = servoChannels.map(({ left, right }) => ({ left, right }))
+    const pairedHolePairs = [...sparHolePairs, ...servoHolePairs]
+    const profilesWithHoles = wingCutRouteInput.value === 'wing-single'
+      ? createImportedWingCutProfiles({
+          name: 'Крило конструктора',
+          span: halfSpan,
+          leftPoints: rootPoints,
+          rightPoints: tipPoints,
+          straightSparRods: [],
+          cutStrategy: 'wing-single'
+        }, pairedHolePairs)
+      : insertPairedSparHoles(rootPoints, tipPoints, pairedHolePairs)
     const normalizedPair = normalizeProfilePair(
       profilesWithHoles.leftPoints,
       profilesWithHoles.rightPoints
@@ -2933,9 +2992,14 @@ buildLibraryWingButton.addEventListener('click', () => {
       rootX: axis.rootX + normalizedPair.translation.x,
       rootY: axis.rootY + normalizedPair.translation.y,
       rootDiameter: axis.rootDiameter,
+      rootDiameterX: axis.rootDiameterX,
+      rootDiameterY: axis.rootDiameterY,
       tipX: axis.tipX + normalizedPair.translation.x,
       tipY: axis.tipY + normalizedPair.translation.y,
-      tipDiameter: axis.tipDiameter
+      tipDiameter: axis.tipDiameter,
+      tipDiameterX: axis.tipDiameterX,
+      tipDiameterY: axis.tipDiameterY,
+      isEllipse: axis.isEllipse
     }))
     const translateOuterProfile = points => points.map(point => ({
       x: point.x + normalizedPair.translation.x,
@@ -2966,6 +3030,20 @@ buildLibraryWingButton.addEventListener('click', () => {
       twist,
       twistAxis,
       sparMode: sparHoleModeInput.value,
+      servoEllipseChannel: servoEllipseChannelInput.value,
+      cutStrategy: wingCutRouteInput.value,
+      sparHoleContours: sparHoleModeInput.value === 'straight'
+        ? []
+        : sparHolePairs.map(hole => ({
+            left: hole.left.map(point => ({
+              x: point.x + normalizedPair.translation.x,
+              y: point.y + normalizedPair.translation.y
+            })),
+            right: hole.right.map(point => ({
+              x: point.x + normalizedPair.translation.x,
+              y: point.y + normalizedPair.translation.y
+            }))
+          })),
       pointCount,
       profileRefinement: refineProfile ? 'shape-preserving-naca23012' : 'catalog-linear'
     }
@@ -2995,6 +3073,9 @@ buildLibraryWingButton.addEventListener('click', () => {
       + `піврозмах ${halfSpan} мм, крутка ${twist}°, отворів лонжеронів: ${sparHoles.length}; `
       + `${sparHoleModeInput.value === 'straight' ? 'наскрізні прямі осі' : 'позиція за хордою'}; `
       + `каналів проводів: ${servoChannels.length}`
+      + (wingCutRouteInput.value === 'wing-single'
+        ? '; один прохід: крайка → низ з отворами й каналами → носик → верх → крайка'
+        : '; стандартна траєкторія з окремими входами у канали')
       + (refineProfile && [rootLibraryProfileInput.value, tipLibraryProfileInput.value].includes('naca23012')
         ? '; NACA 23012: застосовано покращене уточнення контуру'
         : '')
@@ -3022,7 +3103,7 @@ saveLibraryWingButton.addEventListener('click', () => {
       recoveryMethod: 'parametric',
       // The constructor already produced the complete synchronized route,
       // including every requested hole and channel. Preserve it verbatim.
-      cutStrategy: 'section-hole-first',
+      cutStrategy: currentParametricWingDesign.cutStrategy || 'section-hole-first',
       design: {
         ...currentParametricWingDesign,
         straightSparRods: currentAssemblyCandidate.straightSparRods,
