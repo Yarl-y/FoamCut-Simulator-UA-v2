@@ -168,9 +168,33 @@ export const renderAssemblyView = (svg, parts, camera = {}, measurement = null) 
         })
         svgElement('line', {
           x1: first[0], y1: first[1], x2: second[0], y2: second[1],
-          stroke: '#111827', 'stroke-width': Math.max(2, rod.diameter * scale),
+          stroke: '#111827', 'stroke-width': Math.max(
+            2,
+            Math.min(rod.diameterX ?? rod.diameter, rod.diameterY ?? rod.diameter) * scale
+          ),
           'stroke-opacity': '0.72', 'stroke-linecap': 'round'
         }, partGroup)
+        const diameterX = rod.diameterX ?? rod.diameter
+        const diameterY = rod.diameterY ?? rod.diameter
+        if (Math.abs(diameterX - diameterY) > 0.001) {
+          const radiusX = diameterX / 2
+          const radiusY = diameterY / 2
+          for (const z of [part.offsets.z, direction * part.span + part.offsets.z]) {
+            const sectionPoints = Array.from({ length: 32 }, (_, index) => {
+              const angle = Math.PI * 2 * index / 32
+              return project({
+                x: rod.x + part.offsets.x + Math.cos(angle) * radiusX,
+                y: rod.y + part.offsets.y + Math.sin(angle) * radiusY,
+                z
+              })
+            })
+            svgElement('polygon', {
+              points: sectionPoints.map(point => point.join(',')).join(' '),
+              fill: '#f8fafc', 'fill-opacity': '0.9',
+              stroke: '#111827', 'stroke-width': '1.5'
+            }, partGroup)
+          }
+        }
       }
       for (const channel of part.servoChannels || []) {
         const first = project({

@@ -47,6 +47,14 @@ const sanitizeWing = (wing, index = 0) => {
           x: finite(rod?.x, `Лонжерон ${rodIndex + 1}, X`),
           y: finite(rod?.y, `Лонжерон ${rodIndex + 1}, Y`),
           diameter: Math.max(0.1, finite(rod?.diameter, `Лонжерон ${rodIndex + 1}, діаметр`)),
+          diameterX: Math.max(0.1, finite(
+            rod?.diameterX ?? rod?.diameter,
+            `Лонжерон ${rodIndex + 1}, ширина X`
+          )),
+          diameterY: Math.max(0.1, finite(
+            rod?.diameterY ?? rod?.diameter,
+            `Лонжерон ${rodIndex + 1}, висота Y`
+          )),
           centered: rod?.centered === true
         }))
       : []

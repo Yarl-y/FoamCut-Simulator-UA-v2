@@ -106,6 +106,11 @@ document.querySelector('#app').innerHTML = `
             <input id="twistAxis" type="number" min="0" max="100" step="1" value="25">
           </label>
         </div>
+        <label class="profile-refinement-toggle">
+          <input id="refineLibraryProfile" type="checkbox" checked>
+          Покращене уточнення контуру NACA 23012 біля носика
+        </label>
+        <p class="profile-refinement-note">Для NACA 23012 точки між каталоговими координатами будуються плавною формою. Межі хорди й товщини зберігаються; інші профілі не змінюються.</p>
         <div class="spar-hole-controls">
           <h3>Отвори лонжеронів</h3>
           <label class="spar-hole-mode">Режим позиціонування
@@ -172,7 +177,7 @@ document.querySelector('#app').innerHTML = `
           <div><label>Збережена деталь <select id="importedWingSelect"></select></label><button id="loadImportedWing" type="button" disabled>Відкрити у конструкторі</button><button id="deleteImportedWing" type="button" disabled>Видалити</button></div>
           <div class="imported-wing-spars">
             <strong>Наскрізні отвори на прямій осі, у фізичних мм</strong>
-            <p>Для конуса задайте однакові X, Y та діаметр у двох торцях. Отвір буде додано до робочої траєкторії струни.</p>
+            <p>Можна зробити еліпсом лише один із трьох отворів; решта залишаються круглими. Отвір додається до траєкторії струни.</p>
             <label>Порядок різання
               <select id="importedWingCutStrategy">
                 <option value="section-hole-first">Секція або конус — спочатку отвори</option>
@@ -193,6 +198,25 @@ document.querySelector('#app').innerHTML = `
               <label>X, мм <input id="importedSpar2X" type="number" step="0.1" value="110"></label>
               <label>Y, мм <input id="importedSpar2Y" type="number" step="0.1" value="0"></label>
               <label>Ø, мм <input id="importedSpar2Diameter" type="number" min="0.1" step="0.1" value="8"></label>
+            </div>
+            <div class="spar-hole-row">
+              <label><input id="importedSpar3Enabled" type="checkbox"> Отвір 3</label>
+              <label><input id="importedSpar3Centered" type="checkbox"> По центру меншого профілю</label>
+              <label>X, мм <input id="importedSpar3X" type="number" step="0.1" value="160"></label>
+              <label>Y, мм <input id="importedSpar3Y" type="number" step="0.1" value="0"></label>
+              <label>Ø, мм <input id="importedSpar3Diameter" type="number" min="0.1" step="0.1" value="8"></label>
+            </div>
+            <div class="spar-hole-row">
+              <label>Зробити еліпсом
+                <select id="importedSparEllipseHole">
+                  <option value="none">Жоден</option>
+                  <option value="0">Отвір 1</option>
+                  <option value="1">Отвір 2</option>
+                  <option value="2">Отвір 3</option>
+                </select>
+              </label>
+              <label>Ширина X, мм <input id="importedSparEllipseWidth" type="number" min="0.1" step="0.1" value="10"></label>
+              <label>Висота Y, мм <input id="importedSparEllipseHeight" type="number" min="0.1" step="0.1" value="6"></label>
             </div>
             <button id="saveImportedWingSpars" type="button" disabled>Застосувати отвори до траєкторії</button>
           </div>
@@ -967,6 +991,7 @@ const toggleProfileLibraryButton = document.querySelector('#toggleProfileLibrary
 const profileLibraryPanel = document.querySelector('#profileLibraryPanel')
 const rootLibraryProfileInput = document.querySelector('#rootLibraryProfile')
 const tipLibraryProfileInput = document.querySelector('#tipLibraryProfile')
+const refineLibraryProfileInput = document.querySelector('#refineLibraryProfile')
 const rootProfileHint = document.querySelector('#rootProfileHint')
 const tipProfileHint = document.querySelector('#tipProfileHint')
 const rootLibraryChordInput = document.querySelector('#rootLibraryChord')
@@ -1072,7 +1097,10 @@ const wingInsertSpanInput = document.querySelector('#wingInsertSpan')
 const wingInsertScaleInput = document.querySelector('#wingInsertScale')
 const wingInsertSweepInput = document.querySelector('#wingInsertSweep')
 const buildWingInsertButton = document.querySelector('#buildWingInsert')
-const importedSparInputs = [1, 2].map(number => ({
+const importedSparEllipseHoleInput = document.querySelector('#importedSparEllipseHole')
+const importedSparEllipseWidthInput = document.querySelector('#importedSparEllipseWidth')
+const importedSparEllipseHeightInput = document.querySelector('#importedSparEllipseHeight')
+const importedSparInputs = [1, 2, 3].map(number => ({
   enabled: document.querySelector(`#importedSpar${number}Enabled`),
   centered: document.querySelector(`#importedSpar${number}Centered`),
   x: document.querySelector(`#importedSpar${number}X`),
@@ -1672,11 +1700,11 @@ const renderLibraryPreview = () => {
       const tipChord = readPositiveLibraryNumber(tipLibraryChordInput, 'Хорда кінця')
       const halfSpan = readPositiveLibraryNumber(halfSpanInput, 'Розмах півкрила')
       const root = transformLibraryProfile(
-        createLibraryProfile(rootLibraryProfileInput.value, pointCount),
+        createLibraryProfile(rootLibraryProfileInput.value, pointCount, { refine: refineLibraryProfileInput.checked }),
         { chord: rootChord }
       )
       const tip = transformLibraryProfile(
-        createLibraryProfile(tipLibraryProfileInput.value, pointCount),
+        createLibraryProfile(tipLibraryProfileInput.value, pointCount, { refine: refineLibraryProfileInput.checked }),
         {
           chord: tipChord,
           sweep: Number(wingSweepInput.value) || 0,
@@ -1944,6 +1972,7 @@ fuselageSegmentInput.addEventListener('change', () => {
 
 const wingPreviewInputs = [
   rootLibraryProfileInput, rootLibraryChordInput, tipLibraryProfileInput, tipLibraryChordInput,
+  refineLibraryProfileInput,
   halfSpanInput, wingSweepInput, tipTwistInput, twistAxisInput
 ]
 wingPreviewInputs.forEach(input => {
@@ -2796,8 +2825,9 @@ buildLibraryWingButton.addEventListener('click', () => {
     const sweep = Number(wingSweepInput.value) || 0
     const twist = Number(tipTwistInput.value) || 0
     const twistAxis = Math.min(100, Math.max(0, Number(twistAxisInput.value) || 0))
-    const rootNormalized = createLibraryProfile(rootLibraryProfileInput.value, pointCount)
-    const tipNormalized = createLibraryProfile(tipLibraryProfileInput.value, pointCount)
+    const refineProfile = refineLibraryProfileInput.checked
+    const rootNormalized = createLibraryProfile(rootLibraryProfileInput.value, pointCount, { refine: refineProfile })
+    const tipNormalized = createLibraryProfile(tipLibraryProfileInput.value, pointCount, { refine: refineProfile })
     const rootTransform = { chord: rootChord }
     const tipTransform = {
       chord: tipChord,
@@ -2936,7 +2966,8 @@ buildLibraryWingButton.addEventListener('click', () => {
       twist,
       twistAxis,
       sparMode: sparHoleModeInput.value,
-      pointCount
+      pointCount,
+      profileRefinement: refineProfile ? 'shape-preserving-naca23012' : 'catalog-linear'
     }
     saveLibraryWingButton.disabled = false
     updateAssemblyCandidateControls()
@@ -2964,6 +2995,9 @@ buildLibraryWingButton.addEventListener('click', () => {
       + `піврозмах ${halfSpan} мм, крутка ${twist}°, отворів лонжеронів: ${sparHoles.length}; `
       + `${sparHoleModeInput.value === 'straight' ? 'наскрізні прямі осі' : 'позиція за хордою'}; `
       + `каналів проводів: ${servoChannels.length}`
+      + (refineProfile && [rootLibraryProfileInput.value, tipLibraryProfileInput.value].includes('naca23012')
+        ? '; NACA 23012: застосовано покращене уточнення контуру'
+        : '')
   } catch (error) {
     saveLibraryWingButton.disabled = true
     currentParametricWingDesign = null
@@ -4790,6 +4824,15 @@ wingLibraryFileInput.addEventListener('change', async () => {
 const loadImportedWingSparInputs = () => {
   const wing = importedWings.find(item => item.id === importedWingSelect.value)
   const center = wing ? findSmallerProfileCenter(wing) : null
+  const ellipseIndex = wing?.straightSparRods.findIndex(rod => (
+    Math.abs((rod.diameterX ?? rod.diameter) - (rod.diameterY ?? rod.diameter)) > 0.001
+  )) ?? -1
+  importedSparEllipseHoleInput.value = ellipseIndex >= 0 ? String(ellipseIndex) : 'none'
+  if (ellipseIndex >= 0) {
+    const ellipse = wing.straightSparRods[ellipseIndex]
+    importedSparEllipseWidthInput.value = ellipse.diameterX ?? ellipse.diameter
+    importedSparEllipseHeightInput.value = ellipse.diameterY ?? ellipse.diameter
+  }
   importedWingCutStrategyInput.value = wing?.cutStrategy || 'section-hole-first'
   importedSparInputs.forEach((inputs, index) => {
     const rod = wing?.straightSparRods[index]
@@ -4811,6 +4854,7 @@ const loadImportedWingSparInputs = () => {
 
 const readImportedWingSpars = wing => {
   const center = findSmallerProfileCenter(wing)
+  const ellipseIndex = Number(importedSparEllipseHoleInput.value)
   return importedSparInputs.flatMap((inputs, index) => {
   if (!inputs.enabled.checked) return []
     const centered = inputs.centered.checked
@@ -4821,7 +4865,14 @@ const readImportedWingSpars = wing => {
       inputs.y.value = Math.round(y * 1000) / 1000
     }
     const diameter = readPositiveLibraryNumber(inputs.diameter, `Діаметр отвору ${index + 1}`)
-    return [{ x, y, diameter, centered }]
+    const isEllipse = ellipseIndex === index
+    const diameterX = isEllipse
+      ? readPositiveLibraryNumber(importedSparEllipseWidthInput, 'Ширина X еліпса')
+      : diameter
+    const diameterY = isEllipse
+      ? readPositiveLibraryNumber(importedSparEllipseHeightInput, 'Висота Y еліпса')
+      : diameter
+    return [{ x, y, diameter, diameterX, diameterY, centered }]
   })
 }
 
@@ -4901,6 +4952,10 @@ importedSparInputs.forEach(inputs => {
     input.addEventListener('input', updateImportedWingHolePreview)
     input.addEventListener('change', updateImportedWingHolePreview)
   })
+})
+;[importedSparEllipseHoleInput, importedSparEllipseWidthInput, importedSparEllipseHeightInput].forEach(input => {
+  input.addEventListener('input', updateImportedWingHolePreview)
+  input.addEventListener('change', updateImportedWingHolePreview)
 })
 importedWingCutStrategyInput.addEventListener('change', updateImportedWingHolePreview)
 
@@ -5166,7 +5221,7 @@ const { leftPoints, rightPoints } = parsedNc
         Math.hypot(leftHole.x - rightHole.x, leftHole.y - rightHole.y) <= 0.5
         && Math.abs(leftHole.diameter - rightHole.diameter) <= 0.5
       ))
-    )).slice(0, 2)
+    ))
     recoveredNcSourceFile = file.name
     ncWingNameInput.value = file.name.replace(/\.[^.]+$/, '')
     const embeddedBlockWidth = Number(text.match(/Block setup:[^\r\n]*\bblock\s+([-+]?\d*\.?\d+)\s*mm/i)?.[1])

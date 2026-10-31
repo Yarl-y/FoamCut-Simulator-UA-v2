@@ -522,6 +522,20 @@ code {
   line-height: 1.35;
 }
 
+.profile-refinement-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 8px 0 2px;
+  font-weight: 600;
+}
+
+.profile-refinement-note {
+  margin: 2px 0 12px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
 .library-save-row,
 .library-transfer-row {
   display: flex;

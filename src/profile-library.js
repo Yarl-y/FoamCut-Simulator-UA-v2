@@ -108,6 +108,152 @@ const resampleClosedPoints = (points, pointCount) => {
   return result
 }
 
+// Shape-preserving cubic Hermite interpolation, applied independently to the
+// upper and lower NACA 23012 surfaces. Unlike linear perimeter resampling,
+// this does not add corners at every catalogue station. The x stations are
+// cosine-spaced so more points land near the leading and trailing edges.
+const createMonotoneInterpolator = points => {
+  const ordered = points.map(point => ({ ...point })).sort((a, b) => a.x - b.x)
+  const unique = ordered.filter((point, index) => index === 0
+    || point.x - ordered[index - 1].x > 1e-10)
+  if (unique.length < 3) throw new Error('Для уточнення профілю потрібно щонайменше три різні координати X')
+
+  const widths = unique.slice(1).map((point, index) => point.x - unique[index].x)
+  const slopes = unique.slice(1).map((point, index) => (
+    (point.y - unique[index].y) / widths[index]
+  ))
+  const tangents = Array(unique.length).fill(0)
+  const endpointTangent = (firstWidth, secondWidth, firstSlope, secondSlope) => {
+    const tangent = ((2 * firstWidth + secondWidth) * firstSlope - firstWidth * secondSlope)
+      / (firstWidth + secondWidth)
+    if (Math.sign(tangent) !== Math.sign(firstSlope)) return 0
+    if (Math.sign(firstSlope) !== Math.sign(secondSlope)
+      && Math.abs(tangent) > Math.abs(3 * firstSlope)) return 3 * firstSlope
+    return tangent
+  }
+
+  tangents[0] = endpointTangent(widths[0], widths[1], slopes[0], slopes[1])
+  tangents[unique.length - 1] = endpointTangent(
+    widths.at(-1), widths.at(-2), slopes.at(-1), slopes.at(-2)
+  )
+  for (let index = 1; index < unique.length - 1; index++) {
+    const previous = slopes[index - 1]
+    const next = slopes[index]
+    if (previous === 0 || next === 0 || Math.sign(previous) !== Math.sign(next)) continue
+    const beforeWidth = widths[index - 1]
+    const afterWidth = widths[index]
+    const w1 = 2 * afterWidth + beforeWidth
+    const w2 = afterWidth + 2 * beforeWidth
+    tangents[index] = (w1 + w2) / (w1 / previous + w2 / next)
+  }
+
+  return x => {
+    if (x <= unique[0].x) return unique[0].y
+    if (x >= unique.at(-1).x) return unique.at(-1).y
+    let low = 0
+    let high = unique.length - 1
+    while (high - low > 1) {
+      const middle = (low + high) >> 1
+      if (unique[middle].x <= x) low = middle
+      else high = middle
+    }
+    const width = widths[low]
+    const t = (x - unique[low].x) / width
+    const t2 = t * t
+    const t3 = t2 * t
+    return (2 * t3 - 3 * t2 + 1) * unique[low].y
+      + (t3 - 2 * t2 + t) * width * tangents[low]
+      + (-2 * t3 + 3 * t2) * unique[high].y
+      + (t3 - t2) * width * tangents[high]
+  }
+}
+
+const segmentsIntersect = (a, b, c, d) => {
+  const cross = (first, second, third) => (
+    (second.x - first.x) * (third.y - first.y)
+    - (second.y - first.y) * (third.x - first.x)
+  )
+  const onSegment = (first, second, point) => (
+    point.x >= Math.min(first.x, second.x) - 1e-12
+    && point.x <= Math.max(first.x, second.x) + 1e-12
+    && point.y >= Math.min(first.y, second.y) - 1e-12
+    && point.y <= Math.max(first.y, second.y) + 1e-12
+  )
+  const abC = cross(a, b, c)
+  const abD = cross(a, b, d)
+  const cdA = cross(c, d, a)
+  const cdB = cross(c, d, b)
+  if (abC * abD < -1e-24 && cdA * cdB < -1e-24) return true
+  return (Math.abs(abC) <= 1e-12 && onSegment(a, b, c))
+    || (Math.abs(abD) <= 1e-12 && onSegment(a, b, d))
+    || (Math.abs(cdA) <= 1e-12 && onSegment(c, d, a))
+    || (Math.abs(cdB) <= 1e-12 && onSegment(c, d, b))
+}
+
+const assertSimpleClosedContour = points => {
+  for (let first = 0; first < points.length; first++) {
+    const firstNext = (first + 1) % points.length
+    for (let second = first + 2; second < points.length; second++) {
+      const secondNext = (second + 1) % points.length
+      if (secondNext === first) continue
+      if (segmentsIntersect(points[first], points[firstNext], points[second], points[secondNext])) {
+        throw new Error(`Уточнення профілю створило самоперетин біля відрізків ${first + 1} і ${second + 1}`)
+      }
+    }
+  }
+}
+
+const refineNaca23012 = (coordinates, pointCount) => {
+  const noseIndex = coordinates.reduce((best, point, index) => (
+    point[0] < coordinates[best][0] ? index : best
+  ), 0)
+  const upperCoordinates = coordinates.slice(0, noseIndex + 1)
+    .map(([x, y]) => ({ x, y }))
+  const lowerCoordinates = coordinates.slice(noseIndex)
+    .map(([x, y]) => ({ x, y }))
+  const upperAt = createMonotoneInterpolator(upperCoordinates)
+  const lowerAt = createMonotoneInterpolator(lowerCoordinates)
+  const upperCount = Math.ceil(pointCount / 2)
+  const lowerCount = pointCount - upperCount + 1
+  const cosineStations = count => Array.from(
+    { length: count },
+    (_, index) => (1 - Math.cos(Math.PI * index / (count - 1))) / 2
+  )
+  const upperMin = Math.min(...upperCoordinates.map(point => point.x))
+  const upperMax = Math.max(...upperCoordinates.map(point => point.x))
+  const lowerMin = Math.min(...lowerCoordinates.map(point => point.x))
+  const lowerMax = Math.max(...lowerCoordinates.map(point => point.x))
+  const upper = cosineStations(upperCount).reverse().map(station => {
+    const x = upperMin + station * (upperMax - upperMin)
+    return { x, y: upperAt(x) }
+  })
+  const lower = cosineStations(lowerCount).map(station => {
+    const x = lowerMin + station * (lowerMax - lowerMin)
+    return { x, y: lowerAt(x) }
+  })
+  const result = [...upper, ...lower.slice(1)]
+  assertSimpleClosedContour(result)
+
+  // Preserve the exact source chord and thickness even when the sampled
+  // stations do not land on the extrema.
+  const sourceX = coordinates.map(([x]) => x)
+  const sourceY = coordinates.map(([, y]) => y)
+  const sourceBounds = {
+    minX: Math.min(...sourceX), maxX: Math.max(...sourceX),
+    minY: Math.min(...sourceY), maxY: Math.max(...sourceY)
+  }
+  const resultBounds = {
+    minX: Math.min(...result.map(point => point.x)), maxX: Math.max(...result.map(point => point.x)),
+    minY: Math.min(...result.map(point => point.y)), maxY: Math.max(...result.map(point => point.y))
+  }
+  return result.map(point => ({
+    x: sourceBounds.minX + (point.x - resultBounds.minX)
+      * (sourceBounds.maxX - sourceBounds.minX) / (resultBounds.maxX - resultBounds.minX),
+    y: sourceBounds.minY + (point.y - resultBounds.minY)
+      * (sourceBounds.maxY - sourceBounds.minY) / (resultBounds.maxY - resultBounds.minY)
+  }))
+}
+
 const nacaSurfacePoint = (x, camber, camberPosition, thickness, upper) => {
   const thicknessY = 5 * thickness * (
     0.2969 * Math.sqrt(x)
@@ -139,11 +285,14 @@ const nacaSurfacePoint = (x, camber, camberPosition, thickness, upper) => {
   }
 }
 
-export const createLibraryProfile = (profileId, pointCount = 200) => {
+export const createLibraryProfile = (profileId, pointCount = 200, { refine = false } = {}) => {
   const profile = PROFILE_CATALOG[profileId]
   if (!profile) throw new Error('Невідомий профіль бібліотеки')
 
   if (profile.coordinates) {
+    if (refine && profileId === 'naca23012') {
+      return refineNaca23012(profile.coordinates, pointCount)
+    }
     return resampleClosedPoints(
       profile.coordinates.map(([x, y]) => ({ x, y })),
       pointCount
@@ -438,6 +587,8 @@ export const createSparHoleContour = ({
   positionPercent,
   height,
   diameter,
+  diameterX = diameter,
+  diameterY = diameter,
   sweep = 0,
   twistDegrees = 0,
   twistAxisPercent = 25,
@@ -445,8 +596,8 @@ export const createSparHoleContour = ({
 }) => Array.from({ length: pointCount }, (_, index) => {
   const angle = Math.PI * 2 * index / pointCount
   return transformPhysicalPoint({
-    x: chord * positionPercent / 100 + Math.cos(angle) * diameter / 2,
-    y: height + Math.sin(angle) * diameter / 2
+    x: chord * positionPercent / 100 + Math.cos(angle) * diameterX / 2,
+    y: height + Math.sin(angle) * diameterY / 2
   }, { chord, sweep, twistDegrees, twistAxisPercent })
 })
 
@@ -454,12 +605,14 @@ export const createStraightSparHoleContour = ({
   x,
   y,
   diameter,
+  diameterX = diameter,
+  diameterY = diameter,
   pointCount = 32
 }) => Array.from({ length: pointCount }, (_, index) => {
   const angle = Math.PI * 2 * index / pointCount
   return {
-    x: x + Math.cos(angle) * diameter / 2,
-    y: y + Math.sin(angle) * diameter / 2
+    x: x + Math.cos(angle) * diameterX / 2,
+    y: y + Math.sin(angle) * diameterY / 2
   }
 })
 
