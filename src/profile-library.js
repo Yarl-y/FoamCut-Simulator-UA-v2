@@ -108,10 +108,10 @@ const resampleClosedPoints = (points, pointCount) => {
   return result
 }
 
-// Shape-preserving cubic Hermite interpolation, applied independently to the
-// upper and lower NACA 23012 surfaces. Unlike linear perimeter resampling,
-// this does not add corners at every catalogue station. The x stations are
-// cosine-spaced so more points land near the leading and trailing edges.
+// Shape-preserving cubic Hermite interpolation through each catalog surface.
+// The source coordinates remain the shape constraints; cosine-spaced output
+// stations add resolution near the leading and trailing edges without
+// extending the contour past its tabulated values.
 const createMonotoneInterpolator = points => {
   const ordered = points.map(point => ({ ...point })).sort((a, b) => a.x - b.x)
   const unique = ordered.filter((point, index) => index === 0
@@ -203,7 +203,7 @@ const assertSimpleClosedContour = points => {
   }
 }
 
-const refineNaca23012 = (coordinates, pointCount) => {
+const refineCoordinateProfile = (coordinates, pointCount) => {
   const noseIndex = coordinates.reduce((best, point, index) => (
     point[0] < coordinates[best][0] ? index : best
   ), 0)
@@ -254,6 +254,24 @@ const refineNaca23012 = (coordinates, pointCount) => {
   }))
 }
 
+const MAX_PROFILE_POINT_COUNT = 4000
+
+export const profilePointCountForChord = (requestedPointCount, chord, maxChordStep = 2) => {
+  const requested = Math.max(2, Math.floor(Number(requestedPointCount) || 200))
+  const physicalChord = Number(chord)
+  const step = Number(maxChordStep)
+  if (!Number.isFinite(physicalChord) || physicalChord <= 0
+    || !Number.isFinite(step) || step <= 0) return Math.min(requested, MAX_PROFILE_POINT_COUNT)
+
+  // With cosine stations the largest x gap is about pi*chord/(2*n) on
+  // each surface. Choose one shared odd count for both faces of the wing.
+  const halfSurfaceCount = Math.ceil(
+    Math.PI / (2 * Math.asin(Math.min(1, step / physicalChord)))
+  ) + 1
+  const physicalCount = halfSurfaceCount * 2 - 1
+  return Math.min(MAX_PROFILE_POINT_COUNT, Math.max(requested, physicalCount))
+}
+
 const nacaSurfacePoint = (x, camber, camberPosition, thickness, upper) => {
   const thicknessY = 5 * thickness * (
     0.2969 * Math.sqrt(x)
@@ -285,25 +303,32 @@ const nacaSurfacePoint = (x, camber, camberPosition, thickness, upper) => {
   }
 }
 
-export const createLibraryProfile = (profileId, pointCount = 200, { refine = false } = {}) => {
+export const createLibraryProfile = (profileId, pointCount = 200, {
+  refine = false,
+  chord = null,
+  maxChordStep = 2
+} = {}) => {
   const profile = PROFILE_CATALOG[profileId]
   if (!profile) throw new Error('Невідомий профіль бібліотеки')
+  const resolvedPointCount = chord === null
+    ? Math.max(2, Math.floor(Number(pointCount) || 200))
+    : profilePointCountForChord(pointCount, chord, maxChordStep)
 
   if (profile.coordinates) {
-    if (refine && profileId === 'naca23012') {
-      return refineNaca23012(profile.coordinates, pointCount)
+    if (refine) {
+      return refineCoordinateProfile(profile.coordinates, resolvedPointCount)
     }
     return resampleClosedPoints(
       profile.coordinates.map(([x, y]) => ({ x, y })),
-      pointCount
+      resolvedPointCount
     )
   }
 
   const camber = Number(profile.digits[0]) / 100
   const camberPosition = Number(profile.digits[1]) / 10
   const thickness = Number(profile.digits.slice(2)) / 100
-  const upperCount = Math.ceil(pointCount / 2)
-  const lowerCount = pointCount - upperCount + 1
+  const upperCount = Math.ceil(resolvedPointCount / 2)
+  const lowerCount = resolvedPointCount - upperCount + 1
   const upperStations = cosineStations(upperCount).reverse()
   const lowerStations = cosineStations(lowerCount)
   const upper = upperStations.map(x => nacaSurfacePoint(x, camber, camberPosition, thickness, true))

@@ -152,6 +152,143 @@ export const detectCircularHoles = points => {
     .map(({ x, y, diameter }) => ({ x, y, diameter }))
 }
 
+const ncPointInPolygon = (point, polygon) => {
+  let inside = false
+  for (let index = 0, previous = polygon.length - 1; index < polygon.length; previous = index++) {
+    const current = polygon[index]
+    const before = polygon[previous]
+    const crosses = (current.y > point.y) !== (before.y > point.y)
+      && point.x < (before.x - current.x) * (point.y - current.y)
+        / (before.y - current.y) + current.x
+    if (crosses) inside = !inside
+  }
+  return inside
+}
+
+const makeEllipseContour = (bounds, pointCount = 48) => {
+  const centerX = (bounds.minX + bounds.maxX) / 2
+  const centerY = (bounds.minY + bounds.maxY) / 2
+  return Array.from({ length: pointCount }, (_, index) => {
+    const angle = Math.PI * 2 * index / pointCount
+    return {
+      x: centerX + Math.cos(angle) * (bounds.maxX - bounds.minX) / 2,
+      y: centerY + Math.sin(angle) * (bounds.maxY - bounds.minY) / 2
+    }
+  })
+}
+
+// Recognize the old two-pass NC layout (separate closed hole loops, followed
+// by one open trailing-edge → lower skin → nose → upper skin contour). Keep the
+// original outer points and only reconstruct the rounded hole loops for the
+// existing paired one-pass path builder.
+export const recoverOnePassWingSource = (text, leftTrajectory, rightTrajectory) => {
+  const sourceLines = String(text || '').split(/\r?\n/)
+    .map(line => line.replace(/\([^)]*\)/g, '').split(';', 1)[0].trim())
+    .filter(Boolean)
+  if (!/\bG\s*21\b/i.test(sourceLines.join('\n'))
+    || !/\bG\s*90\b/i.test(sourceLines.join('\n'))
+    || !/\bG\s*94\b/i.test(sourceLines.join('\n'))
+    || /\bG\s*(?:20|91)\b/i.test(sourceLines.join('\n'))
+    || /\bG\s*(?:0|2|3)(?:\.0+)?\b/i.test(sourceLines.join('\n'))) return null
+  const motionLines = sourceLines.filter(line => /\bG\s*1\b/i.test(line))
+  if (motionLines.length < 100 || motionLines.some(line => (
+    !['X', 'Y', 'A', 'Z'].every(axis => new RegExp(`\\b${axis}\\s*[+-]?(?:\\d+(?:\\.\\d*)?|\\.\\d+)`, 'i').test(line))
+  ))) return null
+  if (leftTrajectory.length !== rightTrajectory.length
+    || leftTrajectory.length !== motionLines.length) return null
+
+  const segments = []
+  let segmentStart = 0
+  for (let index = 1; index < leftTrajectory.length; index++) {
+    const leftStep = pointDistance(leftTrajectory[index - 1], leftTrajectory[index])
+    const rightStep = pointDistance(rightTrajectory[index - 1], rightTrajectory[index])
+    if (Math.max(leftStep, rightStep) > 8) {
+      if (index - segmentStart >= 12) segments.push({ start: segmentStart, end: index - 1 })
+      segmentStart = index
+    }
+  }
+  if (leftTrajectory.length - segmentStart >= 12) {
+    segments.push({ start: segmentStart, end: leftTrajectory.length - 1 })
+  }
+
+  const segmentPoints = (segment, trajectory) => trajectory.slice(segment.start, segment.end + 1)
+  const boundsOf = points => ({
+    minX: Math.min(...points.map(point => point.x)),
+    maxX: Math.max(...points.map(point => point.x)),
+    minY: Math.min(...points.map(point => point.y)),
+    maxY: Math.max(...points.map(point => point.y))
+  })
+  const profileCandidates = segments.map(segment => {
+    const left = segmentPoints(segment, leftTrajectory)
+    const right = segmentPoints(segment, rightTrajectory)
+    const bounds = boundsOf(left)
+    const closure = pointDistance(left[0], left.at(-1))
+    return { segment, left, right, bounds, closure }
+  }).filter(candidate => (
+    candidate.left.length >= 100
+    && candidate.bounds.maxX - candidate.bounds.minX >= 100
+    && candidate.bounds.maxY - candidate.bounds.minY >= 20
+    && candidate.closure >= 0.5
+    && candidate.closure <= Math.max(8, (candidate.bounds.maxY - candidate.bounds.minY) * 0.1)
+  ))
+  if (profileCandidates.length !== 1) return null
+  const profile = profileCandidates[0]
+
+  const loopCandidates = segments.filter(segment => segment !== profile.segment).map(segment => {
+    const left = segmentPoints(segment, leftTrajectory)
+    const right = segmentPoints(segment, rightTrajectory)
+    const leftBounds = boundsOf(left)
+    const rightBounds = boundsOf(right)
+    const width = leftBounds.maxX - leftBounds.minX
+    const height = leftBounds.maxY - leftBounds.minY
+    const rightWidth = rightBounds.maxX - rightBounds.minX
+    const rightHeight = rightBounds.maxY - rightBounds.minY
+    return { segment, left, right, leftBounds, rightBounds, width, height, rightWidth, rightHeight }
+  }).filter(candidate => {
+    const leftClosed = pointDistance(candidate.left[0], candidate.left.at(-1)) <= 0.2
+    const rightClosed = pointDistance(candidate.right[0], candidate.right.at(-1)) <= 0.2
+    const width = candidate.width
+    const height = candidate.height
+    const rightRatio = candidate.rightWidth / Math.max(candidate.rightHeight, 1e-9)
+    const leftRatio = width / Math.max(height, 1e-9)
+    const leftCenter = {
+      x: (candidate.leftBounds.minX + candidate.leftBounds.maxX) / 2,
+      y: (candidate.leftBounds.minY + candidate.leftBounds.maxY) / 2
+    }
+    const rightCenter = {
+      x: (candidate.rightBounds.minX + candidate.rightBounds.maxX) / 2,
+      y: (candidate.rightBounds.minY + candidate.rightBounds.maxY) / 2
+    }
+    return leftClosed && rightClosed
+      && candidate.left.length >= 16 && candidate.left.length <= 180
+      && width >= 3 && height >= 3 && width <= 70 && height <= 70
+      && leftRatio >= 0.75 && leftRatio <= 1.3
+      && rightRatio >= 0.75 && rightRatio <= 1.3
+      && Math.hypot(leftCenter.x - rightCenter.x, leftCenter.y - rightCenter.y) <= 0.75
+      && Math.abs(width - candidate.rightWidth) <= 0.75
+      && Math.abs(height - candidate.rightHeight) <= 0.75
+      && ncPointInPolygon(leftCenter, profile.left)
+      && ncPointInPolygon(rightCenter, profile.right)
+  }).map(candidate => ({
+    left: makeEllipseContour(candidate.leftBounds),
+    right: makeEllipseContour(candidate.rightBounds),
+    diameterX: candidate.width,
+    diameterY: candidate.height
+  }))
+
+  if (loopCandidates.length < 1 || loopCandidates.length > 4) return null
+  const uniqueHoles = loopCandidates.filter((hole, index) => !loopCandidates.slice(0, index).some(other => (
+    Math.hypot(hole.left[0].x - other.left[0].x, hole.left[0].y - other.left[0].y) < 0.5
+  )))
+  return {
+    leftPoints: profile.left.map(point => ({ ...point })),
+    rightPoints: profile.right.map(point => ({ ...point })),
+    holes: uniqueHoles,
+    trailingEdgeGap: profile.closure,
+    segmentCount: segments.length
+  }
+}
+
 export const removeInteriorCutLoops = points => {
   if (points.length < 4) return points.map(point => ({ ...point }))
   const profileWidth = Math.max(...points.map(point => point.x)) - Math.min(...points.map(point => point.x))

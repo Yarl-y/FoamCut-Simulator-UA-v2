@@ -21,6 +21,7 @@ import {
   createPairedDxf,
   createPreviewModel,
   detectCircularHoles,
+  recoverOnePassWingSource,
   recoverNcProfiles,
   removeInteriorCutLoops,
   parseNcBlockSetup,
@@ -108,9 +109,9 @@ document.querySelector('#app').innerHTML = `
         </div>
         <label class="profile-refinement-toggle">
           <input id="refineLibraryProfile" type="checkbox" checked>
-          Покращене уточнення контуру NACA 23012 біля носика
+          Плавно відновлювати контур табличних профілів
         </label>
-        <p class="profile-refinement-note">Для NACA 23012 точки між каталоговими координатами будуються плавною формою. Межі хорди й товщини зберігаються; інші профілі не змінюються.</p>
+        <p class="profile-refinement-note">Табличні координати задають форму кривої. Після масштабування кількість точок зростає за хордою, щоб крок уздовж хорди був близько 2 мм; хорда й товщина зберігаються.</p>
         <div class="spar-hole-controls">
           <h3>Отвори лонжеронів</h3>
           <label class="spar-hole-mode">Режим позиціонування
@@ -409,6 +410,7 @@ document.querySelector('#app').innerHTML = `
       <label>Назва секції <input id="ncWingName" type="text" placeholder="Секція фюзеляжу або крило"></label>
       <label>Довжина секції, мм <input id="ncWingSpan" type="number" min="1" step="1" value="1000"></label>
       <button id="saveNcWingToLibrary" type="button" disabled>Зберегти й відкрити в конструкторі</button>
+      <button id="prepareNcOnePassWing" type="button" disabled>Підготувати один прохід для крила</button>
       <p id="ncWingImportStatus">Спочатку завантажте NC-файл.</p>
     </section>
 
@@ -1112,6 +1114,7 @@ const ncToDxfStatus = document.querySelector('#ncToDxfStatus')
 const ncWingNameInput = document.querySelector('#ncWingName')
 const ncWingSpanInput = document.querySelector('#ncWingSpan')
 const saveNcWingToLibraryButton = document.querySelector('#saveNcWingToLibrary')
+const prepareNcOnePassWingButton = document.querySelector('#prepareNcOnePassWing')
 const ncWingImportStatus = document.querySelector('#ncWingImportStatus')
 const importedWingSelect = document.querySelector('#importedWingSelect')
 const loadImportedWingButton = document.querySelector('#loadImportedWing')
@@ -1261,6 +1264,7 @@ let currentBatchPackages = []
 let recoveredNcProfiles = null
 let recoveredNcSourceFile = ''
 let recoveredNcStraightSparRods = []
+let recoveredOnePassWingSource = null
 let importedWings = loadImportedWings()
 let activeStraightSparRods = []
 let activeServoChannels = []
@@ -1728,12 +1732,19 @@ const renderLibraryPreview = () => {
       const rootChord = readPositiveLibraryNumber(rootLibraryChordInput, 'Хорда кореня')
       const tipChord = readPositiveLibraryNumber(tipLibraryChordInput, 'Хорда кінця')
       const halfSpan = readPositiveLibraryNumber(halfSpanInput, 'Розмах півкрила')
+      const samplingChord = Math.max(rootChord, tipChord)
       const root = transformLibraryProfile(
-        createLibraryProfile(rootLibraryProfileInput.value, pointCount, { refine: refineLibraryProfileInput.checked }),
+        createLibraryProfile(rootLibraryProfileInput.value, pointCount, {
+          refine: refineLibraryProfileInput.checked,
+          chord: samplingChord
+        }),
         { chord: rootChord }
       )
       const tip = transformLibraryProfile(
-        createLibraryProfile(tipLibraryProfileInput.value, pointCount, { refine: refineLibraryProfileInput.checked }),
+        createLibraryProfile(tipLibraryProfileInput.value, pointCount, {
+          refine: refineLibraryProfileInput.checked,
+          chord: samplingChord
+        }),
         {
           chord: tipChord,
           sweep: Number(wingSweepInput.value) || 0,
@@ -2435,6 +2446,38 @@ const buildBoundaryEntryRoute = (start, side, leadDistance, paired = false) => {
   return { route, boundary }
 }
 
+const buildNcOnePassWingPath = points => {
+  if (points.length < 2) return points.map(point => ({ ...point }))
+  const offsetX = Math.max(0, Number(profileLengthOffsetInput.value) || 0)
+  const offsetY = Math.max(0, Number(profileHeightOffsetInput.value) || 0)
+  const left = -offsetX
+  const bottom = -offsetY
+  const leadDistance = Math.max(0, Number(leadDistanceInput.value) || 0)
+  const start = points[0]
+  const end = points.at(-1)
+  const entryBoundary = { x: Math.min(left, start.x - leadDistance), y: start.y }
+  const exitBoundary = { x: Math.min(left, end.x - leadDistance), y: end.y }
+  const route = [{ x: left, y: bottom }]
+  const appendMove = target => {
+    const origin = route.at(-1)
+    if (Math.hypot(target.x - origin.x, target.y - origin.y) > 1e-7) {
+      route.push(...interpolateMove(origin, target))
+    }
+  }
+
+  // Start below the block, rise at its left edge, enter the lower trailing
+  // edge horizontally, follow the already ordered cut (holes → nose → top),
+  // then leave the upper trailing edge horizontally and return outside.
+  appendMove({ x: left, y: start.y })
+  appendMove(entryBoundary)
+  appendMove(start)
+  route.push(...points.slice(1).map(point => ({ ...point })))
+  appendMove(exitBoundary)
+  appendMove({ x: exitBoundary.x, y: bottom })
+  appendMove({ x: left, y: bottom })
+  return route
+}
+
 const buildCuttingPath = (points, passMode = cutPassModeInput.value, entrySide = 'right', paired = false) => {
   if (points.length < 2) return points.map(point => ({ ...point }))
 
@@ -2616,6 +2659,9 @@ const createMach3Nc = trajectory => {
     lines.push('(ZHART_ROUTE:CENTER_TOP_HOME)')
     lines.push('(Work zero X/Y/A/Z is above the centre; negative work coordinates are expected)')
   }
+  if (trajectory.routeMode === 'wing-one-pass') {
+    lines.push('(ZHART_ROUTE:WING_ONE_PASS_TRAILING_LOWER_HOLES_NOSE_UPPER_EXIT)')
+  }
 
   // A controller file must contain only the short machine header and motion.
   // Source profiles stay in the application's wing library; embedding thousands
@@ -2722,18 +2768,25 @@ const renderPreparedDxfSimulation = () => {
     : 300
   const internalFirst = preparedDxfProfiles.left.internalFirst === true
     || preparedDxfProfiles.right.internalFirst === true
+  const ncOnePassWing = preparedDxfProfiles.left.ncOnePassWing === true
+    && preparedDxfProfiles.right.ncOnePassWing === true
   const preserveOrder = preparedDxfProfiles.left.preserveOrder === true
     || preparedDxfProfiles.right.preserveOrder === true
+    || ncOnePassWing
   const paired = Boolean(preparedDxfProfiles.left.source && preparedDxfProfiles.right.source)
   // Splitting a composed route by its midpoint may split a hole, not a surface.
-  const effectivePassMode = internalFirst || paired ? 'single' : cutPassModeInput.value
-  const orientedPair = paired ? preparePairedProfiles(
+  const effectivePassMode = internalFirst || paired || ncOnePassWing ? 'single' : cutPassModeInput.value
+  const orientedPair = paired && !ncOnePassWing ? preparePairedProfiles(
     preparedDxfProfiles.left.points, preparedDxfProfiles.right.points,
     profileOrientationInput.value, 'left', false
   ) : null
-  let sourceLeftPoints = orientedPair?.leftPoints || orientProfile(preparedDxfProfiles.left.points, profileOrientationInput.value)
-  let sourceRightPoints = orientedPair?.rightPoints || orientProfile(preparedDxfProfiles.right.points, profileOrientationInput.value)
-  const centerTopHome = profileRouteModeInput.value === 'center-top-home'
+  let sourceLeftPoints = orientedPair?.leftPoints || (ncOnePassWing
+    ? preparedDxfProfiles.left.points.map(point => ({ ...point }))
+    : orientProfile(preparedDxfProfiles.left.points, profileOrientationInput.value))
+  let sourceRightPoints = orientedPair?.rightPoints || (ncOnePassWing
+    ? preparedDxfProfiles.right.points.map(point => ({ ...point }))
+    : orientProfile(preparedDxfProfiles.right.points, profileOrientationInput.value))
+  const centerTopHome = !ncOnePassWing && profileRouteModeInput.value === 'center-top-home'
   const requestedEntrySide = profileEntrySideInput.value
   const entrySide = requestedEntrySide === 'auto'
     ? chooseEntrySide(sourceLeftPoints, sourceRightPoints, {
@@ -2756,9 +2809,13 @@ const renderPreparedDxfSimulation = () => {
   const centeredHomePath = centerTopHome
     ? buildCenteredTopHomePath(sourceLeftPoints, sourceRightPoints, leadDistanceInput.value)
     : null
-  const faceLeftPoints = centeredHomePath?.leftPoints
+  const faceLeftPoints = ncOnePassWing
+    ? buildNcOnePassWingPath(sourceLeftPoints)
+    : centeredHomePath?.leftPoints
     || buildCuttingPath(sourceLeftPoints, effectivePassMode, entrySide, paired)
-  const faceRightPoints = centeredHomePath?.rightPoints
+  const faceRightPoints = ncOnePassWing
+    ? buildNcOnePassWingPath(sourceRightPoints)
+    : centeredHomePath?.rightPoints
     || buildCuttingPath(sourceRightPoints, effectivePassMode, entrySide, paired)
   const sideLabels = { right: 'справа', left: 'зліва', top: 'зверху', bottom: 'знизу' }
   const orientationLabels = { none: 'як у DXF', rotate180: 'поворот 180°', mirrorX: 'дзеркально ліворуч/праворуч', mirrorY: 'дзеркально вгору/вниз' }
@@ -2769,6 +2826,9 @@ const renderPreparedDxfSimulation = () => {
   if (preserveOrder && !internalFirst) {
     profileEntryStatus.textContent += ' Порядок крила збережено: задня кромка → низ та отвори → носик → верх → вихід.'
   }
+  if (ncOnePassWing) {
+    profileEntryStatus.textContent = 'NC перетворено на один прохід: вхід зліва горизонтально до нижньої задньої кромки → нижня поверхня з отворами → носик → верхня поверхня → горизонтальний вихід за блок.'
+  }
   if (paired) profileEntryStatus.textContent += ' Парна траєкторія: один прохід, відповідність точок збережено.'
 
   if (faceLeftPoints.length !== faceRightPoints.length) {
@@ -2777,7 +2837,7 @@ const renderPreparedDxfSimulation = () => {
     dxfAssignmentStatus.textContent += '; кількість точок сторін не збігається'
     return
   }
-  let blockSetup = null
+  let blockSetup = ncOnePassWing ? preparedDxfProfiles.left.sourceBlockSetup || null : null
   let leftPoints = faceLeftPoints
   let rightPoints = faceRightPoints
   try {
@@ -2810,7 +2870,7 @@ const renderPreparedDxfSimulation = () => {
     blockSetup,
     applyProfileOffsets: !centerTopHome,
     allowNegativeWorkCoordinates: centerTopHome,
-    routeMode: centerTopHome ? 'center-top-home' : 'block-corner'
+    routeMode: ncOnePassWing ? 'wing-one-pass' : centerTopHome ? 'center-top-home' : 'block-corner'
   }
   updateGeneratedNcPreview()
 
@@ -2851,12 +2911,19 @@ buildLibraryWingButton.addEventListener('click', () => {
     const rootChord = readPositiveLibraryNumber(rootLibraryChordInput, 'Хорда кореня')
     const tipChord = readPositiveLibraryNumber(tipLibraryChordInput, 'Хорда кінця')
     const halfSpan = readPositiveLibraryNumber(halfSpanInput, 'Розмах півкрила')
+    const samplingChord = Math.max(rootChord, tipChord)
     const sweep = Number(wingSweepInput.value) || 0
     const twist = Number(tipTwistInput.value) || 0
     const twistAxis = Math.min(100, Math.max(0, Number(twistAxisInput.value) || 0))
     const refineProfile = refineLibraryProfileInput.checked
-    const rootNormalized = createLibraryProfile(rootLibraryProfileInput.value, pointCount, { refine: refineProfile })
-    const tipNormalized = createLibraryProfile(tipLibraryProfileInput.value, pointCount, { refine: refineProfile })
+    const rootNormalized = createLibraryProfile(rootLibraryProfileInput.value, pointCount, {
+      refine: refineProfile,
+      chord: samplingChord
+    })
+    const tipNormalized = createLibraryProfile(tipLibraryProfileInput.value, pointCount, {
+      refine: refineProfile,
+      chord: samplingChord
+    })
     const rootTransform = { chord: rootChord }
     const tipTransform = {
       chord: tipChord,
@@ -3044,8 +3111,9 @@ buildLibraryWingButton.addEventListener('click', () => {
               y: point.y + normalizedPair.translation.y
             }))
           })),
-      pointCount,
-      profileRefinement: refineProfile ? 'shape-preserving-naca23012' : 'catalog-linear'
+      pointCount: rootPoints.length,
+      requestedPointCount: pointCount,
+      profileRefinement: refineProfile ? 'shape-preserving-catalog-surfaces' : 'catalog-linear'
     }
     saveLibraryWingButton.disabled = false
     updateAssemblyCandidateControls()
@@ -3076,9 +3144,8 @@ buildLibraryWingButton.addEventListener('click', () => {
       + (wingCutRouteInput.value === 'wing-single'
         ? '; один прохід: крайка → низ з отворами й каналами → носик → верх → крайка'
         : '; стандартна траєкторія з окремими входами у канали')
-      + (refineProfile && [rootLibraryProfileInput.value, tipLibraryProfileInput.value].includes('naca23012')
-        ? '; NACA 23012: застосовано покращене уточнення контуру'
-        : '')
+      + `; ${rootPoints.length} точок профілю на кожному кінці, крок за найбільшою хордою близько 2 мм`
+      + (refineProfile ? '; табличні поверхні відновлено плавною кривою' : '; збережено прямі відрізки каталогу')
   } catch (error) {
     saveLibraryWingButton.disabled = true
     currentParametricWingDesign = null
@@ -5226,6 +5293,65 @@ downloadNcDxfLeftButton.addEventListener('click', () => downloadRecoveredDxf('le
 downloadNcDxfRightButton.addEventListener('click', () => downloadRecoveredDxf('right'))
 downloadNcDxfPairButton.addEventListener('click', downloadRecoveredDxfPair)
 
+prepareNcOnePassWingButton.addEventListener('click', () => {
+  try {
+    if (!recoveredOnePassWingSource) throw new Error('Спочатку відкрийте NC із розпізнаними отворами та профілем крила')
+    const holePairs = recoveredOnePassWingSource.holes
+    for (const [index, hole] of holePairs.entries()) {
+      if (!sparHoleFitsProfile(recoveredOnePassWingSource.leftPoints, hole.left)
+        || !sparHoleFitsProfile(recoveredOnePassWingSource.rightPoints, hole.right)) {
+        throw new Error(`Отвір ${index + 1} не повністю всередині обох профілів`)
+      }
+    }
+    const cutPair = createImportedWingCutProfiles({
+      name: ncWingNameInput.value || recoveredNcSourceFile,
+      span: Math.max(1, Number(ncWingSpanInput.value) || 1),
+      leftPoints: recoveredOnePassWingSource.leftPoints,
+      rightPoints: recoveredOnePassWingSource.rightPoints,
+      straightSparRods: [],
+      cutStrategy: 'wing-single'
+    }, holePairs)
+    if (cutPair.leftPoints.length !== cutPair.rightPoints.length) {
+      throw new Error('Після вставлення отворів кількість синхронних точок X/Y та A/Z різна')
+    }
+
+    preparedDxfProfiles.left = {
+      points: cutPair.leftPoints,
+      source: 'nc-one-pass-wing',
+      preserveOrder: true,
+      ncOnePassWing: true,
+      sourceBlockSetup: recoveredOnePassWingSource.blockSetup
+    }
+    preparedDxfProfiles.right = {
+      points: cutPair.rightPoints,
+      source: 'nc-one-pass-wing',
+      preserveOrder: true,
+      ncOnePassWing: true,
+      sourceBlockSetup: recoveredOnePassWingSource.blockSetup
+    }
+    profileOrientationInput.value = 'none'
+    profileAutoStartInput.checked = false
+    profileEntrySideInput.value = 'left'
+    cutPassModeInput.value = 'single'
+    if (recoveredOnePassWingSource.blockSetup) {
+      wireSpanInput.value = recoveredOnePassWingSource.blockSetup.wireSpan
+      foamWidthInput.value = recoveredOnePassWingSource.blockSetup.blockWidth
+      blockLeftGapInput.value = recoveredOnePassWingSource.blockSetup.leftGap
+    }
+    if (Number.isFinite(recoveredOnePassWingSource.feedRate)
+      && recoveredOnePassWingSource.feedRate > 0) {
+      cutFeedRateInput.value = recoveredOnePassWingSource.feedRate
+    }
+    renderPreparedDxfSimulation()
+    ncWingImportStatus.className = 'profile-library-valid'
+    ncWingImportStatus.textContent = `Підготовлено один прохід з ${recoveredOnePassWingSource.holes.length} отворами. `
+      + 'Перевірте 2D/3D, межі осей і холодний прогін; вихідний NC не змінено.'
+  } catch (error) {
+    ncWingImportStatus.className = 'profile-library-error'
+    ncWingImportStatus.textContent = `Не вдалося підготувати один прохід: ${error.message}`
+  }
+})
+
 loadButton.addEventListener('click', async () => {
   const file = fileInput.files[0]
 
@@ -5240,6 +5366,8 @@ activeServoChannels = []
 recoveredNcProfiles = null
 recoveredNcSourceFile = ''
 recoveredNcStraightSparRods = []
+recoveredOnePassWingSource = null
+prepareNcOnePassWingButton.disabled = true
 saveNcWingToLibraryButton.disabled = true
 ncWingImportStatus.className = ''
 ncWingImportStatus.textContent = 'Пошук профілів і розмірів деталі у NC...'
@@ -5293,6 +5421,12 @@ const { leftPoints, rightPoints } = parsedNc
       return
     }
 
+    recoveredOnePassWingSource = recoverOnePassWingSource(text, leftPoints, rightPoints)
+    if (recoveredOnePassWingSource) {
+      recoveredOnePassWingSource.blockSetup = parsedBlockSetup
+      recoveredOnePassWingSource.feedRate = Number(text.match(/(?:^|\n)\s*F\s*([-+]?\d*\.?\d+)/i)?.[1])
+      prepareNcOnePassWingButton.disabled = false
+    }
     recoveredNcProfiles = recoverNcProfiles(text, leftPoints, rightPoints)
     // Holes may be cut in a separate service route before the clean exterior profile.
     const detectedLeftHoles = detectCircularHoles(leftPoints)
@@ -5312,6 +5446,9 @@ const { leftPoints, rightPoints } = parsedNc
     ncWingImportStatus.className = 'profile-library-valid'
     ncWingImportStatus.textContent = `Профілі відновлено. Знайдено наскрізних прямих отворів: ${recoveredNcStraightSparRods.length}. `
       + `Перевірте назву та довжину ${ncWingSpanInput.value} мм, потім збережіть деталь.`
+    if (recoveredOnePassWingSource) {
+      ncWingImportStatus.textContent += ` Розпізнано шаблон двопрохідного крила: ${recoveredOnePassWingSource.holes.length} окремих отворів; можна підготувати один прохід.`
+    }
     downloadNcDxfLeftButton.disabled = false
     downloadNcDxfRightButton.disabled = false
     downloadNcDxfPairButton.disabled = false
